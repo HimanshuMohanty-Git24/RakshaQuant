@@ -95,8 +95,8 @@ def market_regime_node(state: TradingState) -> dict[str, Any]:
             if lesson.get("category") == "regime_mismatch"
         ]
         
-        # Build context for the agent
-        context = _build_regime_context(indicators, market_data, regime_lessons)
+        # Build context for the agent (enriched with support agent outputs)
+        context = _build_regime_context_enriched(indicators, market_data, regime_lessons, state)
         
         messages = [
             SystemMessage(content=REGIME_SYSTEM_PROMPT),
@@ -279,6 +279,62 @@ def _build_regime_context(
             )
     
     return "\n".join(context_parts)
+
+
+def _build_regime_context_enriched(
+    indicators: dict[str, Any],
+    market_data: dict[str, Any],
+    lessons: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> str:
+    """Build enriched context string using support agent outputs."""
+    
+    # Start with the base context
+    base_context = _build_regime_context(indicators, market_data, lessons)
+    
+    enrichment_parts = []
+    
+    # Add news sentiment from news analyst agent
+    news_sentiment = state.get("news_sentiment")
+    news_headlines = state.get("news_headlines", [])
+    if news_sentiment is not None:
+        enrichment_parts.append("\n### News Sentiment Analysis\n")
+        enrichment_parts.append(f"- Overall News Sentiment Score: {news_sentiment:.2f} (-1 bearish to +1 bullish)")
+        if news_headlines:
+            enrichment_parts.append("- Key Headlines:")
+            for headline in news_headlines[:5]:
+                if isinstance(headline, dict):
+                    enrichment_parts.append(f"  - [{headline.get('sentiment', 'neutral')}] {headline.get('title', 'N/A')}")
+                elif isinstance(headline, str):
+                    enrichment_parts.append(f"  - {headline}")
+    
+    # Add market mood from sentiment agent
+    market_mood = state.get("market_mood")
+    mood_label = state.get("mood_label", "")
+    mood_components = state.get("mood_components", {})
+    if market_mood is not None:
+        enrichment_parts.append("\n### Market Mood Index\n")
+        enrichment_parts.append(f"- Mood Score: {market_mood:.2f} (0-100 scale)")
+        if mood_label:
+            enrichment_parts.append(f"- Mood Label: {mood_label}")
+        if mood_components:
+            for component, value in mood_components.items():
+                enrichment_parts.append(f"- {component}: {value}")
+    
+    # Add prediction signals from prediction agent
+    prediction_signals = state.get("prediction_signals", [])
+    if prediction_signals:
+        enrichment_parts.append("\n### ML Prediction Consensus\n")
+        for pred in prediction_signals[:5]:
+            if isinstance(pred, dict):
+                enrichment_parts.append(
+                    f"- {pred.get('symbol', 'N/A')}: {pred.get('direction', 'N/A')} "
+                    f"(confidence: {pred.get('confidence', 0):.0%})"
+                )
+    
+    if enrichment_parts:
+        return base_context + "\n" + "\n".join(enrichment_parts)
+    return base_context
 
 
 def _parse_regime_response(content: str) -> dict[str, Any]:

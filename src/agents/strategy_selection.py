@@ -181,18 +181,29 @@ def _build_strategy_context(
         f"- P&L: {daily_stats.get('profit_loss', 0):.2f}",
     ]
     
-    # Historical performance by regime (simplified - would come from DB in production)
+    # Real strategy performance from tracker (replaces hardcoded data)
     context_parts.append("\n## Historical Strategy Performance by Regime\n")
-    performance_data = {
-        "trending_up": {"momentum": 0.72, "trend_following": 0.68, "breakout": 0.45, "mean_reversion": 0.35},
-        "trending_down": {"momentum": 0.65, "trend_following": 0.62, "breakout": 0.40, "mean_reversion": 0.38},
-        "ranging": {"mean_reversion": 0.71, "breakout": 0.55, "momentum": 0.32, "trend_following": 0.28},
-        "volatile": {"breakout": 0.48, "momentum": 0.42, "mean_reversion": 0.35, "trend_following": 0.30},
-    }
-    
-    if regime in performance_data:
-        for strategy, win_rate in performance_data[regime].items():
-            context_parts.append(f"- {strategy}: {win_rate:.0%} win rate")
+    try:
+        from src.memory.performance_tracker import get_performance_tracker
+        tracker = get_performance_tracker()
+        performance_data = tracker.get_all_strategy_performance(regime)
+        for strategy, win_rate in sorted(performance_data.items(), key=lambda x: x[1], reverse=True):
+            perf = tracker.get_strategy_performance(strategy, regime)
+            if perf.total_trades > 0:
+                context_parts.append(f"- {strategy}: {win_rate:.0%} win rate ({perf.total_trades} trades)")
+            else:
+                context_parts.append(f"- {strategy}: {win_rate:.0%} win rate (prior estimate)")
+    except Exception as e:
+        logger.warning(f"Performance tracker unavailable, using defaults: {e}")
+        default_data = {
+            "trending_up": {"momentum": 0.60, "trend_following": 0.58, "breakout": 0.45, "mean_reversion": 0.40},
+            "trending_down": {"momentum": 0.55, "trend_following": 0.52, "breakout": 0.40, "mean_reversion": 0.42},
+            "ranging": {"mean_reversion": 0.58, "breakout": 0.48, "momentum": 0.38, "trend_following": 0.35},
+            "volatile": {"breakout": 0.45, "momentum": 0.40, "mean_reversion": 0.38, "trend_following": 0.35},
+        }
+        if regime in default_data:
+            for strategy, win_rate in default_data[regime].items():
+                context_parts.append(f"- {strategy}: {win_rate:.0%} win rate (default)")
     
     # Add lessons
     if lessons:

@@ -117,9 +117,9 @@ def signal_validation_node(state: TradingState) -> dict[str, Any]:
             if lesson.get("category") in ["poor_timing", "signal_quality"]
         ]
         
-        # Build context
-        context = _build_validation_context(
-            signals, regime, regime_confidence, active_strategies, timing_lessons
+        # Build context (enriched with prediction + sentiment from support agents)
+        context = _build_validation_context_enriched(
+            signals, regime, regime_confidence, active_strategies, timing_lessons, state
         )
         
         messages = [
@@ -253,6 +253,55 @@ def _build_validation_context(
             )
     
     return "\n".join(context_parts)
+
+
+def _build_validation_context_enriched(
+    signals: list[dict[str, Any]],
+    regime: str,
+    regime_confidence: float,
+    active_strategies: list[str],
+    lessons: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> str:
+    """Build enriched validation context with prediction and sentiment data."""
+    
+    base = _build_validation_context(signals, regime, regime_confidence, active_strategies, lessons)
+    
+    enrichment = []
+    
+    # Add prediction consensus for signal symbols
+    prediction_signals = state.get("prediction_signals", [])
+    if prediction_signals:
+        signal_symbols = {s.get("symbol") for s in signals}
+        relevant_preds = [p for p in prediction_signals 
+                         if isinstance(p, dict) and p.get("symbol") in signal_symbols]
+        if relevant_preds:
+            enrichment.append("\n## ML Prediction Consensus (use to confirm/contradict signals)\n")
+            for pred in relevant_preds:
+                enrichment.append(
+                    f"- {pred.get('symbol')}: ML predicts **{pred.get('direction', 'N/A')}** "
+                    f"(confidence: {pred.get('confidence', 0):.0%})"
+                )
+            enrichment.append("\n> If a signal contradicts a high-confidence ML prediction, "
+                            "consider rejecting or reducing position size.")
+    
+    # Add news sentiment for signal symbols
+    news_sentiment = state.get("news_sentiment")
+    if news_sentiment is not None:
+        enrichment.append(f"\n## News Sentiment: {news_sentiment:.2f} (-1 bearish to +1 bullish)")
+        if abs(news_sentiment) > 0.5:
+            direction = "bullish" if news_sentiment > 0 else "bearish"
+            enrichment.append(f"> Strong {direction} news sentiment — factor this into validation.")
+    
+    # Add market mood
+    market_mood = state.get("market_mood")
+    if market_mood is not None:
+        mood_label = state.get("mood_label", "neutral")
+        enrichment.append(f"\n## Market Mood: {mood_label} ({market_mood:.0f}/100)")
+    
+    if enrichment:
+        return base + "\n" + "\n".join(enrichment)
+    return base
 
 
 def _parse_validation_response(

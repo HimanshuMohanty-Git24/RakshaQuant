@@ -40,14 +40,35 @@ class Position:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
+    # MAE/MFE tracking for trade quality analysis
+    mae: float = 0.0  # Maximum Adverse Excursion (worst drawdown)
+    mfe: float = 0.0  # Maximum Favorable Excursion (best unrealized profit)
+    highest_price: float = 0.0
+    lowest_price: float = 0.0
+    stop_loss: float = 0.0
+    target_price: float = 0.0
+    strategy: str = ""
+    
+    def __post_init__(self):
+        if self.highest_price == 0.0:
+            self.highest_price = self.entry_price
+        if self.lowest_price == 0.0:
+            self.lowest_price = self.entry_price
     
     def update_pnl(self, current_price: float):
-        """Update unrealized P&L based on current price."""
+        """Update unrealized P&L and MAE/MFE based on current price."""
         self.current_price = current_price
+        self.highest_price = max(self.highest_price, current_price)
+        self.lowest_price = min(self.lowest_price, current_price)
+        
         if self.side == "BUY":
             self.unrealized_pnl = (current_price - self.entry_price) * self.quantity
+            self.mfe = max(self.mfe, (self.highest_price - self.entry_price) * self.quantity)
+            self.mae = max(self.mae, (self.entry_price - self.lowest_price) * self.quantity)
         else:  # SELL (short)
             self.unrealized_pnl = (self.entry_price - current_price) * self.quantity
+            self.mfe = max(self.mfe, (self.entry_price - self.lowest_price) * self.quantity)
+            self.mae = max(self.mae, (self.highest_price - self.entry_price) * self.quantity)
         
         if self.entry_price > 0:
             self.unrealized_pnl_pct = (self.unrealized_pnl / (self.entry_price * self.quantity)) * 100
