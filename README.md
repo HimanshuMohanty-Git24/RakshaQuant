@@ -288,6 +288,18 @@ flowchart TB
 
 ---
 
+## 📖 Detailed Documentation
+
+For a comprehensive deep dive into the system's architecture, reasoning capabilities, and internal logic, please explore our dedicated documentation hub inside the `docs/` folder:
+
+1. 🚀 **[Introduction & End-to-End Workflow](docs/1_Introduction.md)** – Detailed explanation of how trades move from ingestion to completion.
+2. 📐 **[High-Level Design (HLD)](docs/2_High_Level_Design.md)** – Bird's eye view of the system's layer separations and memory feedback structure.
+3. ⚙️ **[Low-Level Design (LLD)](docs/3_Low_Level_Design.md)** – Granular specifics of each directory, data flows, and class expectations.
+4. 🧠 **[System Design & Cognitive Patterns](docs/4_System_Design.md)** – How the AI thinks (ensemble AI vs single prompt), fault tolerance, and design patterns.
+5. 📂 **[Component Breakdown](docs/5_Components.md)** – Complete mapping of every script and node.
+
+---
+
 ## ✨ Features
 
 ### 🤖 The Agent Team
