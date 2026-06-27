@@ -42,10 +42,18 @@ def _news_analyst_node(state: dict) -> dict:
         else:
             sentiment = asyncio.run(analyst.get_market_sentiment())
 
+        # Canonical contract: news_sentiment is a dict ({"avg_sentiment": float}),
+        # consumed by the sentiment, regime, and validation agents. Returning a
+        # bare float here silently broke every downstream consumer.
         return {
-            "news_sentiment": sentiment.avg_sentiment,
-            "news_headlines": [{"title": item.title, "sentiment": "positive" if item.sentiment_score > 0 else "negative"}
-                              for item in sentiment.items[:5]],
+            "news_sentiment": {"avg_sentiment": sentiment.avg_sentiment},
+            "news_headlines": [
+                {
+                    "title": item.title,
+                    "sentiment": "positive" if item.sentiment_score > 0 else "negative",
+                }
+                for item in sentiment.items[:5]
+            ],
         }
     except Exception as e:
         logger.warning(f"News analyst failed: {e}")

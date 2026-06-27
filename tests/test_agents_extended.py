@@ -117,8 +117,10 @@ def test_predict_fallback(prediction_agent):
 def test_prediction_node():
     from src.agents.prediction import prediction_node
 
+    # prediction_node now sources from raw `signals` (available at the support-agent
+    # stage), not `validated_signals` (which is still empty when this node runs).
     state = {
-        "validated_signals": [{"symbol": "AAPL"}]
+        "signals": [{"symbol": "AAPL"}]
     }
 
     # Mock YFinanceFeed where it is imported (inside the function)

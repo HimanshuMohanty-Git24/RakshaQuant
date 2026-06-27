@@ -294,32 +294,38 @@ def _build_regime_context_enriched(
     
     enrichment_parts = []
     
-    # Add news sentiment from news analyst agent
-    news_sentiment = state.get("news_sentiment")
+    # Add news sentiment from news analyst agent.
+    # Contract: news_sentiment is a dict {"avg_sentiment": float} (see state.py).
+    news_sentiment = state.get("news_sentiment") or {}
     news_headlines = state.get("news_headlines", [])
-    if news_sentiment is not None:
+    avg_sentiment = news_sentiment.get("avg_sentiment") if isinstance(news_sentiment, dict) else None
+    if avg_sentiment is not None:
         enrichment_parts.append("\n### News Sentiment Analysis\n")
-        enrichment_parts.append(f"- Overall News Sentiment Score: {news_sentiment:.2f} (-1 bearish to +1 bullish)")
+        enrichment_parts.append(
+            f"- Overall News Sentiment Score: {avg_sentiment:.2f} (-1 bearish to +1 bullish)"
+        )
         if news_headlines:
             enrichment_parts.append("- Key Headlines:")
             for headline in news_headlines[:5]:
                 if isinstance(headline, dict):
-                    enrichment_parts.append(f"  - [{headline.get('sentiment', 'neutral')}] {headline.get('title', 'N/A')}")
+                    enrichment_parts.append(
+                        f"  - [{headline.get('sentiment', 'neutral')}] {headline.get('title', 'N/A')}"
+                    )
                 elif isinstance(headline, str):
                     enrichment_parts.append(f"  - {headline}")
-    
-    # Add market mood from sentiment agent
-    market_mood = state.get("market_mood")
-    mood_label = state.get("mood_label", "")
-    mood_components = state.get("mood_components", {})
-    if market_mood is not None:
+
+    # Add market mood from sentiment agent.
+    # Contract: market_mood is SentimentSignal.to_dict() (see state.py).
+    market_mood = state.get("market_mood") or {}
+    if isinstance(market_mood, dict) and market_mood.get("mood_index") is not None:
         enrichment_parts.append("\n### Market Mood Index\n")
-        enrichment_parts.append(f"- Mood Score: {market_mood:.2f} (0-100 scale)")
+        enrichment_parts.append(f"- Mood Score: {float(market_mood['mood_index']):.0f}/100 (0-100 scale)")
+        mood_label = market_mood.get("mood_label")
         if mood_label:
             enrichment_parts.append(f"- Mood Label: {mood_label}")
-        if mood_components:
-            for component, value in mood_components.items():
-                enrichment_parts.append(f"- {component}: {value}")
+        for key in ("news_score", "volatility_score", "breadth_score"):
+            if market_mood.get(key) is not None:
+                enrichment_parts.append(f"- {key}: {market_mood[key]}")
     
     # Add prediction signals from prediction agent
     prediction_signals = state.get("prediction_signals", [])

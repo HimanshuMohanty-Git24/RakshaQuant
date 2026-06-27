@@ -301,33 +301,41 @@ class PredictionAgent:
 def prediction_node(state: dict[str, Any]) -> dict[str, Any]:
     """
     LangGraph node for price prediction.
-    
-    Generates prediction signals for validated signals.
+
+    Generates prediction signals for the symbols in the *raw* signals. This node
+    runs as a support agent (before regime/validation), so ``validated_signals``
+    is still empty at this point — sourcing from it produced zero predictions.
+    Raw ``signals`` are already populated by the time the graph runs, so the
+    regime and validation agents now receive real ML consensus.
     """
     agent = PredictionAgent()
-    
+
     # Get historical data from market data manager (if available)
     from src.market.yfinance_feed import YFinanceFeed
-    
-    validated_signals = state.get("validated_signals", [])
+
+    signals = state.get("signals", [])
     predictions = []
-    
-    for signal in validated_signals[:3]:  # Limit to top 3
+    seen_symbols: set[str] = set()
+
+    for signal in signals:
         symbol = signal.get("symbol", "")
-        if not symbol:
+        if not symbol or symbol in seen_symbols:
             continue
-        
+        seen_symbols.add(symbol)
+        if len(seen_symbols) > 3:  # Limit to top 3 distinct symbols
+            break
+
         try:
             # Fetch historical data
             feed = YFinanceFeed(symbols=[symbol])
             hist = feed.get_historical(symbol, period="1mo")
-            
+
             if hist is not None and not hist.empty:
                 pred = agent.predict(hist, symbol)
                 predictions.append(pred.to_dict())
         except Exception as e:
             logger.warning(f"Could not generate prediction for {symbol}: {e}")
-    
+
     return {
         "prediction_signals": predictions,
     }
