@@ -13,10 +13,10 @@ Features:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from src.config import get_settings
+from src.utils.market_time import now_ist
 from .state import TradingState
 
 logger = logging.getLogger(__name__)
@@ -285,9 +285,8 @@ def _run_risk_checks(
         severity="block",
     ))
     
-    # 7. Trading hours
-    now = datetime.now()
-    current_time = now.strftime("%H:%M")
+    # 7. Trading hours (evaluated in IST, not host-local time)
+    current_time = now_ist().strftime("%H:%M")
     in_trading_hours = limits.no_trading_before <= current_time <= limits.no_trading_after
     checks.append(RiskCheckResult(
         passed=in_trading_hours,

@@ -75,9 +75,9 @@ def test_risk_compliance_node():
         {"symbol": "A", "confidence": 0.8, "risk_reward_ratio": 2.0}
     ]
 
-    # Mock datetime to be within trading hours
-    with patch("src.agents.risk_compliance.datetime") as mock_dt:
-        mock_dt.now.return_value.strftime.return_value = "12:00"
+    # Mock IST clock to be within trading hours
+    with patch("src.agents.risk_compliance.now_ist") as mock_now:
+        mock_now.return_value.strftime.return_value = "12:00"
 
         with patch("src.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
             limits = RiskLimits() # Defaults

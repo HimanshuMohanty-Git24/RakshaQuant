@@ -8,7 +8,7 @@ based on market hours and connection availability.
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime
 from typing import Callable, Any
 
 from src.market.websocket_feed import (
@@ -21,25 +21,18 @@ from src.market.websocket_feed import (
 from src.market.simulated_data import SimulatedMarketData, SimulatedQuote
 from src.market.yfinance_feed import YFinanceFeed, YFinanceQuote
 from src.config import get_settings
+from src.utils.market_time import MARKET_CLOSE, MARKET_OPEN, is_market_hours
 
 logger = logging.getLogger(__name__)
 
 
-# NSE Market Hours (IST)
-MARKET_OPEN = time(9, 15)
-MARKET_CLOSE = time(15, 30)
+# NSE Market Hours (IST) — re-exported from utils.market_time for backwards compat.
+__all__ = ["MARKET_OPEN", "MARKET_CLOSE", "is_market_open", "MarketQuote", "MarketDataManager"]
 
 
 def is_market_open() -> bool:
-    """Check if NSE market is currently open."""
-    now = datetime.now().time()
-    weekday = datetime.now().weekday()
-    
-    # Market closed on weekends
-    if weekday >= 5:
-        return False
-    
-    return MARKET_OPEN <= now <= MARKET_CLOSE
+    """Check if the NSE market is currently open (evaluated in IST, not host-local time)."""
+    return is_market_hours()
 
 
 @dataclass 

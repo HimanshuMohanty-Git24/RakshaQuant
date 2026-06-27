@@ -21,19 +21,24 @@ def mock_settings():
         yield mock
 
 def test_is_market_open():
-    with patch("src.market.manager.datetime") as mock_dt:
-        # Weekday 10:00 AM - Open
-        mock_dt.now.return_value.weekday.return_value = 0 # Monday
-        mock_dt.now.return_value.time.return_value = time(10, 0)
+    # is_market_open() now evaluates in IST via utils.market_time.now_ist(),
+    # so the clock seam to patch is now_ist (not manager.datetime).
+    with patch("src.utils.market_time.now_ist") as mock_now:
+        clock = MagicMock()
+        mock_now.return_value = clock
+
+        # Weekday 10:00 AM IST - Open
+        clock.weekday.return_value = 0  # Monday
+        clock.time.return_value = time(10, 0)
         assert is_market_open() is True
 
         # Weekend - Closed
-        mock_dt.now.return_value.weekday.return_value = 5 # Saturday
+        clock.weekday.return_value = 5  # Saturday
         assert is_market_open() is False
 
-        # Weekday 8:00 AM - Closed
-        mock_dt.now.return_value.weekday.return_value = 0
-        mock_dt.now.return_value.time.return_value = time(8, 0)
+        # Weekday 8:00 AM IST - Closed (before open)
+        clock.weekday.return_value = 0
+        clock.time.return_value = time(8, 0)
         assert is_market_open() is False
 
 @pytest.mark.asyncio
