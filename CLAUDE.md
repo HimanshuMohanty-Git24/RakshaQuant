@@ -1,0 +1,125 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+RakshaQuant is an agentic paper-trading system for the Indian NSE market. A LangGraph
+pipeline of LLM-backed agents (via Groq) classifies the market regime, picks strategies,
+validates signals, and applies deterministic risk rules. The default mode is 100% free:
+YFinance market data + a local virtual wallet + the Groq free tier. DhanHQ (broker) and
+PostgreSQL (memory) are optional. It is educational/paper-trading only.
+
+## Commands
+
+Dependency management is via [`uv`](https://github.com/astral-sh/uv). The distribution name is `trading-agent`; the import
+package is `src` (all internal imports are `from src.<module> import ...`).
+
+```bash
+uv sync                         # install runtime deps
+uv sync --extra dev             # install dev deps (pytest, ruff, mypy)
+
+uv run python scripts/check_config.py       # validate .env / settings (run this first)
+uv run python scripts/run_live_trading.py   # MAIN entry point: live/sim dashboard + paper execution
+uv run python src/backtesting/engine.py     # run a backtest
+
+# pytest/ruff/mypy live in the `dev` optional group — pass --extra dev (or `uv sync --extra dev` once).
+uv run --extra dev pytest                     # full test suite (210 tests)
+uv run --extra dev pytest tests/test_agents.py   # one file
+uv run --extra dev pytest tests/test_agents.py::TestRiskCompliance::test_risk_compliance_no_signals   # one test
+uv run --extra dev pytest --cov=src           # with coverage
+
+uv run --extra dev ruff check .   # lint (line-length 100, rules E,F,I,N,W,UP)
+uv run --extra dev ruff format .  # format
+uv run --extra dev mypy src       # type-check (strict mode is enabled)
+```
+
+`pytest` is configured with `asyncio_mode = "auto"`, so `async def test_*` functions run
+without an explicit `@pytest.mark.asyncio` decorator.
+
+## Architecture
+
+### Agent pipeline (the core)
+
+The system is a [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` built in [src/agents/graph.py](src/agents/graph.py).
+A single `TradingState` (a `TypedDict` defined in [src/agents/state.py](src/agents/state.py))
+flows through every node; each node returns a **partial dict** that LangGraph merges into state.
+The pipeline:
+
+1. **support_agents** — runs news, sentiment, and prediction agents to enrich state. All
+   failures here are non-fatal (caught and logged); they only add context.
+2. **market_regime** — LLM classifies regime (`trending_up/down`, `ranging`, `volatile`).
+   Conditional edge: if `regime_confidence < 0.3` **or** the kill switch fires, the graph ends.
+3. **strategy_selection** — picks active strategies for the regime.
+4. **signal_validation** — filters raw signals. Conditional edge: if no signals survive, the graph ends.
+5. **risk_compliance** — a **deterministic rules engine** (not an LLM) that does final approval,
+   position sizing, and enforces limits. Populates `approved_trades` / `risk_rejected`.
+
+To add an agent: write a `*_node(state) -> dict` function, register it with
+`workflow.add_node(...)`, and wire edges in `create_trading_graph()`. Conditional routing
+lives in `should_continue_after_*` predicate functions.
+
+### LLM agent conventions
+
+Every LLM node (see [src/agents/market_regime.py](src/agents/market_regime.py) as the
+reference implementation) follows the same resilience pattern — **preserve it when editing or adding agents**:
+
+- Acquire the shared rate limiter (`get_groq_limiter`) and circuit breaker
+  (`get_groq_circuit_breaker`) before calling the LLM.
+- Try `settings.groq_model_primary`, then fall back to `groq_model_fallback` on rate-limit (429) errors.
+- On **any** failure (circuit open, rate limit, parse error), return a deterministic
+  `_fallback_*` result instead of raising. The graph must never crash on a bad LLM call.
+- LLM output is JSON; parsing strips ```` ```json ```` / ```` ``` ```` fences and clamps/validates fields.
+
+### Configuration
+
+All config is centralized in [src/config/settings.py](src/config/settings.py): a
+pydantic-settings `Settings` model loaded from `.env`. Access it **only** through the cached
+`get_settings()`; use `reload_settings()` to clear the cache. Secrets are `SecretStr` —
+read them with `.get_secret_value()`. The `@model_validator` performs cross-field checks
+(e.g. live mode requires Dhan creds, risk-param sanity) but **logs warnings rather than
+raising**, so invalid config degrades instead of failing startup.
+
+Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
+(`local_paper`|`dhan_paper`|`live`), `trading_mode` (`paper`|`live`), `enable_news_analysis`.
+
+### Pluggable data & execution layers
+
+- **Market data** — [src/market/manager.py](src/market/manager.py) `MarketDataManager`
+  auto-selects WebSocket (live Dhan), YFinance (free), or simulated data based on
+  `is_market_open()` and connection availability. Indicators (`ta` library) are computed in
+  `indicators.py`; `signals.py` `SignalEngine` turns them into signals; `stock_discovery.py`
+  dynamically finds symbols to trade (no hardcoded watchlist).
+- **Execution** — [src/execution/adapter.py](src/execution/adapter.py) routes orders by
+  `execution_mode`: `LocalExecutionAdapter` (wraps `paper_engine.py`'s virtual wallet, free)
+  or `ExecutionAdapter` (DhanHQ, imported lazily and optional). `exit_manager.py` handles
+  trailing stops / time exits / partial profits; `journal.py` logs trade history.
+
+### Memory & learning loop
+
+[src/memory/](src/memory/) implements a learn-from-losses loop backed by PostgreSQL via
+SQLAlchemy (`AgentMemoryDB`, `agent_memory` table). `analyzer.py` + `classifier.py` turn
+losing trades into lessons with time-decay relevance scoring; `injection.py` feeds the
+top-N lessons back into `TradingState.memory_lessons` for the next cycle. It targets the
+PostgreSQL `DATABASE_URL` from settings, but `AgentMemoryDB._initialize_db()` silently
+falls back to an in-memory SQLite database if that connection fails — so memory works
+(non-persistently, lost on restart) even without Postgres.
+
+### Cross-cutting
+
+`utils/` holds the shared `rate_limiter`, `circuit_breaker`, `cache` (TTL), `errors`
+(custom exceptions like `RateLimitError`, `LLMResponseError`), and `events`.
+`observability/tracing.py` wires LangSmith. `dashboard/cli.py` is the `rich` terminal UI.
+`notifications/telegram.py` sends trade alerts.
+
+## Conventions & gotchas
+
+- **Imports are `from src...`** everywhere. Most scripts in `scripts/` prepend the repo root
+  to `sys.path` before importing (e.g. `run_live_trading.py`, `run_trading.py`); a few such as
+  `check_config.py` omit it and rely on being run from the repo root. When adding a script,
+  include the `sys.path` line so it works regardless of the working directory.
+- **Graph nodes return partial state dicts**, never the full state; let LangGraph merge.
+- **Never let an LLM/agent failure propagate** — return a fallback, matching existing agents.
+- Python target is **3.11** (`pyproject.toml`, ruff, mypy) even though the README says 3.12;
+  prefer 3.11-compatible syntax. `mypy` runs in **strict** mode, so annotate new code fully.
+- Timestamps in the DB use timezone-aware UTC (`datetime.now(UTC)`).
