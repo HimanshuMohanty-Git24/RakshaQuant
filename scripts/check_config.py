@@ -28,9 +28,21 @@ print(f"News Analysis:    {'[Enabled]' if s.enable_news_analysis else '[Disabled
 telegram_ok = bool(getattr(s, 'telegram_bot_token', None) and getattr(s, 'telegram_chat_id', None))
 print(f"Telegram Alerts:  {'[OK]' if telegram_ok else '[Not configured - optional]'}")
 
+# Cross-field validation warnings (live-mode creds, risk-param sanity, market hours, ...)
+config_warnings = getattr(s, "config_warnings", [])
+if config_warnings:
+    print(f"\nConfiguration Warnings ({len(config_warnings)}):")
+    for warning in config_warnings:
+        print(f"  [WARN] {warning}")
+else:
+    print("\nConfiguration Warnings:  [None]")
+
 print("\n" + "=" * 50)
 if groq_ok:
-    print("[READY] System ready to run!")
+    if config_warnings:
+        print(f"[READY] System ready to run ({len(config_warnings)} config warning(s) above).")
+    else:
+        print("[READY] System ready to run!")
 else:
     print("[ERROR] Please set GROQ_API_KEY in .env")
 print("=" * 50)
