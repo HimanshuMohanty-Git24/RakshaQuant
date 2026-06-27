@@ -12,7 +12,7 @@ PostgreSQL (memory) are optional. It is educational/paper-trading only.
 
 ## Commands
 
-Dependency management is via [`uv`]. The distribution name is `trading-agent`; the import
+Dependency management is via [`uv`](https://github.com/astral-sh/uv). The distribution name is `trading-agent`; the import
 package is `src` (all internal imports are `from src.<module> import ...`).
 
 ```bash
@@ -41,7 +41,7 @@ without an explicit `@pytest.mark.asyncio` decorator.
 
 ### Agent pipeline (the core)
 
-The system is a [LangGraph] `StateGraph` built in [src/agents/graph.py](src/agents/graph.py).
+The system is a [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` built in [src/agents/graph.py](src/agents/graph.py).
 A single `TradingState` (a `TypedDict` defined in [src/agents/state.py](src/agents/state.py))
 flows through every node; each node returns a **partial dict** that LangGraph merges into state.
 The pipeline:
@@ -100,8 +100,10 @@ Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
 [src/memory/](src/memory/) implements a learn-from-losses loop backed by PostgreSQL via
 SQLAlchemy (`AgentMemoryDB`, `agent_memory` table). `analyzer.py` + `classifier.py` turn
 losing trades into lessons with time-decay relevance scoring; `injection.py` feeds the
-top-N lessons back into `TradingState.memory_lessons` for the next cycle. This requires a
-`DATABASE_URL` — code paths that touch memory assume Postgres is reachable.
+top-N lessons back into `TradingState.memory_lessons` for the next cycle. It targets the
+PostgreSQL `DATABASE_URL` from settings, but `AgentMemoryDB._initialize_db()` silently
+falls back to an in-memory SQLite database if that connection fails — so memory works
+(non-persistently, lost on restart) even without Postgres.
 
 ### Cross-cutting
 
@@ -112,8 +114,10 @@ top-N lessons back into `TradingState.memory_lessons` for the next cycle. This r
 
 ## Conventions & gotchas
 
-- **Imports are `from src...`** everywhere. Standalone scripts in `scripts/` prepend the repo
-  root to `sys.path` before importing — keep that line when adding new scripts.
+- **Imports are `from src...`** everywhere. Most scripts in `scripts/` prepend the repo root
+  to `sys.path` before importing (e.g. `run_live_trading.py`, `run_trading.py`); a few such as
+  `check_config.py` omit it and rely on being run from the repo root. When adding a script,
+  include the `sys.path` line so it works regardless of the working directory.
 - **Graph nodes return partial state dicts**, never the full state; let LangGraph merge.
 - **Never let an LLM/agent failure propagate** — return a fallback, matching existing agents.
 - Python target is **3.11** (`pyproject.toml`, ruff, mypy) even though the README says 3.12;
