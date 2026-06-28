@@ -13,6 +13,7 @@ Features:
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
@@ -20,11 +21,15 @@ from typing import Any
 from uuid import uuid4
 
 from src.config import get_settings
+from src.execution.costs import CostModel
 
 logger = logging.getLogger(__name__)
 
 # Default state file location
 STATE_FILE = Path("paper_wallet.json")
+
+# Cap persisted order history (the journal is the durable, unbounded record).
+MAX_PERSISTED_ORDERS = 5000
 
 
 @dataclass
@@ -40,6 +45,7 @@ class Position:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
+    entry_charges: float = 0.0  # charges paid on entry (for net-PnL attribution)
     # MAE/MFE tracking for trade quality analysis
     mae: float = 0.0  # Maximum Adverse Excursion (worst drawdown)
     mfe: float = 0.0  # Maximum Favorable Excursion (best unrealized profit)
@@ -133,18 +139,22 @@ class LocalPaperEngine:
         self,
         initial_balance: float | None = None,
         state_file: Path | None = None,
+        cost_model: CostModel | None = None,
     ):
         """
         Initialize the paper trading engine.
-        
+
         Args:
             initial_balance: Starting balance in INR (default from config)
             state_file: Path to state file for persistence
+            cost_model: Slippage/fee model (defaults to CostModel.from_settings();
+                pass CostModel.zero() for ideal fills)
         """
         settings = get_settings()
         self.initial_balance = initial_balance or settings.paper_wallet_balance
         self.state_file = state_file or STATE_FILE
-        
+        self.cost_model = cost_model or CostModel.from_settings(settings)
+
         self.balance = self.initial_balance
         self.positions: dict[str, Position] = {}
         self.orders: list[Order] = []
@@ -181,18 +191,30 @@ class LocalPaperEngine:
                     self.orders.append(Order(**order_data))
                 
                 logger.info(f"Loaded paper wallet state: ₹{self.balance:,.2f} balance, {len(self.positions)} positions")
-                
+
             except Exception as e:
-                logger.warning(f"Failed to load state: {e}. Starting fresh.")
-    
+                # Do NOT silently discard the wallet — quarantine the corrupt file (so it
+                # can be inspected/recovered) and surface the problem loudly.
+                backup = self.state_file.with_suffix(
+                    f".corrupt-{datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+                )
+                try:
+                    self.state_file.rename(backup)
+                    logger.error(
+                        "Failed to load paper wallet state (%s). Quarantined the corrupt file "
+                        "to %s and started fresh.", e, backup,
+                    )
+                except OSError:
+                    logger.error("Failed to load paper wallet state (%s); starting fresh.", e)
+
     def _save_state(self):
-        """Save current state to file."""
+        """Save current state to file atomically (temp file + os.replace)."""
         try:
             state = PaperWalletState(
                 balance=self.balance,
                 initial_balance=self.initial_balance,
                 positions=[p.to_dict() for p in self.positions.values()],
-                orders=[o.to_dict() for o in self.orders[-100:]],  # Keep last 100 orders
+                orders=[o.to_dict() for o in self.orders[-MAX_PERSISTED_ORDERS:]],
                 realized_pnl=self.realized_pnl,
                 total_trades=self.total_trades,
                 winning_trades=self.winning_trades,
@@ -200,12 +222,16 @@ class LocalPaperEngine:
                 created_at=self.orders[0].timestamp if self.orders else datetime.now().isoformat(),
                 updated_at=datetime.now().isoformat(),
             )
-            
-            with open(self.state_file, "w") as f:
+
+            tmp_file = self.state_file.with_suffix(".tmp")
+            with open(tmp_file, "w") as f:
                 json.dump(state.to_dict(), f, indent=2)
-            
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, self.state_file)  # atomic on POSIX and Windows
+
             logger.debug("Paper wallet state saved")
-            
+
         except Exception as e:
             logger.error(f"Failed to save state: {e}")
     
@@ -231,100 +257,113 @@ class LocalPaperEngine:
             Order object with fill details
         """
         order_id = f"ORD-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
-        
-        # Calculate order value
-        order_value = current_price * quantity
-        
-        # Validate balance for BUY orders
-        if side == "BUY" and order_value > self.balance:
-            logger.warning(f"Insufficient balance for {symbol} order: need ₹{order_value:,.2f}, have ₹{self.balance:,.2f}")
+
+        # Limit orders are not simulated yet — return PENDING unchanged.
+        if order_type != "MARKET":
             return Order(
-                order_id=order_id,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                order_type=order_type,
-                price=current_price,
-                status="REJECTED",
+                order_id=order_id, symbol=symbol, side=side, quantity=quantity,
+                order_type=order_type, price=current_price, status="PENDING",
                 timestamp=datetime.now().isoformat(),
             )
-        
-        # For market orders, fill immediately
-        if order_type == "MARKET":
-            order = Order(
-                order_id=order_id,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                order_type=order_type,
-                price=current_price,
-                status="FILLED",
+
+        side = side.upper()
+        # Apply adverse slippage to get the actual fill price.
+        fill_price = self.cost_model.fill_price(current_price, side)
+
+        def _rejected() -> Order:
+            return Order(
+                order_id=order_id, symbol=symbol, side=side, quantity=quantity,
+                order_type=order_type, price=fill_price, status="REJECTED",
                 timestamp=datetime.now().isoformat(),
             )
-            
-            # Update balance
-            if side == "BUY":
-                self.balance -= order_value
-                
-                # Create position
-                position_id = f"POS-{uuid4().hex[:8]}"
-                position = Position(
-                    position_id=position_id,
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    entry_price=current_price,
-                    entry_time=datetime.now().isoformat(),
-                    current_price=current_price,
+
+        # An order in the opposite direction closes/covers an existing position first.
+        opposite = "SELL" if side == "BUY" else "BUY"
+        matching = next(
+            (p for p in self.positions.values() if p.symbol == symbol and p.side == opposite),
+            None,
+        )
+
+        remaining = quantity
+        if matching is not None:
+            close_qty = min(quantity, matching.quantity)
+            close_notional = fill_price * close_qty
+            close_charges = self.cost_model.charges(close_notional, side)
+            if matching.side == "BUY":  # selling to close a long
+                gross = (fill_price - matching.entry_price) * close_qty
+            else:  # buying to cover a short
+                gross = (matching.entry_price - fill_price) * close_qty
+            entry_charges_prorata = matching.entry_charges * (close_qty / matching.quantity)
+            net_pnl = gross - entry_charges_prorata - close_charges
+
+            # Release the principal committed on entry, add the gross gain, pay exit charges.
+            self.balance += matching.entry_price * close_qty + gross - close_charges
+            self.realized_pnl += net_pnl
+            self.total_trades += 1
+            if net_pnl > 0:
+                self.winning_trades += 1
+            else:
+                self.losing_trades += 1
+
+            if close_qty >= matching.quantity:
+                del self.positions[matching.position_id]
+            else:
+                matching.quantity -= close_qty
+                matching.entry_charges -= entry_charges_prorata
+
+            logger.info(
+                f"{side} filled (close): {close_qty} {symbol} @ ₹{fill_price:,.2f} | "
+                f"net P&L: ₹{net_pnl:+,.2f}"
+            )
+            remaining = quantity - close_qty
+
+        if remaining > 0:
+            # Opening a new position (long for BUY, short for SELL).
+            open_notional = fill_price * remaining
+            open_charges = self.cost_model.charges(open_notional, side)
+            required = open_notional + open_charges
+            if required > self.balance:
+                logger.warning(
+                    f"Insufficient balance for {symbol}: need ₹{required:,.2f}, "
+                    f"have ₹{self.balance:,.2f}"
                 )
-                self.positions[position_id] = position
-                
-                logger.info(f"BUY filled: {quantity} {symbol} @ ₹{current_price:,.2f} | Balance: ₹{self.balance:,.2f}")
-                
-            else:  # SELL - close existing position
-                # Find matching position
-                position_to_close = None
-                for pos in self.positions.values():
-                    if pos.symbol == symbol and pos.side == "BUY":
-                        position_to_close = pos
-                        break
-                
-                if position_to_close:
-                    # Calculate P&L
-                    pnl = (current_price - position_to_close.entry_price) * quantity
-                    self.realized_pnl += pnl
-                    self.balance += order_value
-                    self.total_trades += 1
-                    
-                    if pnl > 0:
-                        self.winning_trades += 1
-                    else:
-                        self.losing_trades += 1
-                    
-                    # Remove position
-                    del self.positions[position_to_close.position_id]
-                    
-                    logger.info(f"SELL filled: {quantity} {symbol} @ ₹{current_price:,.2f} | P&L: ₹{pnl:+,.2f}")
-                else:
-                    # Short sell (not fully implemented)
-                    self.balance += order_value
-                    logger.info(f"SHORT SELL: {quantity} {symbol} @ ₹{current_price:,.2f}")
-            
-            self.orders.append(order)
-            self._save_state()
-            return order
-        
-        # Limit orders would be handled differently (not implemented)
-        return Order(
-            order_id=order_id,
+                # If we already closed part of an opposite position above, that stands;
+                # only the new-open remainder is rejected.
+                if matching is None:
+                    return _rejected()
+            else:
+                self.balance -= required
+                self._open_position(symbol, side, remaining, fill_price, open_charges)
+                logger.info(
+                    f"{side} filled (open): {remaining} {symbol} @ ₹{fill_price:,.2f} | "
+                    f"Balance: ₹{self.balance:,.2f}"
+                )
+
+        order = Order(
+            order_id=order_id, symbol=symbol, side=side, quantity=quantity,
+            order_type=order_type, price=fill_price, status="FILLED",
+            timestamp=datetime.now().isoformat(),
+        )
+        self.orders.append(order)
+        self._save_state()
+        return order
+
+    def _open_position(
+        self, symbol: str, side: str, quantity: int, fill_price: float, charges: float
+    ) -> Position:
+        """Create and register a new open position (long or short)."""
+        position = Position(
+            position_id=f"POS-{uuid4().hex[:8]}",
             symbol=symbol,
             side=side,
             quantity=quantity,
-            order_type=order_type,
-            price=current_price,
-            status="PENDING",
-            timestamp=datetime.now().isoformat(),
+            entry_price=fill_price,
+            entry_time=datetime.now().isoformat(),
+            current_price=fill_price,
+            entry_charges=charges,
         )
+        self.positions[position.position_id] = position
+        return position
     
     def update_positions_pnl(self, market_prices: dict[str, float]):
         """
@@ -346,9 +385,16 @@ class LocalPaperEngine:
         return list(self.positions.values())
     
     def get_total_value(self) -> float:
-        """Get total portfolio value (cash + positions)."""
+        """
+        Total portfolio value = cash + committed capital + unrealized P&L.
+
+        Uses committed capital (entry notional + entry charges) plus unrealized P&L rather
+        than naive market value, so short positions are valued correctly and opening a
+        position doesn't change net worth.
+        """
         positions_value = sum(
-            p.current_price * p.quantity for p in self.positions.values()
+            p.entry_price * p.quantity + p.entry_charges + p.unrealized_pnl
+            for p in self.positions.values()
         )
         return self.balance + positions_value
     

@@ -18,6 +18,7 @@ with patch("src.config.get_settings") as mock_get_settings:
     mock_get_settings.return_value = mock_settings
 
     from src.execution.paper_engine import LocalPaperEngine, Position, Order, PaperWalletState
+    from src.execution.costs import CostModel
     from src.execution.journal import TradeJournal, TradeRecord, DecisionLog
     from src.execution.adapter import (
         ExecutionAdapter,
@@ -36,7 +37,11 @@ with patch("src.config.get_settings") as mock_get_settings:
 @pytest.fixture
 def paper_engine(tmp_path):
     state_file = tmp_path / "test_paper_wallet.json"
-    engine = LocalPaperEngine(initial_balance=100000.0, state_file=state_file)
+    # Zero-cost model so these tests check pure order/position mechanics.
+    # Cost behaviour is covered separately in test_paper_costs.py.
+    engine = LocalPaperEngine(
+        initial_balance=100000.0, state_file=state_file, cost_model=CostModel.zero()
+    )
     return engine
 
 def test_engine_init(paper_engine):
@@ -84,13 +89,37 @@ def test_place_order_sell_close(paper_engine):
     assert paper_engine.winning_trades == 1
 
 def test_place_order_sell_short(paper_engine):
-    # Sell without position (short)
+    # Sell without an existing long now OPENS a tracked short position (no cash leak).
     order = paper_engine.place_order("AAPL", "SELL", 10, 150.0)
 
-    # Implementation treats short sell as adding to balance but just logging it
     assert order.status == "FILLED"
-    assert paper_engine.get_balance() == 100000.0 + (10 * 150.0)
-    # Positions are not tracked for simple short sell in this implementation
+    # Opening commits capital (notional), it is not credited to the balance.
+    assert paper_engine.get_balance() == 100000.0 - (10 * 150.0)
+    positions = paper_engine.get_positions()
+    assert len(positions) == 1
+    assert positions[0].side == "SELL"
+    assert positions[0].quantity == 10
+
+
+def test_short_round_trip_profit_when_price_falls(paper_engine):
+    # Open short at 150, cover at 140 -> profit of 10/share.
+    paper_engine.place_order("AAPL", "SELL", 10, 150.0)
+    paper_engine.place_order("AAPL", "BUY", 10, 140.0)
+
+    assert len(paper_engine.get_positions()) == 0
+    assert paper_engine.realized_pnl == 10 * (150.0 - 140.0)
+    assert paper_engine.winning_trades == 1
+
+
+def test_partial_close_reduces_position(paper_engine):
+    paper_engine.place_order("AAPL", "BUY", 10, 100.0)
+    # Sell half.
+    paper_engine.place_order("AAPL", "SELL", 4, 110.0)
+
+    positions = paper_engine.get_positions()
+    assert len(positions) == 1
+    assert positions[0].quantity == 6
+    assert paper_engine.realized_pnl == 4 * (110.0 - 100.0)
 
 def test_update_positions_pnl(paper_engine):
     paper_engine.place_order("AAPL", "BUY", 10, 150.0)
@@ -111,11 +140,13 @@ def test_get_stats(paper_engine):
 
 def test_persistence(tmp_path):
     state_file = tmp_path / "persist.json"
-    engine1 = LocalPaperEngine(initial_balance=1000.0, state_file=state_file)
+    engine1 = LocalPaperEngine(
+        initial_balance=1000.0, state_file=state_file, cost_model=CostModel.zero()
+    )
     engine1.place_order("AAPL", "BUY", 1, 100.0)
 
     # Load new engine from same file
-    engine2 = LocalPaperEngine(state_file=state_file)
+    engine2 = LocalPaperEngine(state_file=state_file, cost_model=CostModel.zero())
     assert engine2.get_balance() == 900.0
     assert len(engine2.get_positions()) == 1
 
@@ -310,7 +341,7 @@ def test_execution_adapter_get_holdings(mock_dhan):
 
 def test_local_adapter_place_order(tmp_path):
     # Need to init with engine that uses tmp_path to avoid creating file in repo
-    engine = LocalPaperEngine(state_file=tmp_path/"paper_wallet.json")
+    engine = LocalPaperEngine(state_file=tmp_path/"paper_wallet.json", cost_model=CostModel.zero())
     adapter = LocalExecutionAdapter(_engine=engine)
     req = OrderRequest("AAPL", "NSE", OrderSide.BUY, 10, price=150.0)
 
@@ -321,7 +352,7 @@ def test_local_adapter_place_order(tmp_path):
     assert result.average_price == 150.0
 
 def test_local_adapter_methods(tmp_path):
-    engine = LocalPaperEngine(state_file=tmp_path/"paper_wallet.json")
+    engine = LocalPaperEngine(state_file=tmp_path/"paper_wallet.json", cost_model=CostModel.zero())
     adapter = LocalExecutionAdapter(_engine=engine)
 
     import asyncio
