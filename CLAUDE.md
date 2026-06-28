@@ -131,6 +131,21 @@ gates the agent pipeline on `is_over_hard_budget()` (a spend kill-switch: skips 
 and entries while still running exits), surfaces today's spend on the dashboard, and fires
 soft-budget + startup/shutdown Telegram messages.
 
+### Profit-target goal engine
+
+[src/profit/goal_engine.py](src/profit/goal_engine.py) turns a configured monthly return
+target (`monthly_profit_target_pct` / `_amount`) into a **risk-bounded plan**: the daily
+pace it implies, the win-rate it needs at the expected trade frequency, and the trade
+frequency it needs at an assumed win-rate (using `risk_per_trade`, `goal_reward_risk_ratio`,
+`daily_loss_limit`, `max_daily_trades`). `ProfitGoalEngine.build_plan(capital)` returns a
+`GoalPlan`; `.evaluate(capital, realized_pnl)` reports on/off-pace vs straight-line pace.
+**Guardrail (do not break this):** the engine is *advisory only* — it never feeds position
+sizing and never relaxes risk. If a target is only reachable by exceeding per-trade risk,
+the daily-loss limit, or the trade cap, the plan is `feasible=False` and the recommended
+action is to *lower the target*, never to take more risk. `run_live_trading.py` logs the
+plan at startup, shows pace on the dashboard, and alerts (via the FinOps `AlertManager`)
+when off-pace or infeasible — always with the "do not increase risk" message.
+
 ### Cross-cutting
 
 `utils/` holds the shared `rate_limiter`, `circuit_breaker`, `cache` (TTL), `errors`
