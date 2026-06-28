@@ -20,7 +20,16 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from src.utils.market_time import is_market_hours, now_ist
+
 console = Console()
+
+
+def _bar(fraction: float, width: int = 16, fill: str = "█", empty: str = "░") -> str:
+    """Render a simple text progress bar for a 0..1 fraction."""
+    fraction = max(0.0, min(1.0, fraction))
+    filled = int(round(fraction * width))
+    return fill * filled + empty * (width - filled)
 
 
 @dataclass
@@ -119,30 +128,39 @@ class TradingStats:
 
 
 def create_header(stats: TradingStats) -> Panel:
-    """Create the header panel with branding."""
+    """Create the header status bar: branding + mode/data/market badges + IST clock."""
 
-    # Mode badges
+    # Mode badge (paper = safe/green, live = red).
     mode_color = "green" if stats.trading_mode == "paper" else "red"
-    mode_text = f"[bold {mode_color}][[{stats.trading_mode.upper()}]][/]"
+    mode_text = f"[bold {mode_color}]\\[{stats.trading_mode.upper()}][/]"
 
-    data_color = "cyan" if stats.data_source == "live" else "yellow"
-    data_text = f"[{data_color}][[{stats.data_source.upper()}]][/]"
+    # Data source badge.
+    is_live_data = "live" in stats.data_source.lower() or "websocket" in stats.data_source.lower()
+    data_color = "cyan" if is_live_data else "yellow"
+    data_text = f"[{data_color}]\\[{stats.data_source.upper()}][/]"
 
-    # Session time
+    # Market open/closed (IST) + clock.
+    market_open = is_market_hours()
+    market_badge = (
+        "[bold green]● NSE OPEN[/]" if market_open else "[dim]○ NSE CLOSED[/]"
+    )
+    clock = now_ist().strftime("%H:%M:%S IST")
+
+    # Session time.
     elapsed = datetime.now() - stats.session_start
     hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
     elapsed_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     grid = Table.grid(expand=True)
-    grid.add_column(justify="left", ratio=1)
-    grid.add_column(justify="center", ratio=2)
-    grid.add_column(justify="right", ratio=1)
+    grid.add_column(justify="left", ratio=2)
+    grid.add_column(justify="center", ratio=3)
+    grid.add_column(justify="right", ratio=2)
 
     grid.add_row(
-        f"{mode_text} {data_text}",
-        "[bold white on blue] RakshaQuant Trading Dashboard [/]",
-        f"[dim]Session: {elapsed_str}[/]",
+        f"{mode_text} {data_text}  {market_badge}",
+        "[bold white on blue] 🛡️  RakshaQuant — Agentic NSE Trading [/]",
+        f"[white]{clock}[/]  [dim]· up {elapsed_str}[/]",
     )
 
     return Panel(grid, style="bold", box=box.DOUBLE_EDGE, border_style="blue")
@@ -383,13 +401,44 @@ def create_agent_panel(stats: TradingStats) -> Panel:
         approval_rate = (stats.signals_validated / stats.signals_generated) * 100
         table.add_row("Approval Rate", f"[cyan]{approval_rate:.0f}%[/]")
 
-    # FinOps: LLM spend today
-    table.add_row("LLM Calls", f"[white]{stats.llm_calls}[/]")
-    table.add_row("LLM Tokens", f"[white]{stats.llm_tokens:,}[/]")
-    table.add_row("Est Cost", f"[cyan]${stats.llm_cost_usd:.4f}[/]")
-
     return Panel(
         table, title="[bold white]🤖 Agent Activity[/]", border_style="magenta", box=box.ROUNDED
+    )
+
+
+def create_status_panel(stats: TradingStats) -> Panel:
+    """Session footer: today's LLM spend (FinOps) + profit-goal pace + controls."""
+
+    content = Text()
+
+    content.append("\n  LLM today (FinOps)\n", style="bold")
+    content.append(f"    Calls:  {stats.llm_calls}\n", style="dim")
+    content.append(f"    Tokens: {stats.llm_tokens:,}\n", style="dim")
+    content.append("    Cost:   ", style="dim")
+    content.append(f"${stats.llm_cost_usd:.4f}\n", style="cyan")
+
+    if stats.goal_enabled:
+        content.append("\n  Profit goal\n", style="bold")
+        if not stats.goal_feasible:
+            content.append("    ⚠ target exceeds risk budget\n", style="yellow")
+        else:
+            target = stats.goal_expected_to_date or 0.0
+            frac = (stats.goal_mtd_pnl / target) if target > 0 else 0.0
+            pace_color = "green" if stats.goal_on_pace else "yellow"
+            content.append(
+                f"    Rs.{stats.goal_mtd_pnl:,.0f} / {stats.goal_expected_to_date:,.0f}\n",
+                style=pace_color,
+            )
+            content.append(f"    {_bar(max(0.0, frac), width=14)}\n", style=pace_color)
+            content.append(
+                f"    {'▲ on pace' if stats.goal_on_pace else '▼ behind pace'}\n",
+                style=pace_color,
+            )
+
+    content.append("\n  Ctrl+C to stop\n", style="dim italic")
+
+    return Panel(
+        content, title="[bold white]⚙️  Session & Cost[/]", border_style="cyan", box=box.ROUNDED
     )
 
 
@@ -497,6 +546,12 @@ def create_dashboard_layout(stats: TradingStats) -> Layout:
         Layout(name="agent"),
     )
 
+    # Footer: activity log (wide) + a session/cost/goal status panel (narrow)
+    layout["footer"].split_row(
+        Layout(name="activity", ratio=3),
+        Layout(name="status", ratio=1),
+    )
+
     # Populate panels
     layout["header"].update(create_header(stats))
     layout["account"].update(create_account_panel(stats))
@@ -506,7 +561,8 @@ def create_dashboard_layout(stats: TradingStats) -> Layout:
     layout["regime"].update(create_regime_panel(stats))
     layout["decision"].update(create_decision_panel(stats))
     layout["agent"].update(create_agent_panel(stats))
-    layout["footer"].update(create_activity_panel(stats))
+    layout["activity"].update(create_activity_panel(stats))
+    layout["status"].update(create_status_panel(stats))
 
     return layout
 

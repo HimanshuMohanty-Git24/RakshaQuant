@@ -12,6 +12,7 @@ from src.dashboard.cli import (
     create_market_overview,
     create_positions_panel,
     create_regime_panel,
+    create_status_panel,
     create_trades_panel,
 )
 
@@ -173,3 +174,22 @@ def test_dashboard_render(dashboard):
     dashboard.start()
     layout = dashboard.render()
     assert layout is not None
+
+
+def test_create_status_panel_with_finops_and_goal(stats):
+    # Status panel renders FinOps spend + profit-goal pace without crashing.
+    stats.llm_calls = 12
+    stats.llm_tokens = 34567
+    stats.llm_cost_usd = 0.0123
+    stats.goal_enabled = True
+    stats.goal_feasible = True
+    stats.goal_on_pace = False
+    stats.goal_mtd_pnl = 5000.0
+    stats.goal_expected_to_date = 8000.0
+    assert create_status_panel(stats) is not None
+
+
+def test_create_status_panel_goal_disabled(stats):
+    # Goal section is simply omitted when disabled.
+    stats.goal_enabled = False
+    assert create_status_panel(stats) is not None
