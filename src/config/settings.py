@@ -267,6 +267,20 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Data ingestion / efficiency
+    # ===========================================
+    signals_exclude_forming_bar: bool = Field(
+        default=True,
+        description="Compute indicators/signals on settled bars only (drop the still-forming "
+        "current-day bar) to avoid intra-bar repainting / look-ahead",
+    )
+    max_quote_staleness_seconds: int = Field(
+        default=0,
+        description="Skip NEW entries when the freshest quote is older than this many seconds "
+        "(0 = disabled). Exits still run on the last known price.",
+    )
+
+    # ===========================================
     # Profit-target goal engine
     # ===========================================
     monthly_profit_target_pct: float = Field(
