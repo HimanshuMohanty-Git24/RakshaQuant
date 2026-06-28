@@ -120,9 +120,11 @@ Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
     keys so a restart can't replay orders). `execution_mode` adds **`shadow`** (mirror the
     live decision/sizing, simulate the fill, send nothing). A `live`/`dhan_paper` request
     **never silently downgrades**: without `allow_live_orders=True` (default-off master gate)
-    or without Dhan creds it resolves to SHADOW with a loud warning. Real broker submission
-    isn't wired yet — even with `allow_live_orders=True` the service returns an explicit
-    reject until the fill-lifecycle slice lands.
+    or without Dhan creds it resolves to SHADOW with a loud warning. Live submission goes
+    through `submit_async` → `LiveBrokerExecutor` ([live_executor.py](src/execution/live_executor.py)),
+    which submits then **polls `get_order_status` to a terminal fill** (never assumes PLACED ==
+    filled); `reconcile_positions` checks local vs broker positions at startup (broker = source
+    of truth). All live paths stay gated behind `allow_live_orders` (default off → shadow).
   - **Paper engine realism (do not regress):** `LocalPaperEngine` fills through a
     [`CostModel`](src/execution/costs.py) (slippage + NSE-style brokerage/STT/GST, all
     configurable via `paper_*` settings; pass `CostModel.zero()` for ideal fills in unit

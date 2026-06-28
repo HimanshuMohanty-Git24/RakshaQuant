@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any
 
 from src.config import get_settings
+from src.execution.adapter import OrderRequest, OrderSide, OrderStatus, OrderType
+from src.execution.live_executor import LiveBrokerExecutor
 from src.execution.paper_engine import LocalPaperEngine
 
 logger = logging.getLogger(__name__)
@@ -140,6 +142,7 @@ class ExecutionService:
     allow_live_orders: bool = False
     idempotency: IdempotencyStore = field(default_factory=IdempotencyStore)
     kill_switch: Callable[[], bool] | None = None
+    broker_executor: LiveBrokerExecutor | None = None
     _effective_mode: ExecutionMode = field(init=False)
 
     def __post_init__(self) -> None:
@@ -199,21 +202,10 @@ class ExecutionService:
         stamp = datetime.now().strftime("%Y%m%d")
         return f"COID-{stamp}-{abs(hash(idempotency_key)) % 10_000_000:07d}"
 
-    def submit(
-        self,
-        *,
-        symbol: str,
-        side: str,
-        quantity: int,
-        price: float,
-        idempotency_key: str,
-        order_type: str = "MARKET",
-    ) -> ExecutionResult:
-        """Submit an order through the effective execution mode (idempotent)."""
-        client_order_id = self._client_order_id(idempotency_key)
-        side = side.upper()
-
-        # Idempotency: never place the same intent twice.
+    def _guard(
+        self, symbol: str, side: str, quantity: int, idempotency_key: str, client_order_id: str
+    ) -> ExecutionResult | None:
+        """Shared pre-submission guards: idempotency dedup + kill switch."""
         prior = self.idempotency.seen(idempotency_key)
         if prior is not None:
             logger.warning("Duplicate submission suppressed for key=%s", idempotency_key)
@@ -224,8 +216,6 @@ class ExecutionService:
                 is_shadow=bool(prior.get("is_shadow", False)), is_duplicate=True,
                 message="idempotency hit — order already submitted",
             )
-
-        # Kill switch (defense-in-depth at the submission site).
         if self.kill_switch is not None and self.kill_switch():
             logger.warning("Kill switch active — blocking %s %s %s", side, quantity, symbol)
             return ExecutionResult(
@@ -233,31 +223,120 @@ class ExecutionService:
                 fill_price=0.0, mode=self._effective_mode.value,
                 client_order_id=client_order_id, message="kill switch active",
             )
+        return None
 
-        mode = self._effective_mode
+    def _fill_paper(
+        self, symbol: str, side: str, quantity: int, price: float, order_type: str,
+        client_order_id: str,
+    ) -> ExecutionResult:
+        """Simulate a fill against the paper engine (local_paper and shadow)."""
+        is_shadow = self._effective_mode == ExecutionMode.SHADOW
+        order = self.engine.place_order(
+            symbol=symbol, side=side, quantity=quantity,
+            current_price=price, order_type=order_type,
+        )
+        message = "SHADOW: simulated, not sent to broker" if is_shadow else "local paper fill"
+        return ExecutionResult(
+            status=order.status, symbol=symbol, side=side, quantity=quantity,
+            fill_price=order.price, mode=self._effective_mode.value,
+            client_order_id=client_order_id, order_id=order.order_id,
+            is_shadow=is_shadow, message=message,
+        )
 
-        if mode in (ExecutionMode.LOCAL_PAPER, ExecutionMode.SHADOW):
-            is_shadow = mode == ExecutionMode.SHADOW
-            order = self.engine.place_order(
-                symbol=symbol, side=side, quantity=quantity,
-                current_price=price, order_type=order_type,
-            )
-            message = "SHADOW: simulated, not sent to broker" if is_shadow else "local paper fill"
-            result = ExecutionResult(
-                status=order.status, symbol=symbol, side=side, quantity=quantity,
-                fill_price=order.price, mode=mode.value, client_order_id=client_order_id,
-                order_id=order.order_id, is_shadow=is_shadow, message=message,
-            )
+    def _record_if_filled(self, idempotency_key: str, result: ExecutionResult) -> None:
+        # Record transacted orders so a rejection/block can be retried but a fill can't repeat.
+        if result.status in ("FILLED", "PARTIALLY_FILLED"):
+            self.idempotency.record(idempotency_key, result.to_dict())
+
+    def submit(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: float,
+        idempotency_key: str,
+        order_type: str = "MARKET",
+    ) -> ExecutionResult:
+        """
+        Submit synchronously. Handles local_paper and shadow; a live mode returns a reject
+        (live submission is async — use submit_async).
+        """
+        side = side.upper()
+        client_order_id = self._client_order_id(idempotency_key)
+        guard = self._guard(symbol, side, quantity, idempotency_key, client_order_id)
+        if guard is not None:
+            return guard
+
+        if self._effective_mode in (ExecutionMode.LOCAL_PAPER, ExecutionMode.SHADOW):
+            result = self._fill_paper(symbol, side, quantity, price, order_type, client_order_id)
         else:
-            # LIVE / DHAN_PAPER with allow_live_orders=True and creds present.
-            # Real broker submission + fill lifecycle is implemented in the next slice.
             result = ExecutionResult(
                 status="REJECTED", symbol=symbol, side=side, quantity=quantity,
-                fill_price=0.0, mode=mode.value, client_order_id=client_order_id,
-                message="live order submission not enabled yet (fill lifecycle pending)",
+                fill_price=0.0, mode=self._effective_mode.value,
+                client_order_id=client_order_id,
+                message="live submission requires submit_async (async broker lifecycle)",
             )
-
-        # Record only orders that actually transacted, so a rejection can be retried.
-        if result.status == "FILLED":
-            self.idempotency.record(idempotency_key, result.to_dict())
+        self._record_if_filled(idempotency_key, result)
         return result
+
+    async def submit_async(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: float,
+        idempotency_key: str,
+        order_type: str = "MARKET",
+    ) -> ExecutionResult:
+        """Submit through the effective mode, awaiting the broker for live modes."""
+        side = side.upper()
+        client_order_id = self._client_order_id(idempotency_key)
+        guard = self._guard(symbol, side, quantity, idempotency_key, client_order_id)
+        if guard is not None:
+            return guard
+
+        if self._effective_mode in (ExecutionMode.LOCAL_PAPER, ExecutionMode.SHADOW):
+            result = self._fill_paper(symbol, side, quantity, price, order_type, client_order_id)
+        elif self.broker_executor is None:
+            result = ExecutionResult(
+                status="REJECTED", symbol=symbol, side=side, quantity=quantity,
+                fill_price=0.0, mode=self._effective_mode.value,
+                client_order_id=client_order_id,
+                message="live mode but no broker executor attached",
+            )
+        else:
+            result = await self._submit_live(
+                symbol, side, quantity, price, order_type, client_order_id
+            )
+        self._record_if_filled(idempotency_key, result)
+        return result
+
+    async def _submit_live(
+        self, symbol: str, side: str, quantity: int, price: float, order_type: str,
+        client_order_id: str,
+    ) -> ExecutionResult:
+        """Place a real order via the broker executor and map its confirmed status."""
+        assert self.broker_executor is not None
+        request = OrderRequest(
+            symbol=symbol,
+            exchange="NSE",
+            side=OrderSide.BUY if side == "BUY" else OrderSide.SELL,
+            quantity=quantity,
+            order_type=OrderType.LIMIT if order_type.upper() == "LIMIT" else OrderType.MARKET,
+            price=price,
+        )
+        confirmed = await self.broker_executor.place_and_confirm(request, client_order_id)
+        status_map = {
+            OrderStatus.FILLED: "FILLED",
+            OrderStatus.PARTIALLY_FILLED: "PARTIALLY_FILLED",
+        }
+        status = status_map.get(confirmed.status, "REJECTED")
+        return ExecutionResult(
+            status=status, symbol=symbol, side=side,
+            quantity=confirmed.filled_quantity or quantity,
+            fill_price=confirmed.average_price or price, mode=self._effective_mode.value,
+            client_order_id=client_order_id, order_id=confirmed.order_id,
+            message=confirmed.message or f"broker status: {confirmed.status.value}",
+        )

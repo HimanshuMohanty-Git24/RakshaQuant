@@ -62,7 +62,9 @@ def test_live_with_opt_in_but_no_creds_runs_shadow_not_local(engine):
     assert svc.effective_mode == ExecutionMode.SHADOW
 
 
-def test_live_with_opt_in_and_creds_stays_live_but_not_yet_sendable(engine):
+def test_live_via_sync_submit_rejects_directs_to_async(engine):
+    # Live orders are async (broker lifecycle); the sync submit() must refuse, never silently
+    # fill the paper wallet. Real live submission goes through submit_async (see live tests).
     fake_settings = MagicMock(dhan_client_id="id", dhan_access_token="tok")
     with patch("src.execution.service.get_settings", return_value=fake_settings):
         svc = ExecutionService(
@@ -73,9 +75,8 @@ def test_live_with_opt_in_and_creds_stays_live_but_not_yet_sendable(engine):
         result = svc.submit(
             symbol="AAPL", side="BUY", quantity=10, price=100.0, idempotency_key="k1"
         )
-    # Real broker submission is not enabled yet — explicit reject, no silent paper fill.
     assert result.status == "REJECTED"
-    assert "not enabled" in result.message
+    assert "submit_async" in result.message
     assert len(engine.get_positions()) == 0
 
 

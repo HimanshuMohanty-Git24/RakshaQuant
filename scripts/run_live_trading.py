@@ -110,6 +110,29 @@ async def run_live_trading():
         "WARNING" if effective not in ("local_paper", "shadow") else "INFO",
     )
 
+    # Live modes only: attach the broker executor and reconcile against the broker at
+    # startup (broker = source of truth). Dormant by default — effective mode is shadow
+    # unless allow_live_orders=True and Dhan creds are present.
+    if effective in ("live", "dhan_paper"):
+        try:
+            from src.execution.adapter import ExecutionAdapter
+            from src.execution.live_executor import LiveBrokerExecutor, reconcile_positions
+
+            broker_adapter = ExecutionAdapter()
+            execution_service.broker_executor = LiveBrokerExecutor(adapter=broker_adapter)
+            broker_positions = await broker_adapter.get_positions()
+            report = reconcile_positions(paper_engine.get_positions(), broker_positions)
+            dashboard.stats.log_activity(
+                f"Broker reconciliation: {report.summary()}",
+                "INFO" if report.in_sync else "WARNING",
+            )
+            if not report.in_sync:
+                await get_alert_manager().alert(
+                    "position_drift", f"Startup reconciliation — {report.summary()}", level="WARNING"
+                )
+        except Exception as e:
+            logger.warning("Live broker setup/reconciliation failed: %s", e)
+
     # Initialize exit manager
     exit_manager = ExitManager(
         trailing_atr_multiplier=1.5,
@@ -449,8 +472,9 @@ async def run_live_trading():
                 strategy = trade.get("strategy", "unknown")
                 quantity = max(1, int((paper_engine.get_balance() * 0.05) / entry_price)) if entry_price > 0 else 1
 
-                # Execute via the unified execution service (idempotent; shadow-aware).
-                result = execution_service.submit(
+                # Execute via the unified execution service (idempotent; shadow-aware;
+                # awaits the broker for live modes).
+                result = await execution_service.submit_async(
                     symbol=symbol, side=side, quantity=quantity, price=entry_price,
                     idempotency_key=f"{workflow_id}:{symbol}:{side}",
                 )
