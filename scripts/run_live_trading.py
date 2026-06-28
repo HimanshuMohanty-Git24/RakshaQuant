@@ -35,6 +35,7 @@ from src.memory.database import AgentMemoryDB
 from src.memory.performance_tracker import get_performance_tracker
 from src.execution.paper_engine import LocalPaperEngine
 from src.execution.exit_manager import ExitManager
+from src.execution.service import ExecutionService, IdempotencyStore
 from src.observability.tracing import setup_tracing
 from src.dashboard.cli import TradingDashboard, create_dashboard_layout
 
@@ -94,6 +95,19 @@ async def run_live_trading():
     paper_engine = LocalPaperEngine(initial_balance=settings.paper_wallet_balance)
     dashboard.stats.log_activity(
         f"Paper engine: Rs. {paper_engine.get_balance():,.0f} balance", "INFO"
+    )
+
+    # Unified execution service: one mode-switched path for order submission with
+    # idempotency (no double-submit on retry/restart) and shadow-mode safety.
+    execution_service = ExecutionService.from_settings(
+        engine=paper_engine,
+        idempotency=IdempotencyStore(Path("paper_idempotency.json")),
+    )
+    effective = execution_service.effective_mode.value
+    dashboard.stats.log_activity(
+        f"Execution mode: {effective}"
+        + (" (SHADOW — mirrors live, sends no real orders)" if effective == "shadow" else ""),
+        "WARNING" if effective not in ("local_paper", "shadow") else "INFO",
     )
 
     # Initialize exit manager
@@ -435,22 +449,29 @@ async def run_live_trading():
                 strategy = trade.get("strategy", "unknown")
                 quantity = max(1, int((paper_engine.get_balance() * 0.05) / entry_price)) if entry_price > 0 else 1
 
-                # Execute via paper engine
-                order = paper_engine.place_order(
-                    symbol=symbol, side=side,
-                    quantity=quantity, current_price=entry_price,
+                # Execute via the unified execution service (idempotent; shadow-aware).
+                result = execution_service.submit(
+                    symbol=symbol, side=side, quantity=quantity, price=entry_price,
+                    idempotency_key=f"{workflow_id}:{symbol}:{side}",
                 )
 
-                if order.status == "FILLED":
+                if result.is_duplicate:
                     dashboard.stats.log_activity(
-                        f"TRADE: {side} {quantity} {symbol} @ Rs.{entry_price:,.2f}", "TRADE"
+                        f"DUPLICATE suppressed: {side} {symbol}", "INFO"
+                    )
+                    continue
+
+                if result.filled:
+                    tag = " [SHADOW]" if result.is_shadow else ""
+                    dashboard.stats.log_activity(
+                        f"TRADE{tag}: {side} {quantity} {symbol} @ Rs.{entry_price:,.2f}", "TRADE"
                     )
                     dashboard.add_position(symbol, side, quantity, entry_price)
                     dashboard.stats.current_balance = paper_engine.get_balance()
 
                     # Register with exit manager for tracking
                     exit_manager.register_position(
-                        position_id=order.order_id,
+                        position_id=result.order_id,
                         symbol=symbol, side=side, quantity=quantity,
                         entry_price=entry_price, stop_loss=stop_loss,
                         target_price=target_price, strategy=strategy,
@@ -458,7 +479,7 @@ async def run_live_trading():
                     )
                 else:
                     dashboard.stats.log_activity(
-                        f"ORDER REJECTED: {symbol} — {order.status}", "WARNING"
+                        f"ORDER {result.status}: {symbol} — {result.message}", "WARNING"
                     )
 
             live.update(create_dashboard_layout(dashboard.stats))
