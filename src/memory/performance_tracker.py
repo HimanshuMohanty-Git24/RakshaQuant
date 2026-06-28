@@ -5,12 +5,18 @@ Tracks real win/loss rates per strategy-regime combination from actual trade his
 Replaces hardcoded performance data in strategy_selection.py with real metrics.
 """
 
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Default persistence location for the singleton tracker.
+DEFAULT_HISTORY_FILE = Path("performance_history.json")
 
 
 @dataclass
@@ -50,10 +56,43 @@ class PerformanceTracker:
         "volatile": {"breakout": 0.45, "momentum": 0.40, "mean_reversion": 0.38, "trend_following": 0.35},
     }
 
-    def __init__(self, min_trades_for_real_data: int = 5):
+    def __init__(self, min_trades_for_real_data: int = 5, state_file: Path | None = None):
         self.min_trades = min_trades_for_real_data
+        self.state_file = state_file
         self._records: list[dict[str, Any]] = []
         self._performance_cache: dict[tuple[str, str], StrategyPerformance] = {}
+        self._load()
+
+    def _load(self) -> None:
+        """Load persisted trade history so win-rate stats survive restarts."""
+        if self.state_file is None or not self.state_file.exists():
+            return
+        try:
+            with open(self.state_file) as f:
+                data = json.load(f)
+            for record in data:
+                record["timestamp"] = datetime.fromisoformat(record["timestamp"])
+                self._records.append(record)
+            logger.info("Loaded %d performance records from %s", len(self._records), self.state_file)
+        except Exception as e:
+            logger.warning("Could not load performance history (%s); starting empty.", e)
+
+    def _save(self) -> None:
+        """Persist trade history atomically (temp file + os.replace)."""
+        if self.state_file is None:
+            return
+        try:
+            serializable = [
+                {**r, "timestamp": r["timestamp"].isoformat()} for r in self._records
+            ]
+            tmp = self.state_file.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                json.dump(serializable, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.state_file)
+        except Exception as e:
+            logger.warning("Could not persist performance history (%s).", e)
 
     def record_trade(self, strategy: str, regime: str, pnl: float, pnl_pct: float,
                      symbol: str = "", timestamp: datetime | None = None):
@@ -65,6 +104,7 @@ class PerformanceTracker:
         })
         # Invalidate cache for this pair
         self._performance_cache.pop((strategy, regime), None)
+        self._save()
         logger.debug(f"Recorded trade: {strategy}/{regime} PnL={pnl:+.2f}")
 
     def get_strategy_performance(self, strategy: str, regime: str,
@@ -128,13 +168,23 @@ class PerformanceTracker:
         if not self._records:
             return {"total_trades": 0, "message": "No trades recorded yet"}
         winners = sum(1 for r in self._records if r["is_winner"])
+
+        by_strategy: dict[str, dict[str, Any]] = {}
+        for record in self._records:
+            bucket = by_strategy.setdefault(
+                record["strategy"], {"trades": 0, "winners": 0, "total_pnl": 0.0}
+            )
+            bucket["trades"] += 1
+            bucket["winners"] += 1 if record["is_winner"] else 0
+            bucket["total_pnl"] += record["pnl"]
+        for bucket in by_strategy.values():
+            bucket["win_rate"] = bucket["winners"] / bucket["trades"] if bucket["trades"] else 0.0
+
         return {
             "total_trades": len(self._records),
             "overall_win_rate": winners / len(self._records),
             "total_pnl": sum(r["pnl"] for r in self._records),
-            "by_strategy": {s: self.get_all_strategy_performance(r)
-                           for s in set(r["strategy"] for r in self._records)
-                           for r in [self._records[0]]},
+            "by_strategy": by_strategy,
         }
 
 
@@ -143,8 +193,8 @@ _tracker_instance: PerformanceTracker | None = None
 
 
 def get_performance_tracker() -> PerformanceTracker:
-    """Get the global performance tracker singleton."""
+    """Get the global performance tracker singleton (persisted to DEFAULT_HISTORY_FILE)."""
     global _tracker_instance
     if _tracker_instance is None:
-        _tracker_instance = PerformanceTracker()
+        _tracker_instance = PerformanceTracker(state_file=DEFAULT_HISTORY_FILE)
     return _tracker_instance

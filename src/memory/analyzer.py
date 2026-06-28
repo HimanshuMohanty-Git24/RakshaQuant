@@ -67,6 +67,69 @@ class TradeOutcome:
         }
 
 
+def compute_outcome(trade: dict[str, Any]) -> TradeOutcome | None:
+    """
+    Compute a detailed TradeOutcome from a trade dict.
+
+    Standalone (no journal/DB needed) so the live loop can turn a just-closed position into
+    a TradeOutcome directly for the learning feedback loop.
+    """
+    try:
+        entry_price = trade.get("entry_price", 0)
+        exit_price = trade.get("exit_price", 0)
+        stop_loss = trade.get("stop_loss", 0)
+        target = trade.get("target_price", 0)
+
+        pnl = trade.get("profit_loss", 0)
+        pnl_pct = trade.get("profit_loss_pct", 0)
+        mae = trade.get("mae", 0)
+        mfe = trade.get("mfe", 0)
+
+        is_winner = pnl > 0
+
+        # Calculate efficiency (how much of max favorable move was captured)
+        if mfe > 0:
+            efficiency = pnl / mfe if pnl > 0 else 0
+        else:
+            efficiency = 0
+
+        # Determine exit type
+        is_buy = trade.get("side") == "BUY"
+
+        if is_buy:
+            hit_stop = exit_price <= stop_loss if stop_loss else False
+            hit_target = exit_price >= target if target else False
+        else:
+            hit_stop = exit_price >= stop_loss if stop_loss else False
+            hit_target = exit_price <= target if target else False
+
+        # Check for premature/late exit
+        was_premature = mfe > 0 and pnl < mfe * 0.5 and pnl > 0  # Won but captured <50% of MFE
+        was_late = mfe > abs(pnl) and pnl < 0  # Had gains but ended in loss
+
+        return TradeOutcome(
+            trade_id=trade.get("trade_id", ""),
+            symbol=trade.get("symbol", ""),
+            strategy=trade.get("strategy", ""),
+            regime=trade.get("regime", "unknown"),
+            is_winner=is_winner,
+            profit_loss=pnl,
+            profit_loss_pct=pnl_pct,
+            mae=mae,
+            mfe=mfe,
+            efficiency=efficiency,
+            hold_duration_minutes=trade.get("hold_duration_minutes", 0),
+            was_premature_exit=was_premature,
+            was_late_exit=was_late,
+            hit_stop_loss=hit_stop,
+            hit_target=hit_target,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to compute outcome: {e}")
+        return None
+
+
 @dataclass
 class TradeOutcomeAnalyzer:
     """
@@ -236,62 +299,9 @@ class TradeOutcomeAnalyzer:
         return patterns
     
     def _compute_outcome(self, trade: dict[str, Any]) -> TradeOutcome | None:
-        """Compute detailed outcome for a trade."""
-        try:
-            entry_price = trade.get("entry_price", 0)
-            exit_price = trade.get("exit_price", 0)
-            stop_loss = trade.get("stop_loss", 0)
-            target = trade.get("target_price", 0)
-            
-            pnl = trade.get("profit_loss", 0)
-            pnl_pct = trade.get("profit_loss_pct", 0)
-            mae = trade.get("mae", 0)
-            mfe = trade.get("mfe", 0)
-            
-            is_winner = pnl > 0
-            
-            # Calculate efficiency (how much of max favorable move was captured)
-            if mfe > 0:
-                efficiency = pnl / mfe if pnl > 0 else 0
-            else:
-                efficiency = 0
-            
-            # Determine exit type
-            is_buy = trade.get("side") == "BUY"
-            
-            if is_buy:
-                hit_stop = exit_price <= stop_loss if stop_loss else False
-                hit_target = exit_price >= target if target else False
-            else:
-                hit_stop = exit_price >= stop_loss if stop_loss else False
-                hit_target = exit_price <= target if target else False
-            
-            # Check for premature/late exit
-            was_premature = mfe > 0 and pnl < mfe * 0.5 and pnl > 0  # Won but captured <50% of MFE
-            was_late = mfe > abs(pnl) and pnl < 0  # Had gains but ended in loss
-            
-            return TradeOutcome(
-                trade_id=trade.get("trade_id", ""),
-                symbol=trade.get("symbol", ""),
-                strategy=trade.get("strategy", ""),
-                regime=trade.get("regime", "unknown"),
-                is_winner=is_winner,
-                profit_loss=pnl,
-                profit_loss_pct=pnl_pct,
-                mae=mae,
-                mfe=mfe,
-                efficiency=efficiency,
-                hold_duration_minutes=trade.get("hold_duration_minutes", 0),
-                was_premature_exit=was_premature,
-                was_late_exit=was_late,
-                hit_stop_loss=hit_stop,
-                hit_target=hit_target,
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to compute outcome: {e}")
-            return None
-    
+        """Compute detailed outcome for a trade (delegates to the module-level helper)."""
+        return compute_outcome(trade)
+
     def _group_by_regime(
         self,
         outcomes: list[TradeOutcome],

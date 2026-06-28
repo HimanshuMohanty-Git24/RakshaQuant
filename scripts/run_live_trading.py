@@ -33,6 +33,9 @@ from src.market.signals import SignalEngine
 from src.market.stock_discovery import StockDiscovery
 from src.memory.database import AgentMemoryDB
 from src.memory.performance_tracker import get_performance_tracker
+from src.memory.classifier import MistakeClassifier
+from src.memory.injection import MemoryInjector
+from src.memory import feedback
 from src.execution.paper_engine import LocalPaperEngine
 from src.execution.exit_manager import ExitManager
 from src.execution.service import ExecutionService, IdempotencyStore
@@ -90,6 +93,16 @@ async def run_live_trading():
     memory_db = AgentMemoryDB()
     perf_tracker = get_performance_tracker()
     dashboard.stats.log_activity("Memory database + performance tracker ready", "INFO")
+
+    # Learning feedback loop: classify closed trades into lessons and measure whether the
+    # lessons that were injected actually helped. Optional (adds an LLM call per loss).
+    mistake_classifier = MistakeClassifier() if settings.enable_learning else None
+    memory_injector = MemoryInjector(memory_db=memory_db) if settings.enable_learning else None
+    # Lesson IDs that were in the agents' context when each position was opened.
+    active_lessons: dict[str, list[str]] = {}
+    dashboard.stats.log_activity(
+        f"Learning loop: {'enabled' if settings.enable_learning else 'disabled'}", "INFO"
+    )
 
     # Initialize paper trading engine
     paper_engine = LocalPaperEngine(initial_balance=settings.paper_wallet_balance)
@@ -261,6 +274,37 @@ async def run_live_trading():
                     )
                     if exit_rule.partial_pct >= 1.0:
                         exit_manager.unregister_position(pos.position_id)
+                        # ── Learning feedback (resilient; never disrupts trading) ──
+                        # Turn the closed trade into a lesson, and mark the lessons that were
+                        # active when this position was opened as successful/unsuccessful.
+                        if settings.enable_learning and mistake_classifier and memory_injector:
+                            pnl_pct = (
+                                (pnl / (pos.entry_price * pos.quantity)) * 100
+                                if pos.entry_price else 0.0
+                            )
+                            hold_minutes = int(
+                                (datetime.now() - pos.entry_time).total_seconds() / 60
+                            )
+                            outcome = feedback.build_outcome(
+                                trade_id=pos.position_id, symbol=pos.symbol,
+                                strategy=pos.strategy, regime=pos.regime_at_entry,
+                                side=pos.side, entry_price=pos.entry_price,
+                                exit_price=exit_price, stop_loss=pos.stop_loss,
+                                target_price=pos.target_price, pnl=pnl, pnl_pct=pnl_pct,
+                                mae=pos.mae, mfe=pos.mfe, hold_minutes=hold_minutes,
+                            )
+                            mistake = feedback.learn_from_outcome(
+                                memory_injector, mistake_classifier, outcome
+                            )
+                            if mistake:
+                                dashboard.stats.log_activity(
+                                    f"Lesson learned: [{mistake.severity}] {mistake.category}",
+                                    "INFO",
+                                )
+                            feedback.mark_lessons_outcome(
+                                memory_db, active_lessons.pop(pos.position_id, []),
+                                was_successful=pnl > 0,
+                            )
                     else:
                         pos.partial_taken = True
 
@@ -501,6 +545,10 @@ async def run_live_trading():
                         target_price=target_price, strategy=strategy,
                         regime=regime,
                     )
+                    # Remember which lessons were in the agents' context at entry, so we can
+                    # mark them successful/unsuccessful when this position closes.
+                    if settings.enable_learning:
+                        active_lessons[result.order_id] = feedback.lesson_ids(memory_lessons)
                 else:
                     dashboard.stats.log_activity(
                         f"ORDER {result.status}: {symbol} — {result.message}", "WARNING"

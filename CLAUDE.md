@@ -144,6 +144,15 @@ PostgreSQL `DATABASE_URL` from settings, but `AgentMemoryDB._initialize_db()` si
 falls back to an in-memory SQLite database if that connection fails — so memory works
 (non-persistently, lost on restart) even without Postgres.
 
+The loop is **closed at runtime** (gated by `enable_learning`): on each full close,
+`run_live_trading.py` builds a `TradeOutcome` (`analyzer.compute_outcome`), classifies it into
+a lesson (`MistakeClassifier`) and stores it, and marks the lessons that were *active when the
+position was opened* as successful/unsuccessful (`memory.feedback` helpers — all
+failure-isolated; learning must never disrupt trading). `PerformanceTracker` persists its
+trade history to `performance_history.json`, so real win-rates survive restarts instead of
+resetting to the hardcoded priors. (Still open: the two divergent decay formulas in
+`database.py` vs `scheduler.py` — pick one when next touching memory.)
+
 ### FinOps (cost tracking & alerts)
 
 [src/finops/](src/finops/) accounts for LLM spend and raises operational alerts.
