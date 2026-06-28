@@ -110,10 +110,19 @@ Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
     reach signals or the agent JSON as `NaN`. Indicator results are memoized via
     `get_indicator_cache()` (keyed by symbol/last-bar/close). The loop skips **new entries**
     when the freshest quote is older than `max_quote_staleness_seconds` (exits still run).
-- **Execution** — [src/execution/adapter.py](src/execution/adapter.py) routes orders by
-  `execution_mode`: `LocalExecutionAdapter` (wraps `paper_engine.py`'s virtual wallet, free)
-  or `ExecutionAdapter` (DhanHQ, imported lazily and optional). `exit_manager.py` handles
-  trailing stops / time exits / partial profits; `journal.py` logs trade history.
+- **Execution** — [src/execution/service.py](src/execution/service.py) `ExecutionService` is
+  the single mode-switched entry point the live loop uses to place orders. It wraps
+  `paper_engine.py` (and, later, the broker in [adapter.py](src/execution/adapter.py):
+  `ExecutionAdapter` for DhanHQ, imported lazily). `exit_manager.py` handles trailing stops /
+  time exits / partial profits; `journal.py` logs trade history.
+  - **Execution safety (do not regress):** every `submit(...)` carries an `idempotency_key`;
+    a repeat returns a `DUPLICATE` instead of placing again (an `IdempotencyStore` persists
+    keys so a restart can't replay orders). `execution_mode` adds **`shadow`** (mirror the
+    live decision/sizing, simulate the fill, send nothing). A `live`/`dhan_paper` request
+    **never silently downgrades**: without `allow_live_orders=True` (default-off master gate)
+    or without Dhan creds it resolves to SHADOW with a loud warning. Real broker submission
+    isn't wired yet — even with `allow_live_orders=True` the service returns an explicit
+    reject until the fill-lifecycle slice lands.
   - **Paper engine realism (do not regress):** `LocalPaperEngine` fills through a
     [`CostModel`](src/execution/costs.py) (slippage + NSE-style brokerage/STT/GST, all
     configurable via `paper_*` settings; pass `CostModel.zero()` for ideal fills in unit
