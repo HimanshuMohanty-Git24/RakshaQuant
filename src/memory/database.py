@@ -21,6 +21,21 @@ logger = logging.getLogger(__name__)
 Base = declarative_base()
 
 
+def decayed_score(base_score: float, age_days: int, decay_days: int) -> float:
+    """
+    Single source of truth for lesson relevance decay.
+
+    Lessons keep full relevance for ``decay_days``, then decay ~5% per week of age beyond
+    that. No artificial floor — a stale lesson is allowed to fall below the cleanup threshold
+    so it can be pruned. Previously database.py and scheduler.py used two *different* formulas
+    (5%/week vs 10%/day) that overwrote each other; both now call this.
+    """
+    if age_days <= decay_days:
+        return base_score
+    decay_factor = float(0.95 ** ((age_days - decay_days) / 7))
+    return round(base_score * decay_factor, 6)
+
+
 class LessonRecord(Base):
     """SQLAlchemy model for stored lessons."""
     
@@ -371,12 +386,12 @@ class AgentMemoryDB:
                     created_at = created_at.replace(tzinfo=UTC)
                 
                 age_days = (now - created_at).days
-                
+
                 if age_days > self.decay_days:
-                    # Apply exponential decay after decay_days
-                    decay_factor = 0.95 ** ((age_days - self.decay_days) / 7)  # 5% per week
-                    record.current_score = record.base_score * max(decay_factor, self.min_score)
-            
+                    record.current_score = decayed_score(
+                        record.base_score, age_days, self.decay_days
+                    )
+
             self._session.commit()
             
         except Exception as e:

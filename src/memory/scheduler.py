@@ -62,29 +62,23 @@ class MemoryDecayScheduler:
                 logger.warning("No database session available")
                 return {"status": "error", "message": "No database session"}
             
-            from .database import LessonRecord
-            
+            from .database import LessonRecord, decayed_score
+
             now = datetime.now(UTC)
             decay_threshold = now - timedelta(days=self.memory_db.decay_days)
-            
+
             # Get lessons older than decay threshold
             old_lessons = session.query(LessonRecord).filter(
                 LessonRecord.created_at < decay_threshold
             ).all()
-            
+
             decayed_count = 0
             for lesson in old_lessons:
-                # Calculate decay factor based on age
                 age_days = (now - lesson.created_at.replace(tzinfo=UTC)).days
-                excess_days = age_days - self.memory_db.decay_days
-                
-                # Decay formula: score = base_score * (0.9 ^ excess_days)
-                decay_factor = 0.9 ** excess_days
-                new_score = lesson.base_score * decay_factor
-                
-                # Apply minimum score
-                new_score = max(new_score, 0.01)
-                
+                # Use the shared decay formula (single source of truth in database.py)
+                # so the scheduler and on-read decay never disagree.
+                new_score = decayed_score(lesson.base_score, age_days, self.memory_db.decay_days)
+
                 if new_score != lesson.current_score:
                     lesson.current_score = new_score
                     decayed_count += 1
