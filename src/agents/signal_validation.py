@@ -62,6 +62,11 @@ For EACH signal, respond with JSON:
     ]
 }
 
+Use ALL the enrichment provided: the ML prediction consensus and news/market-mood are
+independent evidence. Reject or reduce a signal that contradicts a high-confidence ML
+prediction or strongly opposing sentiment; raise confidence when they confirm the signal.
+Give a calibrated confidence (genuine probability the trade works), not a default value.
+
 Be selective - it's better to miss a trade than take a bad one.
 Quality over quantity."""
 

@@ -44,6 +44,8 @@ Consider:
 - Avoid strategies that historically underperformed in the current regime
 - Don't be too aggressive - selecting 1-2 strategies is often better than all 4
 - Weight memory lessons heavily - past mistakes should inform current decisions
+- Lean on the REAL historical win-rates provided (not assumptions); prefer strategies with a
+  proven edge in this regime, and be cautious when win-rates are only prior estimates
 
 Respond with JSON:
 {

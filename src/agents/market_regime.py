@@ -49,7 +49,13 @@ Respond with a JSON object containing:
     "key_factors": ["list", "of", "key", "indicators", "considered"]
 }
 
-Be conservative - if unsure, prefer "ranging" or lower confidence scores.
+Weigh ALL the context you are given, not just price: news sentiment and the Market Mood Index
+are leading indicators of regime shifts, and the ML prediction consensus is corroborating
+evidence — when they disagree with the price-based read, lower your confidence.
+
+Calibrate confidence to genuine probability, not enthusiasm: reserve >0.8 only when multiple
+independent factors (trend indicators + sentiment + predictions) agree; use 0.4–0.6 for a
+single weak signal; prefer "ranging" with lower confidence when unsure.
 Consider the memory lessons carefully to avoid past mistakes."""
 
 
