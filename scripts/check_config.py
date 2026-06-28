@@ -1,6 +1,8 @@
 """Quick config validation script."""
+
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
+
+sys.stdout.reconfigure(encoding="utf-8")
 
 from src.config import get_settings
 
@@ -25,7 +27,7 @@ print(f"Paper Wallet:     Rs.{s.paper_wallet_balance:,.0f}")
 print(f"News Analysis:    {'[Enabled]' if s.enable_news_analysis else '[Disabled]'}")
 
 # Telegram
-telegram_ok = bool(getattr(s, 'telegram_bot_token', None) and getattr(s, 'telegram_chat_id', None))
+telegram_ok = bool(getattr(s, "telegram_bot_token", None) and getattr(s, "telegram_chat_id", None))
 print(f"Telegram Alerts:  {'[OK]' if telegram_ok else '[Not configured - optional]'}")
 
 # Cross-field validation warnings (live-mode creds, risk-param sanity, market hours, ...)

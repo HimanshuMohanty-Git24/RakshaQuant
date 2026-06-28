@@ -29,6 +29,7 @@ class _FakeResponse:
 # Cost accounting
 # ---------------------------------------------------------------------------
 
+
 def test_estimate_cost_known_model():
     t = CostTracker()
     # llama-3.3-70b-versatile = (0.59, 0.79) USD / 1M tokens
@@ -66,6 +67,7 @@ def test_register_pricing_override():
 # ---------------------------------------------------------------------------
 # Budgets
 # ---------------------------------------------------------------------------
+
 
 def _settings(token_budget=0, cost_budget=0.0, soft=0.8):
     return MagicMock(
@@ -116,6 +118,7 @@ def test_cost_budget_hard_breach():
 # Usage extraction from LangChain responses
 # ---------------------------------------------------------------------------
 
+
 def test_extract_usage_from_usage_metadata():
     resp = _FakeResponse(usage_metadata={"input_tokens": 120, "output_tokens": 30})
     assert _extract_usage(resp) == (120, 30)
@@ -140,6 +143,7 @@ def test_extract_model_from_response_metadata():
 # ---------------------------------------------------------------------------
 # record_llm_response (the agent-side hook)
 # ---------------------------------------------------------------------------
+
 
 def test_record_llm_response_records_to_singleton():
     reset_cost_tracker()
@@ -171,6 +175,7 @@ def test_record_llm_response_never_raises_on_bad_response():
 # ---------------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------------
+
 
 async def test_alert_dedup_and_telegram_send():
     reset_alert_manager()

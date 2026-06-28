@@ -1,10 +1,22 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from src.agents.state import create_initial_state, MarketRegime
-from src.agents.market_regime import market_regime_node, _build_regime_context, _parse_regime_response
-from src.agents.risk_compliance import risk_compliance_node, RiskLimits, check_kill_switch
-from src.agents.signal_validation import signal_validation_node, _build_validation_context, _parse_validation_response
-from src.agents.strategy_selection import strategy_selection_node, _build_strategy_context, _parse_strategy_response
+
+from src.agents.market_regime import (
+    _build_regime_context,
+    _parse_regime_response,
+    market_regime_node,
+)
+from src.agents.risk_compliance import RiskLimits, check_kill_switch, risk_compliance_node
+from src.agents.signal_validation import (
+    _build_validation_context,
+    _parse_validation_response,
+    signal_validation_node,
+)
+from src.agents.state import MarketRegime, create_initial_state
+from src.agents.strategy_selection import (
+    _build_strategy_context,
+    _parse_strategy_response,
+    strategy_selection_node,
+)
 
 # Mock settings
 with patch("src.config.get_settings") as mock_get_settings:
@@ -15,6 +27,7 @@ with patch("src.config.get_settings") as mock_get_settings:
 
 # --- Market Regime Tests ---
 
+
 def test_build_regime_context():
     indicators = {"A": {"trend": {"adx": 30}}}
     market_data = {"A": {"change_percent": 1.0}}
@@ -23,6 +36,7 @@ def test_build_regime_context():
     context = _build_regime_context(indicators, market_data, lessons)
     assert "ADX" in context
     assert "mistake" in context
+
 
 def test_parse_regime_response():
     # Valid
@@ -39,12 +53,15 @@ def test_parse_regime_response():
     res = _parse_regime_response("invalid json")
     assert res["regime"] == MarketRegime.UNKNOWN.value
 
+
 @patch("src.agents.market_regime.ChatGroq")
 @patch("src.agents.market_regime.get_settings")
 def test_market_regime_node(mock_settings, mock_llm_cls):
     mock_settings.return_value.groq_api_key.get_secret_value.return_value = "token"
     mock_llm = MagicMock()
-    mock_llm.invoke.return_value.content = '{"regime": "ranging", "confidence": 0.6, "reasoning": "flat"}'
+    mock_llm.invoke.return_value.content = (
+        '{"regime": "ranging", "confidence": 0.6, "reasoning": "flat"}'
+    )
     mock_llm_cls.return_value = mock_llm
 
     state = create_initial_state()
@@ -53,12 +70,13 @@ def test_market_regime_node(mock_settings, mock_llm_cls):
     assert result["regime"] == "ranging"
     assert result["regime_confidence"] == 0.6
 
+
 @patch("src.agents.market_regime.ChatGroq")
 def test_market_regime_node_error(mock_llm_cls):
     mock_llm_cls.side_effect = Exception("API Error")
 
     state = create_initial_state()
-    state["market_data"] = {"A": {"change_percent": 1.0}} # Positive -> trending_up fallback
+    state["market_data"] = {"A": {"change_percent": 1.0}}  # Positive -> trending_up fallback
 
     with patch("src.agents.market_regime.get_settings"):
         result = market_regime_node(state)
@@ -69,24 +87,24 @@ def test_market_regime_node_error(mock_llm_cls):
 
 # --- Risk Compliance Tests ---
 
+
 def test_risk_compliance_node():
     state = create_initial_state()
-    state["validated_signals"] = [
-        {"symbol": "A", "confidence": 0.8, "risk_reward_ratio": 2.0}
-    ]
+    state["validated_signals"] = [{"symbol": "A", "confidence": 0.8, "risk_reward_ratio": 2.0}]
 
     # Mock IST clock to be within trading hours
     with patch("src.agents.risk_compliance.now_ist") as mock_now:
         mock_now.return_value.strftime.return_value = "12:00"
 
         with patch("src.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
-            limits = RiskLimits() # Defaults
+            limits = RiskLimits()  # Defaults
             mock_limits.return_value = limits
 
             result = risk_compliance_node(state)
 
             assert len(result["approved_trades"]) == 1
             assert result["approved_trades"][0]["risk_result"]["approved"] is True
+
 
 def test_risk_compliance_blocking():
     state = create_initial_state()
@@ -103,6 +121,7 @@ def test_risk_compliance_blocking():
         assert len(result["approved_trades"]) == 0
         assert len(result["risk_rejected"]) == 1
 
+
 def test_check_kill_switch():
     state = create_initial_state()
     limits = RiskLimits(max_daily_loss=1000)
@@ -118,11 +137,13 @@ def test_check_kill_switch():
 
 # --- Signal Validation Tests ---
 
+
 def test_build_validation_context():
     signals = [{"symbol": "A", "confidence": 0.8}]
     context = _build_validation_context(signals, "bull", 0.9, ["mom"], [])
     assert "A" in context
     assert "bull" in context
+
 
 def test_parse_validation_response():
     signals = [{"signal_id": "1"}, {"signal_id": "2"}]
@@ -133,12 +154,15 @@ def test_parse_validation_response():
     assert res["validated"][0]["signal_id"] == "1"
     assert len(res["rejected"]) == 1
 
+
 @patch("src.agents.signal_validation.ChatGroq")
 @patch("src.agents.signal_validation.get_settings")
 def test_signal_validation_node(mock_settings, mock_llm_cls):
     mock_settings.return_value.groq_api_key.get_secret_value.return_value = "token"
     mock_llm = MagicMock()
-    mock_llm.invoke.return_value.content = '{"validations": [{"signal_id": "1", "decision": "approve"}]}'
+    mock_llm.invoke.return_value.content = (
+        '{"validations": [{"signal_id": "1", "decision": "approve"}]}'
+    )
     mock_llm_cls.return_value = mock_llm
 
     state = create_initial_state()
@@ -150,9 +174,11 @@ def test_signal_validation_node(mock_settings, mock_llm_cls):
 
 # --- Strategy Selection Tests ---
 
+
 def test_build_strategy_context():
     context = _build_strategy_context("bull", 0.9, [], {})
     assert "bull" in context
+
 
 def test_parse_strategy_response():
     content = '{"active_strategies": ["momentum"], "reasoning": "trend"}'
@@ -164,6 +190,7 @@ def test_parse_strategy_response():
     res = _parse_strategy_response(content)
     # Defaults to trend_following if list empty
     assert "trend_following" in res["active_strategies"]
+
 
 @patch("src.agents.strategy_selection.ChatGroq")
 @patch("src.agents.strategy_selection.get_settings")

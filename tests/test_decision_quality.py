@@ -21,8 +21,19 @@ from src.market.sizing import calculate_position_size
 
 def _ind(**over):
     base = dict(
-        symbol="X", timeframe=Timeframe.D1, open=100, high=101, low=99, close=100, volume=1000,
-        sma={20: 95}, ema={21: 95}, rsi=40, macd_histogram=0.5, plus_di=25, minus_di=15,
+        symbol="X",
+        timeframe=Timeframe.D1,
+        open=100,
+        high=101,
+        low=99,
+        close=100,
+        volume=1000,
+        sma={20: 95},
+        ema={21: 95},
+        rsi=40,
+        macd_histogram=0.5,
+        plus_di=25,
+        minus_di=15,
     )
     base.update(over)
     return IndicatorResult(**base)
@@ -31,6 +42,7 @@ def _ind(**over):
 # ---------------------------------------------------------------------------
 # 5b — evidence-based confidence
 # ---------------------------------------------------------------------------
+
 
 def test_confidence_full_agreement_is_high():
     eng = SignalEngine()
@@ -55,10 +67,14 @@ def test_confidence_defaults_to_mid_without_indicators():
 # 5b — risk-based sizing (the sizing the live loop now uses)
 # ---------------------------------------------------------------------------
 
+
 def test_position_size_respects_risk_and_position_caps():
     result = calculate_position_size(
-        capital=100_000, entry_price=100, stop_loss=90,
-        risk_per_trade=0.02, max_position_pct=0.10,
+        capital=100_000,
+        entry_price=100,
+        stop_loss=90,
+        risk_per_trade=0.02,
+        max_position_pct=0.10,
     )
     assert result.shares > 0
     # Never risks more than the configured per-trade budget.
@@ -68,10 +84,12 @@ def test_position_size_respects_risk_and_position_caps():
 
 
 def test_position_size_scales_with_stop_distance():
-    tight = calculate_position_size(capital=100_000, entry_price=100, stop_loss=99,
-                                    risk_per_trade=0.01, max_position_pct=1.0)
-    wide = calculate_position_size(capital=100_000, entry_price=100, stop_loss=80,
-                                   risk_per_trade=0.01, max_position_pct=1.0)
+    tight = calculate_position_size(
+        capital=100_000, entry_price=100, stop_loss=99, risk_per_trade=0.01, max_position_pct=1.0
+    )
+    wide = calculate_position_size(
+        capital=100_000, entry_price=100, stop_loss=80, risk_per_trade=0.01, max_position_pct=1.0
+    )
     # A wider stop (more risk per share) => fewer shares for the same risk budget.
     assert wide.shares < tight.shares
 
@@ -80,11 +98,17 @@ def test_position_size_scales_with_stop_distance():
 # 5d — RealSignalStrategy + scorecard
 # ---------------------------------------------------------------------------
 
+
 def _bars(n=60):
     closes = 100 + np.linspace(0, 6, n)
     return pd.DataFrame(
-        {"Open": closes - 0.2, "High": closes + 0.5, "Low": closes - 0.5,
-         "Close": closes, "Volume": np.full(n, 100_000)},
+        {
+            "Open": closes - 0.2,
+            "High": closes + 0.5,
+            "Low": closes - 0.5,
+            "Close": closes,
+            "Volume": np.full(n, 100_000),
+        },
         index=pd.date_range("2024-01-01", periods=n, freq="D"),
     )
 
@@ -101,11 +125,25 @@ def test_real_signal_strategy_uses_live_engine():
 
 def _bt(**over):
     base = dict(
-        strategy_name="s", symbol="X", start_date="a", end_date="b",
-        initial_capital=100, final_capital=110, total_return=10, total_return_pct=10,
-        total_trades=5, winning_trades=3, losing_trades=2, win_rate=60,
-        avg_win=5, avg_loss=-3, profit_factor=1.5, expectancy=2,
-        max_drawdown=5, max_drawdown_pct=5, sharpe_ratio=1.0,
+        strategy_name="s",
+        symbol="X",
+        start_date="a",
+        end_date="b",
+        initial_capital=100,
+        final_capital=110,
+        total_return=10,
+        total_return_pct=10,
+        total_trades=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate=60,
+        avg_win=5,
+        avg_loss=-3,
+        profit_factor=1.5,
+        expectancy=2,
+        max_drawdown=5,
+        max_drawdown_pct=5,
+        sharpe_ratio=1.0,
     )
     base.update(over)
     return BacktestResult(**base)
@@ -128,6 +166,7 @@ def test_compare_results_flags_regression():
 # ---------------------------------------------------------------------------
 # 5c — prompts ask for calibration and to weigh the enrichment
 # ---------------------------------------------------------------------------
+
 
 def test_regime_prompt_asks_for_calibration_and_enrichment():
     text = REGIME_SYSTEM_PROMPT.lower()

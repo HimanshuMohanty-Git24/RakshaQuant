@@ -38,11 +38,11 @@ def _num(value: Any, default: float) -> float:
 class CostModel:
     """Slippage + charges applied to paper fills (all rates in basis points unless noted)."""
 
-    slippage_bps: float = 0.0      # adverse price move on fill (e.g. 2 = 0.02%)
-    brokerage_bps: float = 0.0     # broker commission as bps of notional
-    brokerage_max: float = 0.0     # per-order brokerage cap in INR (0 = uncapped)
-    statutory_bps: float = 0.0     # combined STT + exchange txn + SEBI + stamp, as bps
-    gst_pct: float = 0.0           # GST as a percentage of brokerage
+    slippage_bps: float = 0.0  # adverse price move on fill (e.g. 2 = 0.02%)
+    brokerage_bps: float = 0.0  # broker commission as bps of notional
+    brokerage_max: float = 0.0  # per-order brokerage cap in INR (0 = uncapped)
+    statutory_bps: float = 0.0  # combined STT + exchange txn + SEBI + stamp, as bps
+    gst_pct: float = 0.0  # GST as a percentage of brokerage
 
     @classmethod
     def zero(cls) -> CostModel:

@@ -351,59 +351,70 @@ class Settings(BaseSettings):
     # Validation
     # ===========================================
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_configuration(self) -> "Settings":
         """Validate configuration consistency."""
         errors = []
-        
+
         # Live trading requires broker credentials
         if self.trading_mode == "live":
             if not self.dhan_client_id or not self.dhan_access_token:
-                errors.append("Live trading requires Dhan credentials (DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)")
-        
+                errors.append(
+                    "Live trading requires Dhan credentials (DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)"
+                )
+
         # Dhan execution modes require Dhan data source
         if self.execution_mode in ["dhan_paper", "live"] and self.market_data_source == "yfinance":
-            errors.append("Dhan execution modes should use 'dhan' market_data_source for consistency")
-        
+            errors.append(
+                "Dhan execution modes should use 'dhan' market_data_source for consistency"
+            )
+
         # Validate risk parameters
         if self.risk_per_trade > self.max_position_pct:
-            errors.append(f"risk_per_trade ({self.risk_per_trade}) should not exceed max_position_pct ({self.max_position_pct})")
-        
+            errors.append(
+                f"risk_per_trade ({self.risk_per_trade}) should not exceed max_position_pct ({self.max_position_pct})"
+            )
+
         if self.max_total_risk < self.risk_per_trade:
-            errors.append(f"max_total_risk ({self.max_total_risk}) should not be less than risk_per_trade ({self.risk_per_trade})")
-        
+            errors.append(
+                f"max_total_risk ({self.max_total_risk}) should not be less than risk_per_trade ({self.risk_per_trade})"
+            )
+
         # Validate market hours
         try:
             from datetime import datetime
+
             open_time = datetime.strptime(self.market_open_time, "%H:%M")
             close_time = datetime.strptime(self.market_close_time, "%H:%M")
             if open_time >= close_time:
                 errors.append("market_open_time must be before market_close_time")
         except ValueError as e:
             errors.append(f"Invalid market hours format: {e}")
-        
+
         # Validate trading window
         try:
             from datetime import datetime
+
             no_before = datetime.strptime(self.no_trading_before, "%H:%M")
             no_after = datetime.strptime(self.no_trading_after, "%H:%M")
             if no_before >= no_after:
                 errors.append("no_trading_before must be before no_trading_after")
         except ValueError as e:
             errors.append(f"Invalid trading window format: {e}")
-        
+
         # Telegram requires both token and chat_id
         if self.telegram_enabled:
             if self.telegram_bot_token and not self.telegram_chat_id:
                 errors.append("telegram_chat_id required when telegram_bot_token is set")
             if self.telegram_chat_id and not self.telegram_bot_token:
                 errors.append("telegram_bot_token required when telegram_chat_id is set")
-        
+
         # Store warnings on the instance so tooling can surface them, and log them.
         self._config_warnings = errors
         if errors:
             # Log warnings instead of raising for non-critical issues
             import logging
+
             logger = logging.getLogger(__name__)
             for error in errors:
                 logger.warning(f"Configuration warning: {error}")

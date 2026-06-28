@@ -45,6 +45,7 @@ def _ohlcv(dates, base=100.0):
 # HistoryManager.append_quote — volume double-count fix
 # ---------------------------------------------------------------------------
 
+
 def test_append_quote_does_not_sum_cumulative_volume():
     hm = HistoryManager(symbols=[])
     today = pd.Timestamp(now_ist().date())
@@ -70,6 +71,7 @@ def test_append_quote_does_not_sum_cumulative_volume():
 # ---------------------------------------------------------------------------
 # HistoryManager.get_history — forming-bar exclusion
 # ---------------------------------------------------------------------------
+
 
 def test_get_history_excludes_forming_bar():
     hm = HistoryManager(symbols=[])
@@ -101,6 +103,7 @@ def test_get_history_never_empties_when_all_today():
 # NaN/inf sanitization
 # ---------------------------------------------------------------------------
 
+
 def test_safe_float():
     assert _safe_float(1.5) == 1.5
     assert _safe_float(float("nan")) is None
@@ -127,6 +130,7 @@ def test_calculate_indicators_emits_no_nan():
 # ---------------------------------------------------------------------------
 # IndicatorCache
 # ---------------------------------------------------------------------------
+
 
 def test_indicator_cache_hits_on_identical_data():
     reset_indicator_cache()
@@ -160,10 +164,20 @@ def test_indicator_cache_misses_when_last_close_changes():
 # MarketQuote staleness
 # ---------------------------------------------------------------------------
 
+
 def _quote(ts):
     return MarketQuote(
-        symbol="X", last_price=100.0, open=100.0, high=101.0, low=99.0, close=99.5,
-        change=0.5, change_percent=0.5, volume=1000, is_live=False, timestamp=ts,
+        symbol="X",
+        last_price=100.0,
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=99.5,
+        change=0.5,
+        change_percent=0.5,
+        volume=1000,
+        is_live=False,
+        timestamp=ts,
     )
 
 

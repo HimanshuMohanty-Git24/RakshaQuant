@@ -1,35 +1,33 @@
-import asyncio
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from src.utils.rate_limiter import (
-    RateLimiter,
-    get_groq_limiter,
-    rate_limited,
-    _groq_limiter
-)
+
 from src.utils.cache import (
     TTLCache,
-    CacheEntry,
+    _caches,
+    cached,
     get_cache,
+    get_discovery_cache,
     get_news_cache,
     get_quote_cache,
     get_sentiment_cache,
-    get_discovery_cache,
-    cached,
-    _caches
 )
+from src.utils.rate_limiter import RateLimiter, get_groq_limiter, rate_limited
 
 # --- RateLimiter Tests ---
+
 
 @pytest.fixture
 def rate_limiter():
     return RateLimiter(requests_per_minute=60)  # 1 request per second
 
+
 def test_rate_limiter_init(rate_limiter):
     assert rate_limiter.requests_per_minute == 60
     assert rate_limiter.tokens_per_second == 1.0
     assert rate_limiter._tokens == 60.0
+
 
 def test_rate_limiter_refill(rate_limiter):
     rate_limiter._tokens = 0.0
@@ -42,9 +40,10 @@ def test_rate_limiter_refill(rate_limiter):
 
     # Check capping
     rate_limiter._tokens = 59.0
-    rate_limiter._last_refill = time.monotonic() - 10.0 # 10 seconds ago
+    rate_limiter._last_refill = time.monotonic() - 10.0  # 10 seconds ago
     rate_limiter._refill_tokens()
     assert rate_limiter._tokens == 60.0
+
 
 @pytest.mark.asyncio
 async def test_rate_limiter_acquire_async(rate_limiter):
@@ -58,6 +57,7 @@ async def test_rate_limiter_acquire_async(rate_limiter):
         assert await rate_limiter.acquire() is True
         mock_sleep.assert_called_once()
 
+
 def test_rate_limiter_acquire_sync(rate_limiter):
     rate_limiter._tokens = 1.0
     assert rate_limiter.acquire_sync() is True
@@ -69,6 +69,7 @@ def test_rate_limiter_acquire_sync(rate_limiter):
         assert rate_limiter.acquire_sync() is True
         mock_sleep.assert_called_once()
 
+
 def test_rate_limiter_get_wait_time(rate_limiter):
     rate_limiter._tokens = 1.0
     assert rate_limiter.get_wait_time() == 0.0
@@ -77,15 +78,18 @@ def test_rate_limiter_get_wait_time(rate_limiter):
     # Needed 0.5 more, at 1 token/sec => 0.5 sec
     assert abs(rate_limiter.get_wait_time() - 0.5) < 0.01
 
+
 def test_get_groq_limiter():
     # Reset global
     import src.utils.rate_limiter
+
     src.utils.rate_limiter._groq_limiter = None
 
     limiter1 = get_groq_limiter()
     limiter2 = get_groq_limiter()
     assert limiter1 is limiter2
     assert limiter1.requests_per_minute == 30
+
 
 @pytest.mark.asyncio
 async def test_rate_limited_decorator_async():
@@ -99,6 +103,7 @@ async def test_rate_limited_decorator_async():
     assert await my_func() == "success"
     limiter.acquire.assert_called_once()
 
+
 def test_rate_limited_decorator_sync():
     limiter = RateLimiter(requests_per_minute=60)
     limiter.acquire_sync = MagicMock(return_value=True)
@@ -109,6 +114,7 @@ def test_rate_limited_decorator_sync():
 
     assert my_func() == "success"
     limiter.acquire_sync.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_rate_limited_retry_async():
@@ -126,6 +132,7 @@ async def test_rate_limited_retry_async():
         assert mock_func.call_count == 2
         mock_sleep.assert_called_once()
 
+
 def test_rate_limited_retry_sync():
     limiter = RateLimiter(requests_per_minute=60)
 
@@ -141,11 +148,14 @@ def test_rate_limited_retry_sync():
         assert mock_func.call_count == 2
         mock_sleep.assert_called_once()
 
+
 # --- TTLCache Tests ---
+
 
 @pytest.fixture
 def ttl_cache():
     return TTLCache(default_ttl=10, max_size=5, cleanup_interval=1)
+
 
 def test_cache_set_get(ttl_cache):
     ttl_cache.set("key1", "value1")
@@ -153,10 +163,12 @@ def test_cache_set_get(ttl_cache):
 
     assert ttl_cache.get("non_existent") is None
 
+
 def test_cache_expiration(ttl_cache):
     ttl_cache.set("key1", "value1", ttl=0.1)
     time.sleep(0.2)
     assert ttl_cache.get("key1") is None
+
 
 def test_cache_eviction(ttl_cache):
     # Fill cache
@@ -173,6 +185,7 @@ def test_cache_eviction(ttl_cache):
     # So size should be 5 again (4 old + 1 new)
     assert len(ttl_cache._cache) < 6
 
+
 def test_cache_cleanup(ttl_cache):
     ttl_cache.set("key1", "value1", ttl=0.1)
     ttl_cache._last_cleanup = time.monotonic() - 2.0
@@ -182,6 +195,7 @@ def test_cache_cleanup(ttl_cache):
     ttl_cache._cleanup()
 
     assert "key1" not in ttl_cache._cache
+
 
 def test_cache_delete_clear(ttl_cache):
     ttl_cache.set("key1", "value1")
@@ -194,15 +208,17 @@ def test_cache_delete_clear(ttl_cache):
     assert ttl_cache.get("key2") is None
     assert len(ttl_cache._cache) == 0
 
+
 def test_cache_stats(ttl_cache):
     ttl_cache.set("key1", "value1")
-    ttl_cache.get("key1") # Hit
-    ttl_cache.get("key2") # Miss
+    ttl_cache.get("key1")  # Hit
+    ttl_cache.get("key2")  # Miss
 
     stats = ttl_cache.get_stats()
     assert stats["hits"] == 1
     assert stats["misses"] == 1
     assert stats["entries"] == 1
+
 
 def test_get_caches():
     # Reset global
@@ -217,6 +233,7 @@ def test_get_caches():
     assert get_sentiment_cache().default_ttl == 600
     assert get_discovery_cache().default_ttl == 900
 
+
 @pytest.mark.asyncio
 async def test_cached_decorator_async():
     _caches.clear()
@@ -230,11 +247,12 @@ async def test_cached_decorator_async():
 
     # Check cache
     cache = get_cache("test_async")
-    assert cache.hits == 0 # First was miss
+    assert cache.hits == 0  # First was miss
 
     # Second call (should hit cache)
     assert await my_func(2) == 4
     assert cache.hits == 1
+
 
 def test_cached_decorator_sync():
     _caches.clear()
@@ -253,6 +271,7 @@ def test_cached_decorator_sync():
     # Second call
     assert my_func(2) == 4
     assert cache.hits == 1
+
 
 def test_cached_decorator_with_instance():
     cache = TTLCache()

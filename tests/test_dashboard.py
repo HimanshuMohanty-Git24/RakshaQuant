@@ -1,26 +1,40 @@
 import pytest
-from unittest.mock import MagicMock, patch
-from datetime import datetime, timedelta
-import time
 
-from src.dashboard.cli import TradingStats, TradingDashboard, create_dashboard_layout, create_header, create_account_panel, create_trades_panel, create_regime_panel, create_market_overview, create_decision_panel, create_agent_panel, create_positions_panel, create_activity_panel
+from src.dashboard.cli import (
+    TradingDashboard,
+    TradingStats,
+    create_account_panel,
+    create_activity_panel,
+    create_agent_panel,
+    create_dashboard_layout,
+    create_decision_panel,
+    create_header,
+    create_market_overview,
+    create_positions_panel,
+    create_regime_panel,
+    create_trades_panel,
+)
 
 # --- TradingStats Tests ---
+
 
 @pytest.fixture
 def stats():
     return TradingStats()
+
 
 def test_trading_stats_init(stats):
     assert stats.starting_balance == 1000000.0
     assert stats.total_trades == 0
     assert stats.win_rate == 0.0
 
+
 def test_trading_stats_pnl(stats):
     stats.realized_pnl = 100
     stats.unrealized_pnl = 50
     assert stats.total_pnl == 150
     assert stats.pnl_percent == 0.015
+
 
 def test_trading_stats_log_activity(stats):
     stats.log_activity("Test message", "INFO")
@@ -30,13 +44,16 @@ def test_trading_stats_log_activity(stats):
     # Test capping
     for i in range(20):
         stats.log_activity(f"Msg {i}")
-    assert len(stats.activity_log) == 12 # Cap size
+    assert len(stats.activity_log) == 12  # Cap size
+
 
 # --- TradingDashboard Tests ---
+
 
 @pytest.fixture
 def dashboard():
     return TradingDashboard()
+
 
 def test_dashboard_start(dashboard):
     dashboard.start(balance=500000.0, mode="live", data_source="dhan")
@@ -45,24 +62,29 @@ def test_dashboard_start(dashboard):
     assert dashboard.running is True
     assert len(dashboard.stats.activity_log) == 3
 
+
 def test_dashboard_update_regime(dashboard):
     dashboard.update_regime("bull", 0.9, ["strat1"])
     assert dashboard.stats.current_regime == "bull"
     assert dashboard.stats.regime_confidence == 0.9
     assert dashboard.stats.active_strategies == ["strat1"]
 
+
 def test_dashboard_update_market_data(dashboard):
     quotes = {"A": 100}
     dashboard.update_market_data(quotes)
     assert dashboard.stats.market_quotes == quotes
 
+
 def test_dashboard_set_current_signal(dashboard):
     dashboard.set_current_signal("BUY", "AAPL", "strat1", 0.8)
     assert dashboard.stats.current_signal["symbol"] == "AAPL"
 
+
 def test_dashboard_set_decision_reason(dashboard):
     dashboard.set_decision_reason("Reason")
     assert dashboard.stats.last_decision_reason == "Reason"
+
 
 def test_dashboard_log_signal(dashboard):
     dashboard.log_signal("AAPL", "BUY", "strat1", True)
@@ -73,6 +95,7 @@ def test_dashboard_log_signal(dashboard):
     assert dashboard.stats.signals_generated == 2
     assert dashboard.stats.signals_rejected == 1
 
+
 def test_dashboard_log_trade(dashboard):
     dashboard.log_trade("AAPL", "BUY", 10, 100, True)
     assert dashboard.stats.trades_approved == 1
@@ -80,10 +103,12 @@ def test_dashboard_log_trade(dashboard):
     dashboard.log_trade("AAPL", "BUY", 10, 100, False)
     assert dashboard.stats.trades_risk_rejected == 1
 
+
 def test_dashboard_add_position(dashboard):
     dashboard.add_position("AAPL", "BUY", 10, 100)
     assert len(dashboard.stats.open_positions) == 1
     assert dashboard.stats.open_positions[0]["symbol"] == "AAPL"
+
 
 def test_dashboard_close_trade(dashboard):
     dashboard.start()
@@ -97,13 +122,16 @@ def test_dashboard_close_trade(dashboard):
     assert dashboard.stats.losing_trades == 1
     assert dashboard.stats.realized_pnl == 50.0
 
+
 def test_dashboard_increment_cycle(dashboard):
     dashboard.increment_cycle()
     assert dashboard.stats.cycles_run == 1
 
+
 # --- Panel Creation Tests ---
 # These tests verify that panel creation functions run without error.
 # Checking the visual output content is less critical than ensuring they don't crash.
+
 
 def test_create_panels(stats):
     # Populate stats with some data
@@ -115,7 +143,12 @@ def test_create_panels(stats):
     stats.regime_confidence = 0.8
     stats.active_strategies = ["momentum"]
     stats.market_quotes = {"AAPL": {"last_price": 150, "change_percent": 1.5}}
-    stats.current_signal = {"signal_type": "BUY", "symbol": "AAPL", "strategy": "momentum", "confidence": 0.9}
+    stats.current_signal = {
+        "signal_type": "BUY",
+        "symbol": "AAPL",
+        "strategy": "momentum",
+        "confidence": 0.9,
+    }
     stats.last_decision_reason = "Reason"
     stats.open_positions = [{"symbol": "AAPL", "side": "BUY", "qty": 10, "entry": 140, "pnl": 100}]
     stats.log_activity("Test")
@@ -134,6 +167,7 @@ def test_create_panels(stats):
     # Check layout
     layout = create_dashboard_layout(stats)
     assert layout is not None
+
 
 def test_dashboard_render(dashboard):
     dashboard.start()

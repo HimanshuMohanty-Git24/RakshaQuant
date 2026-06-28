@@ -13,8 +13,8 @@ from .signals import SignalEngine
 from .sizing import (
     PositionSizer,
     PositionSizeResult,
-    calculate_position_size,
     calculate_portfolio_heat,
+    calculate_position_size,
 )
 
 __all__ = [

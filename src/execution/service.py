@@ -149,7 +149,9 @@ class ExecutionService:
         self._effective_mode = self._resolve_mode()
         logger.info(
             "ExecutionService ready (requested=%s, effective=%s, allow_live_orders=%s)",
-            self.mode.value, self._effective_mode.value, self.allow_live_orders,
+            self.mode.value,
+            self._effective_mode.value,
+            self.allow_live_orders,
         )
 
     @classmethod
@@ -182,15 +184,19 @@ class ExecutionService:
             if not self.allow_live_orders:
                 logger.warning(
                     "execution_mode=%s but allow_live_orders is False — running in SHADOW "
-                    "(no real orders sent).", self.mode.value,
+                    "(no real orders sent).",
+                    self.mode.value,
                 )
                 return ExecutionMode.SHADOW
             settings = get_settings()
-            if not (getattr(settings, "dhan_client_id", None) and
-                    getattr(settings, "dhan_access_token", None)):
+            if not (
+                getattr(settings, "dhan_client_id", None)
+                and getattr(settings, "dhan_access_token", None)
+            ):
                 logger.error(
                     "execution_mode=%s requested but Dhan credentials are missing — running "
-                    "in SHADOW, NOT downgrading silently to local paper.", self.mode.value,
+                    "in SHADOW, NOT downgrading silently to local paper.",
+                    self.mode.value,
                 )
                 return ExecutionMode.SHADOW
         return self.mode
@@ -210,37 +216,62 @@ class ExecutionService:
         if prior is not None:
             logger.warning("Duplicate submission suppressed for key=%s", idempotency_key)
             return ExecutionResult(
-                status="DUPLICATE", symbol=symbol, side=side, quantity=quantity,
-                fill_price=float(prior.get("fill_price", 0.0)), mode=self._effective_mode.value,
-                client_order_id=client_order_id, order_id=str(prior.get("order_id", "")),
-                is_shadow=bool(prior.get("is_shadow", False)), is_duplicate=True,
+                status="DUPLICATE",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                fill_price=float(prior.get("fill_price", 0.0)),
+                mode=self._effective_mode.value,
+                client_order_id=client_order_id,
+                order_id=str(prior.get("order_id", "")),
+                is_shadow=bool(prior.get("is_shadow", False)),
+                is_duplicate=True,
                 message="idempotency hit — order already submitted",
             )
         if self.kill_switch is not None and self.kill_switch():
             logger.warning("Kill switch active — blocking %s %s %s", side, quantity, symbol)
             return ExecutionResult(
-                status="BLOCKED", symbol=symbol, side=side, quantity=quantity,
-                fill_price=0.0, mode=self._effective_mode.value,
-                client_order_id=client_order_id, message="kill switch active",
+                status="BLOCKED",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                fill_price=0.0,
+                mode=self._effective_mode.value,
+                client_order_id=client_order_id,
+                message="kill switch active",
             )
         return None
 
     def _fill_paper(
-        self, symbol: str, side: str, quantity: int, price: float, order_type: str,
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: float,
+        order_type: str,
         client_order_id: str,
     ) -> ExecutionResult:
         """Simulate a fill against the paper engine (local_paper and shadow)."""
         is_shadow = self._effective_mode == ExecutionMode.SHADOW
         order = self.engine.place_order(
-            symbol=symbol, side=side, quantity=quantity,
-            current_price=price, order_type=order_type,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            current_price=price,
+            order_type=order_type,
         )
         message = "SHADOW: simulated, not sent to broker" if is_shadow else "local paper fill"
         return ExecutionResult(
-            status=order.status, symbol=symbol, side=side, quantity=quantity,
-            fill_price=order.price, mode=self._effective_mode.value,
-            client_order_id=client_order_id, order_id=order.order_id,
-            is_shadow=is_shadow, message=message,
+            status=order.status,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            fill_price=order.price,
+            mode=self._effective_mode.value,
+            client_order_id=client_order_id,
+            order_id=order.order_id,
+            is_shadow=is_shadow,
+            message=message,
         )
 
     def _record_if_filled(self, idempotency_key: str, result: ExecutionResult) -> None:
@@ -272,8 +303,12 @@ class ExecutionService:
             result = self._fill_paper(symbol, side, quantity, price, order_type, client_order_id)
         else:
             result = ExecutionResult(
-                status="REJECTED", symbol=symbol, side=side, quantity=quantity,
-                fill_price=0.0, mode=self._effective_mode.value,
+                status="REJECTED",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                fill_price=0.0,
+                mode=self._effective_mode.value,
                 client_order_id=client_order_id,
                 message="live submission requires submit_async (async broker lifecycle)",
             )
@@ -301,8 +336,12 @@ class ExecutionService:
             result = self._fill_paper(symbol, side, quantity, price, order_type, client_order_id)
         elif self.broker_executor is None:
             result = ExecutionResult(
-                status="REJECTED", symbol=symbol, side=side, quantity=quantity,
-                fill_price=0.0, mode=self._effective_mode.value,
+                status="REJECTED",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                fill_price=0.0,
+                mode=self._effective_mode.value,
                 client_order_id=client_order_id,
                 message="live mode but no broker executor attached",
             )
@@ -314,7 +353,12 @@ class ExecutionService:
         return result
 
     async def _submit_live(
-        self, symbol: str, side: str, quantity: int, price: float, order_type: str,
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: float,
+        order_type: str,
         client_order_id: str,
     ) -> ExecutionResult:
         """Place a real order via the broker executor and map its confirmed status."""
@@ -334,9 +378,13 @@ class ExecutionService:
         }
         status = status_map.get(confirmed.status, "REJECTED")
         return ExecutionResult(
-            status=status, symbol=symbol, side=side,
+            status=status,
+            symbol=symbol,
+            side=side,
             quantity=confirmed.filled_quantity or quantity,
-            fill_price=confirmed.average_price or price, mode=self._effective_mode.value,
-            client_order_id=client_order_id, order_id=confirmed.order_id,
+            fill_price=confirmed.average_price or price,
+            mode=self._effective_mode.value,
+            client_order_id=client_order_id,
+            order_id=confirmed.order_id,
             message=confirmed.message or f"broker status: {confirmed.status.value}",
         )

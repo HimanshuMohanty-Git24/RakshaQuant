@@ -59,7 +59,10 @@ class LiveBrokerExecutor:
             if status is not None and status.status in _TERMINAL:
                 logger.info(
                     "Live order %s confirmed: %s (filled %s @ %s)",
-                    order_id, status.status.value, status.filled_quantity, status.average_price,
+                    order_id,
+                    status.status.value,
+                    status.filled_quantity,
+                    status.average_price,
                 )
                 return status
             if attempt < self.poll_attempts - 1:
@@ -67,7 +70,8 @@ class LiveBrokerExecutor:
 
         logger.warning(
             "Live order %s not confirmed within %d polls — treating as UNCONFIRMED, not filled.",
-            order_id, self.poll_attempts,
+            order_id,
+            self.poll_attempts,
         )
         placed.message = "fill unconfirmed within poll budget"
         return placed
@@ -78,8 +82,8 @@ class ReconciliationReport:
     """Result of comparing local positions to the broker's."""
 
     in_sync: bool
-    broker_only: list[str] = field(default_factory=list)       # at broker, not local
-    local_only: list[str] = field(default_factory=list)        # local, not at broker
+    broker_only: list[str] = field(default_factory=list)  # at broker, not local
+    local_only: list[str] = field(default_factory=list)  # local, not at broker
     quantity_mismatches: list[dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -135,6 +139,8 @@ def reconcile_positions(
     ]
     in_sync = not (broker_only or local_only or mismatches)
     return ReconciliationReport(
-        in_sync=in_sync, broker_only=broker_only, local_only=local_only,
+        in_sync=in_sync,
+        broker_only=broker_only,
+        local_only=local_only,
         quantity_mismatches=mismatches,
     )

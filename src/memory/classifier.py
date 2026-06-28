@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from src.config import get_settings
+
 from .analyzer import TradeOutcome
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 class MistakeCategory:
     """Categories of trading mistakes."""
-    
+
     REGIME_MISMATCH = "regime_mismatch"
     STRATEGY_MISMATCH = "strategy_mismatch"
     POOR_TIMING = "poor_timing"
@@ -76,7 +77,7 @@ Be specific and practical. Focus on what the SYSTEM could do differently, not ma
 @dataclass
 class ClassifiedMistake:
     """A classified trading mistake."""
-    
+
     lesson_id: str
     trade_id: str
     category: str
@@ -86,7 +87,7 @@ class ClassifiedMistake:
     context_factors: list[str]
     trade_context: dict[str, Any]
     created_at: datetime
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "lesson_id": self.lesson_id,
@@ -105,16 +106,16 @@ class ClassifiedMistake:
 class MistakeClassifier:
     """
     Classifies trading mistakes using LLM + rules.
-    
+
     Uses a combination of rule-based pre-analysis and LLM reasoning
     to generate actionable learning lessons.
     """
-    
+
     _llm: ChatGroq = None
-    
+
     def __post_init__(self):
         self._initialize_llm()
-    
+
     def _initialize_llm(self) -> None:
         """Initialize the LLM for classification."""
         settings = get_settings()
@@ -124,17 +125,17 @@ class MistakeClassifier:
             temperature=0.2,
             max_tokens=512,
         )
-    
+
     def classify(self, outcome: TradeOutcome) -> ClassifiedMistake | None:
         """
         Classify a trade outcome as a mistake (if applicable).
-        
+
         Only generates lessons for losing trades or significantly
         underperforming winners.
-        
+
         Args:
             outcome: Analyzed trade outcome
-            
+
         Returns:
             ClassifiedMistake if a lesson should be generated
         """
@@ -142,103 +143,103 @@ class MistakeClassifier:
         if not self._should_classify(outcome):
             logger.debug(f"Trade {outcome.trade_id} doesn't warrant classification")
             return None
-        
+
         # First, apply rule-based pre-classification
         rule_based = self._rule_based_classify(outcome)
-        
+
         # Then, get LLM classification for context
         llm_result = self._llm_classify(outcome)
-        
+
         # Merge results (prefer rule-based category if clear, LLM for context)
         return self._merge_classifications(outcome, rule_based, llm_result)
-    
+
     def classify_batch(
         self,
         outcomes: list[TradeOutcome],
     ) -> list[ClassifiedMistake]:
         """Classify multiple trade outcomes."""
         mistakes = []
-        
+
         for outcome in outcomes:
             mistake = self.classify(outcome)
             if mistake:
                 mistakes.append(mistake)
-        
+
         return mistakes
-    
+
     def _should_classify(self, outcome: TradeOutcome) -> bool:
         """Determine if a trade should be classified."""
-        
+
         # Always classify losers
         if not outcome.is_winner:
             return True
-        
+
         # Classify inefficient winners (captured less than 50% of MFE)
         if outcome.efficiency < 0.5:
             return True
-        
+
         # Classify premature exits
         if outcome.was_premature_exit:
             return True
-        
+
         # Classify late exits (had significant MFE but small profit)
         if outcome.was_late_exit:
             return True
-        
+
         return False
-    
+
     def _rule_based_classify(
         self,
         outcome: TradeOutcome,
     ) -> dict[str, Any]:
         """Apply rule-based classification."""
-        
+
         category = None
         severity = "medium"
         description = ""
-        
+
         # Rule 1: Stop loss hit immediately
         if outcome.hit_stop_loss and outcome.hold_duration_minutes < 10:
             category = MistakeCategory.STOP_LOSS_TOO_TIGHT
             severity = "high"
             description = f"Stop loss hit within {outcome.hold_duration_minutes} minutes"
-        
+
         # Rule 2: Large loss without hitting stop
         elif not outcome.hit_stop_loss and outcome.profit_loss_pct < -3:
             category = MistakeCategory.STOP_LOSS_TOO_LOOSE
             severity = "high"
             description = f"Loss of {outcome.profit_loss_pct:.1f}% without stop loss trigger"
-        
+
         # Rule 3: Premature exit on winner
         elif outcome.was_premature_exit:
             category = MistakeCategory.PREMATURE_EXIT
             severity = "medium"
             description = f"Exited with {outcome.efficiency:.0%} efficiency despite winning"
-        
+
         # Rule 4: Late exit (had gains, ended in loss)
         elif outcome.was_late_exit:
             category = MistakeCategory.LATE_EXIT
             severity = "high"
             description = f"Had MFE of {outcome.mfe:.2f} but ended with loss"
-        
+
         # Rule 5: Very short hold time
         elif outcome.hold_duration_minutes < 5 and not outcome.is_winner:
             category = MistakeCategory.POOR_TIMING
             severity = "medium"
             description = "Trade exited within 5 minutes with loss"
-        
+
         return {
             "category": category,
             "severity": severity,
             "description": description,
         }
-    
+
     def _llm_classify(
         self,
         outcome: TradeOutcome,
     ) -> dict[str, Any]:
         """Get LLM classification for additional context."""
-        
+
         try:
             # Build context for LLM
             context = f"""
@@ -265,24 +266,24 @@ class MistakeClassifier:
 
 Analyze what went wrong and provide a lesson.
 """
-            
+
             messages = [
                 SystemMessage(content=CLASSIFIER_SYSTEM_PROMPT),
                 HumanMessage(content=context),
             ]
-            
+
             response = self._llm.invoke(messages)
             return self._parse_llm_response(response.content)
-            
+
         except Exception as e:
             logger.error(f"LLM classification failed: {e}")
             return {}
-    
+
     def _parse_llm_response(self, content: str) -> dict[str, Any]:
         """Parse LLM JSON response."""
         try:
             content = content.strip()
-            
+
             if "```json" in content:
                 start = content.find("```json") + 7
                 end = content.find("```", start)
@@ -291,13 +292,13 @@ Analyze what went wrong and provide a lesson.
                 start = content.find("```") + 3
                 end = content.find("```", start)
                 content = content[start:end].strip()
-            
+
             return json.loads(content)
-            
+
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse LLM response: {e}")
             return {}
-    
+
     def _merge_classifications(
         self,
         outcome: TradeOutcome,
@@ -305,20 +306,24 @@ Analyze what went wrong and provide a lesson.
         llm_result: dict[str, Any],
     ) -> ClassifiedMistake:
         """Merge rule-based and LLM classifications."""
-        
+
         # Prefer rule-based category if identified
-        category = rule_based.get("category") or llm_result.get("category", MistakeCategory.SIGNAL_QUALITY)
+        category = rule_based.get("category") or llm_result.get(
+            "category", MistakeCategory.SIGNAL_QUALITY
+        )
         severity = rule_based.get("severity") or llm_result.get("severity", "medium")
-        
+
         # Prefer LLM description if available (more context-aware)
-        description = llm_result.get("description") or rule_based.get("description", "Trade underperformed")
-        
+        description = llm_result.get("description") or rule_based.get(
+            "description", "Trade underperformed"
+        )
+
         # Get lesson from LLM
         lesson = llm_result.get("lesson", f"Review {category} conditions before similar trades")
-        
+
         # Get context factors
         context_factors = llm_result.get("context_factors", [outcome.strategy, outcome.regime])
-        
+
         return ClassifiedMistake(
             lesson_id=f"LSN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}",
             trade_id=outcome.trade_id,

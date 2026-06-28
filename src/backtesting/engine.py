@@ -14,7 +14,7 @@ Features:
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Trade:
     """A single trade executed during backtest."""
-    
+
     entry_date: datetime
     exit_date: datetime | None
     symbol: str
@@ -37,24 +37,24 @@ class Trade:
     quantity: int = 1
     pnl: float = 0.0
     pnl_pct: float = 0.0
-    
+
     def close(self, exit_date: datetime, exit_price: float):
         """Close the trade and calculate P&L."""
         self.exit_date = exit_date
         self.exit_price = exit_price
-        
+
         if self.side == "LONG":
             self.pnl = (exit_price - self.entry_price) * self.quantity
         else:
             self.pnl = (self.entry_price - exit_price) * self.quantity
-        
+
         self.pnl_pct = (self.pnl / (self.entry_price * self.quantity)) * 100
 
 
 @dataclass
 class BacktestResult:
     """Results from a backtest run."""
-    
+
     strategy_name: str
     symbol: str
     start_date: str
@@ -76,7 +76,7 @@ class BacktestResult:
     sharpe_ratio: float
     trades: list[Trade] = field(default_factory=list)
     equity_curve: list[float] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "strategy": self.strategy_name,
@@ -93,7 +93,7 @@ class BacktestResult:
             "max_drawdown_pct": round(self.max_drawdown_pct, 2),
             "sharpe_ratio": round(self.sharpe_ratio, 2),
         }
-    
+
     def print_summary(self):
         """Print a formatted summary."""
         print("\n" + "=" * 50)
@@ -122,22 +122,22 @@ class BacktestResult:
 
 class Strategy:
     """Base strategy class."""
-    
+
     name: str = "BaseStrategy"
-    
+
     def __init__(self):
         self.position = 0  # 1 = long, -1 = short, 0 = flat
         self.entry_price = 0.0
         self.entry_date = None
-    
+
     def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
         """
         Called on each bar of data.
-        
+
         Args:
             row: Current bar (Open, High, Low, Close, Volume)
             history: Historical data up to this point
-            
+
         Returns:
             "BUY", "SELL", or None
         """
@@ -147,19 +147,19 @@ class Strategy:
 class BacktestEngine:
     """
     Simple backtesting engine.
-    
+
     Runs a strategy on historical data and calculates metrics.
     """
-    
+
     def __init__(
         self,
         initial_capital: float = 100000.0,
         commission: float = 0.0003,  # 0.03% per trade
-        slippage: float = 0.0001,    # 0.01% slippage
+        slippage: float = 0.0001,  # 0.01% slippage
     ):
         """
         Initialize backtest engine.
-        
+
         Args:
             initial_capital: Starting capital in INR
             commission: Commission per trade (fraction)
@@ -168,7 +168,7 @@ class BacktestEngine:
         self.initial_capital = initial_capital
         self.commission = commission
         self.slippage = slippage
-    
+
     def fetch_data(
         self,
         symbol: str,
@@ -177,7 +177,7 @@ class BacktestEngine:
         """Fetch historical data for backtesting."""
         feed = YFinanceFeed(symbols=[symbol])
         return feed.get_historical(symbol, period=period)
-    
+
     def run(
         self,
         strategy: Strategy,
@@ -186,45 +186,45 @@ class BacktestEngine:
     ) -> BacktestResult:
         """
         Run backtest on historical data.
-        
+
         Args:
             strategy: Strategy instance
             data: OHLCV DataFrame with DatetimeIndex
             symbol: Stock symbol
-            
+
         Returns:
             BacktestResult with metrics
         """
         if data is None or data.empty:
             raise ValueError("No data provided for backtest")
-        
+
         # Ensure required columns
         required = ["Open", "High", "Low", "Close", "Volume"]
         if not all(col in data.columns for col in required):
             raise ValueError(f"Data must have columns: {required}")
-        
+
         # Initialize
         capital = self.initial_capital
         position = 0
         entry_price = 0.0
         entry_date = None
-        
+
         trades: list[Trade] = []
         equity_curve = [capital]
-        
+
         # Minimum lookback
         lookback = 20
-        
+
         # Iterate through data
         for i in range(lookback, len(data)):
             row = data.iloc[i]
             history = data.iloc[:i]
             current_price = row["Close"]
             current_date = data.index[i]
-            
+
             # Get signal
             signal = strategy.on_bar(row, history)
-            
+
             # Process signal
             if signal == "BUY" and position == 0:
                 # Enter long
@@ -233,12 +233,12 @@ class BacktestEngine:
                 entry_date = current_date
                 commission_cost = entry_price * self.commission
                 capital -= commission_cost
-                
+
             elif signal == "SELL" and position == 1:
                 # Exit long
                 exit_price = current_price * (1 - self.slippage)
                 commission_cost = exit_price * self.commission
-                
+
                 trade = Trade(
                     entry_date=entry_date,
                     exit_date=current_date,
@@ -249,17 +249,17 @@ class BacktestEngine:
                 )
                 trade.close(current_date, exit_price)
                 trades.append(trade)
-                
+
                 capital += trade.pnl - commission_cost
                 position = 0
-            
+
             # Update equity curve
             if position == 1:
                 unrealized = (current_price - entry_price) * 1
                 equity_curve.append(capital + unrealized)
             else:
                 equity_curve.append(capital)
-        
+
         # Close any open position at end
         if position == 1:
             exit_price = data.iloc[-1]["Close"]
@@ -274,7 +274,7 @@ class BacktestEngine:
             trade.close(data.index[-1], exit_price)
             trades.append(trade)
             capital += trade.pnl
-        
+
         # Calculate metrics
         return self._calculate_metrics(
             strategy_name=strategy.name,
@@ -284,7 +284,7 @@ class BacktestEngine:
             equity_curve=equity_curve,
             final_capital=capital,
         )
-    
+
     def _calculate_metrics(
         self,
         strategy_name: str,
@@ -295,40 +295,40 @@ class BacktestEngine:
         final_capital: float,
     ) -> BacktestResult:
         """Calculate performance metrics."""
-        
+
         # Basic stats
         total_return = final_capital - self.initial_capital
         total_return_pct = (total_return / self.initial_capital) * 100
-        
+
         # Trade stats
         winning = [t for t in trades if t.pnl > 0]
         losing = [t for t in trades if t.pnl < 0]
-        
+
         win_rate = (len(winning) / len(trades) * 100) if trades else 0
         avg_win = np.mean([t.pnl for t in winning]) if winning else 0
         avg_loss = np.mean([t.pnl for t in losing]) if losing else 0
-        
+
         gross_profit = sum(t.pnl for t in winning)
         gross_loss = abs(sum(t.pnl for t in losing))
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf')
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf")
 
         # Expectancy: average P&L per trade (the realised edge).
         expectancy = (sum(t.pnl for t in trades) / len(trades)) if trades else 0.0
-        
+
         # Drawdown
         equity = np.array(equity_curve)
         peak = np.maximum.accumulate(equity)
         drawdown = peak - equity
         max_drawdown = np.max(drawdown)
         max_drawdown_pct = (max_drawdown / np.max(peak)) * 100 if np.max(peak) > 0 else 0
-        
+
         # Sharpe Ratio (annualized, assuming 252 trading days)
         returns = np.diff(equity) / equity[:-1]
         if len(returns) > 1 and np.std(returns) > 0:
             sharpe = (np.mean(returns) / np.std(returns)) * np.sqrt(252)
         else:
             sharpe = 0
-        
+
         return BacktestResult(
             strategy_name=strategy_name,
             symbol=symbol,
@@ -362,6 +362,7 @@ def compare_results(baseline: BacktestResult, candidate: BacktestResult) -> dict
     tweaked strategy/prompt/sizing run on the same data. Positive `improved` means the
     candidate beat the baseline on net (return up, drawdown down).
     """
+
     def _delta(metric: str) -> float:
         return round(float(getattr(candidate, metric)) - float(getattr(baseline, metric)), 4)
 
@@ -389,31 +390,32 @@ def compare_results(baseline: BacktestResult, candidate: BacktestResult) -> dict
 def test_backtest_engine():
     """Test the backtest engine."""
     import sys
-    sys.stdout.reconfigure(encoding='utf-8')
-    
+
+    sys.stdout.reconfigure(encoding="utf-8")
+
     from src.backtesting.strategies import MomentumStrategy
-    
+
     print("=" * 60)
     print("[BACKTEST] RakshaQuant - Backtest Engine Test")
     print("=" * 60)
-    
+
     engine = BacktestEngine(initial_capital=100000)
-    
+
     print("\n[DATA] Fetching RELIANCE 1-year history...")
     data = engine.fetch_data("RELIANCE", period="1y")
-    
+
     if data is None or data.empty:
         print("  ❌ Failed to fetch data")
         return
-    
+
     print(f"  ✅ Loaded {len(data)} bars")
-    
+
     print("\n[RUN] Running Momentum Strategy backtest...")
     strategy = MomentumStrategy()
     result = engine.run(strategy, data, symbol="RELIANCE")
-    
+
     result.print_summary()
-    
+
     print("\n" + "=" * 60)
     print("[SUCCESS] Backtest complete!")
     print("=" * 60)

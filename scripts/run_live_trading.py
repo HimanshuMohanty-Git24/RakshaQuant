@@ -20,28 +20,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from rich.console import Console
 from rich.live import Live
 
-from src.config import get_settings
 from src.agents.graph import create_trading_graph, run_trading_cycle
 from src.agents.risk_compliance import check_kill_switch
+from src.config import get_settings
+from src.dashboard.cli import TradingDashboard, create_dashboard_layout
+from src.execution.exit_manager import ExitManager
+from src.execution.journal import TradeJournal
+from src.execution.paper_engine import LocalPaperEngine
+from src.execution.service import ExecutionService, IdempotencyStore
 from src.finops import get_alert_manager, get_cost_tracker
-from src.notifications.telegram import get_notifier
-from src.profit import ProfitGoalEngine
-from src.market.manager import MarketDataManager, MarketQuote, is_market_open
 from src.market.history_manager import HistoryManager
 from src.market.indicators import Timeframe, get_indicator_cache
+from src.market.manager import MarketDataManager, is_market_open
 from src.market.signals import SignalEngine
 from src.market.sizing import calculate_position_size
 from src.market.stock_discovery import StockDiscovery
-from src.memory.database import AgentMemoryDB
-from src.memory.performance_tracker import get_performance_tracker
-from src.memory.classifier import MistakeClassifier
-from src.memory.injection import MemoryInjector
 from src.memory import feedback
-from src.execution.paper_engine import LocalPaperEngine
-from src.execution.exit_manager import ExitManager
-from src.execution.service import ExecutionService, IdempotencyStore
+from src.memory.classifier import MistakeClassifier
+from src.memory.database import AgentMemoryDB
+from src.memory.injection import MemoryInjector
+from src.memory.performance_tracker import get_performance_tracker
+from src.notifications.telegram import get_notifier
 from src.observability.tracing import setup_tracing
-from src.dashboard.cli import TradingDashboard, create_dashboard_layout
+from src.profit import ProfitGoalEngine
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -77,13 +78,14 @@ async def run_live_trading():
     # Initialize dashboard
     data_source = "live" if is_market_open() else "simulated"
     dashboard = TradingDashboard()
-    dashboard.start(balance=settings.paper_wallet_balance, mode=settings.trading_mode, data_source=data_source)
+    dashboard.start(
+        balance=settings.paper_wallet_balance, mode=settings.trading_mode, data_source=data_source
+    )
 
     # Setup tracing
     tracing_enabled = setup_tracing()
     dashboard.stats.log_activity(
-        f"LangSmith: {'enabled' if tracing_enabled else 'disabled'}",
-        "INFO"
+        f"LangSmith: {'enabled' if tracing_enabled else 'disabled'}", "INFO"
     )
 
     # Create trading graph (now includes support agents)
@@ -109,6 +111,15 @@ async def run_live_trading():
     paper_engine = LocalPaperEngine(initial_balance=settings.paper_wallet_balance)
     dashboard.stats.log_activity(
         f"Paper engine: Rs. {paper_engine.get_balance():,.0f} balance", "INFO"
+    )
+
+    # Durable trade journal (records every entry/exit). Persists to DATABASE_URL; falls back
+    # to a non-persistent in-memory DB (logged loudly) if that is unreachable.
+    journal = TradeJournal()
+    open_trades: dict[str, str] = {}  # execution order_id -> journal trade_id
+    dashboard.stats.log_activity(
+        f"Trade journal: {'persistent' if journal.is_persistent else 'in-memory (NOT durable)'}",
+        "INFO" if journal.is_persistent else "WARNING",
     )
 
     # Unified execution service: one mode-switched path for order submission with
@@ -142,7 +153,9 @@ async def run_live_trading():
             )
             if not report.in_sync:
                 await get_alert_manager().alert(
-                    "position_drift", f"Startup reconciliation — {report.summary()}", level="WARNING"
+                    "position_drift",
+                    f"Startup reconciliation — {report.summary()}",
+                    level="WARNING",
                 )
         except Exception as e:
             logger.warning("Live broker setup/reconciliation failed: %s", e)
@@ -154,6 +167,7 @@ async def run_live_trading():
         max_hold_minutes=240,
         partial_profit_r=1.0,
         partial_exit_pct=0.5,
+        state_file=Path("exit_manager_state.json"),
     )
     dashboard.stats.log_activity("Exit manager initialized", "INFO")
 
@@ -189,8 +203,7 @@ async def run_live_trading():
     report = discovery.get_discovery_report()
     for item in report[:5]:
         dashboard.stats.log_activity(
-            f"Discovered: {item['symbol']} ({item['source']}: {item['reason'][:30]}...)",
-            "INFO"
+            f"Discovered: {item['symbol']} ({item['source']}: {item['reason'][:30]}...)", "INFO"
         )
 
     # Initialize history manager and pre-fetch data
@@ -207,7 +220,9 @@ async def run_live_trading():
 
     console.print("\n[bold green]RakshaQuant Live Trading System Starting...[/]")
     market_mode = "LIVE" if is_market_open() else "SIMULATED"
-    console.print(f"[dim]Mode: {market_mode} | Stocks: {len(trading_symbols)} | Press Ctrl+C to stop[/]\n")
+    console.print(
+        f"[dim]Mode: {market_mode} | Stocks: {len(trading_symbols)} | Press Ctrl+C to stop[/]\n"
+    )
     time.sleep(1)
 
     # Start market data
@@ -224,7 +239,9 @@ async def run_live_trading():
         except Exception as e:
             logger.warning("Telegram startup notification failed: %s", e)
 
-    with Live(create_dashboard_layout(dashboard.stats), console=console, refresh_per_second=4) as live:
+    with Live(
+        create_dashboard_layout(dashboard.stats), console=console, refresh_per_second=4
+    ) as live:
 
         async def _run_cycle(cycle: int) -> None:
             """
@@ -246,14 +263,17 @@ async def run_live_trading():
                     atr_values[symbol] = ind.atr
 
             # Check all managed positions for exits
-            current_regime = dashboard.stats.current_regime if hasattr(dashboard.stats, 'current_regime') else ""
+            current_regime = (
+                dashboard.stats.current_regime if hasattr(dashboard.stats, "current_regime") else ""
+            )
             exit_signals = exit_manager.check_exits(market_prices, current_regime, atr_values)
 
             for pos, exit_rule in exit_signals:
                 exit_price = market_prices.get(pos.symbol, pos.entry_price)
                 # Execute exit via paper engine
                 order = paper_engine.place_order(
-                    symbol=pos.symbol, side="SELL" if pos.side == "BUY" else "BUY",
+                    symbol=pos.symbol,
+                    side="SELL" if pos.side == "BUY" else "BUY",
                     quantity=int(pos.quantity * exit_rule.partial_pct),
                     current_price=exit_price,
                 )
@@ -265,12 +285,14 @@ async def run_live_trading():
                     dashboard.stats.log_activity(
                         f"EXIT [{exit_rule.exit_type}]: {pos.symbol} @ Rs.{exit_price:,.2f} "
                         f"P&L: Rs.{pnl:+,.2f} — {exit_rule.reason}",
-                        "TRADE"
+                        "TRADE",
                     )
                     # Record in performance tracker
                     perf_tracker.record_trade(
-                        strategy=pos.strategy, regime=pos.regime_at_entry,
-                        pnl=pnl, pnl_pct=(pnl / (pos.entry_price * pos.quantity)) * 100,
+                        strategy=pos.strategy,
+                        regime=pos.regime_at_entry,
+                        pnl=pnl,
+                        pnl_pct=(pnl / (pos.entry_price * pos.quantity)) * 100,
                         symbol=pos.symbol,
                     )
                     if exit_rule.partial_pct >= 1.0:
@@ -281,18 +303,27 @@ async def run_live_trading():
                         if settings.enable_learning and mistake_classifier and memory_injector:
                             pnl_pct = (
                                 (pnl / (pos.entry_price * pos.quantity)) * 100
-                                if pos.entry_price else 0.0
+                                if pos.entry_price
+                                else 0.0
                             )
                             hold_minutes = int(
                                 (datetime.now() - pos.entry_time).total_seconds() / 60
                             )
                             outcome = feedback.build_outcome(
-                                trade_id=pos.position_id, symbol=pos.symbol,
-                                strategy=pos.strategy, regime=pos.regime_at_entry,
-                                side=pos.side, entry_price=pos.entry_price,
-                                exit_price=exit_price, stop_loss=pos.stop_loss,
-                                target_price=pos.target_price, pnl=pnl, pnl_pct=pnl_pct,
-                                mae=pos.mae, mfe=pos.mfe, hold_minutes=hold_minutes,
+                                trade_id=pos.position_id,
+                                symbol=pos.symbol,
+                                strategy=pos.strategy,
+                                regime=pos.regime_at_entry,
+                                side=pos.side,
+                                entry_price=pos.entry_price,
+                                exit_price=exit_price,
+                                stop_loss=pos.stop_loss,
+                                target_price=pos.target_price,
+                                pnl=pnl,
+                                pnl_pct=pnl_pct,
+                                mae=pos.mae,
+                                mfe=pos.mfe,
+                                hold_minutes=hold_minutes,
                             )
                             mistake = feedback.learn_from_outcome(
                                 memory_injector, mistake_classifier, outcome
@@ -303,9 +334,26 @@ async def run_live_trading():
                                     "INFO",
                                 )
                             feedback.mark_lessons_outcome(
-                                memory_db, active_lessons.pop(pos.position_id, []),
+                                memory_db,
+                                active_lessons.pop(pos.position_id, []),
                                 was_successful=pnl > 0,
                             )
+
+                        # Close the trade in the durable journal with the net realized P&L.
+                        journal_trade_id = open_trades.pop(pos.position_id, None)
+                        if journal_trade_id:
+                            try:
+                                journal.close_trade(
+                                    journal_trade_id,
+                                    exit_price,
+                                    exit_rule.exit_type,
+                                    mae=pos.mae,
+                                    mfe=pos.mfe,
+                                    pnl=pnl,
+                                    exit_quantity=int(pos.quantity * exit_rule.partial_pct),
+                                )
+                            except Exception as e:
+                                logger.warning("Journal close_trade failed: %s", e)
                     else:
                         pos.partial_taken = True
 
@@ -322,8 +370,10 @@ async def run_live_trading():
             for symbol, quote in quotes.items():
                 history_manager.append_quote(
                     symbol=symbol,
-                    open_price=quote.open, high=quote.high,
-                    low=quote.low, close=quote.last_price,
+                    open_price=quote.open,
+                    high=quote.high,
+                    low=quote.low,
+                    close=quote.last_price,
                     volume=quote.volume,
                 )
 
@@ -387,13 +437,17 @@ async def run_live_trading():
             if signals:
                 sig = signals[0]
                 dashboard.set_current_signal(
-                    sig.signal_type.value, sig.symbol,
-                    sig.strategy.value, sig.confidence,
+                    sig.signal_type.value,
+                    sig.symbol,
+                    sig.strategy.value,
+                    sig.confidence,
                 )
                 direction = "bullish" if top_candidate.is_bullish else "bearish"
-                reason = (f"{direction.title()} momentum ({top_candidate.change_percent:+.2f}%) "
-                         f"with {sig.strategy.value} strategy "
-                         f"(RSI: {indicators.rsi:.1f}, ADX: {indicators.adx:.1f})")
+                reason = (
+                    f"{direction.title()} momentum ({top_candidate.change_percent:+.2f}%) "
+                    f"with {sig.strategy.value} strategy "
+                    f"(RSI: {indicators.rsi:.1f}, ADX: {indicators.adx:.1f})"
+                )
                 dashboard.set_decision_reason(reason)
 
             dashboard.stats.signals_generated += len(signals)
@@ -401,7 +455,7 @@ async def run_live_trading():
                 dashboard.stats.log_activity(
                     f"Signal: {signal.signal_type.value} {signal.symbol} "
                     f"[{signal.strategy.value}] conf={signal.confidence:.0%}",
-                    "INFO"
+                    "INFO",
                 )
             live.update(create_dashboard_layout(dashboard.stats))
 
@@ -471,7 +525,7 @@ async def run_live_trading():
             confidence = final_state.get("regime_confidence", 0)
             strategies = final_state.get("active_strategies", [])
             dashboard.update_regime(regime, confidence, strategies)
-            if hasattr(dashboard.stats, 'current_regime'):
+            if hasattr(dashboard.stats, "current_regime"):
                 dashboard.stats.current_regime = regime
             live.update(create_dashboard_layout(dashboard.stats))
 
@@ -537,14 +591,15 @@ async def run_live_trading():
                 # Execute via the unified execution service (idempotent; shadow-aware;
                 # awaits the broker for live modes).
                 result = await execution_service.submit_async(
-                    symbol=symbol, side=side, quantity=quantity, price=entry_price,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=entry_price,
                     idempotency_key=f"{workflow_id}:{symbol}:{side}",
                 )
 
                 if result.is_duplicate:
-                    dashboard.stats.log_activity(
-                        f"DUPLICATE suppressed: {side} {symbol}", "INFO"
-                    )
+                    dashboard.stats.log_activity(f"DUPLICATE suppressed: {side} {symbol}", "INFO")
                     continue
 
                 if result.filled:
@@ -558,15 +613,28 @@ async def run_live_trading():
                     # Register with exit manager for tracking
                     exit_manager.register_position(
                         position_id=result.order_id,
-                        symbol=symbol, side=side, quantity=quantity,
-                        entry_price=entry_price, stop_loss=stop_loss,
-                        target_price=target_price, strategy=strategy,
+                        symbol=symbol,
+                        side=side,
+                        quantity=quantity,
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        target_price=target_price,
+                        strategy=strategy,
                         regime=regime,
                     )
                     # Remember which lessons were in the agents' context at entry, so we can
                     # mark them successful/unsuccessful when this position closes.
                     if settings.enable_learning:
                         active_lessons[result.order_id] = feedback.lesson_ids(memory_lessons)
+
+                    # Record the entry in the durable trade journal (resilient).
+                    try:
+                        trade_record = {**trade, "quantity": quantity, "entry_price": entry_price}
+                        open_trades[result.order_id] = journal.record_trade(
+                            trade_record, workflow_id, final_state
+                        )
+                    except Exception as e:
+                        logger.warning("Journal record_trade failed: %s", e)
                 else:
                     dashboard.stats.log_activity(
                         f"ORDER {result.status}: {symbol} — {result.message}", "WARNING"
@@ -677,13 +745,17 @@ async def run_live_trading():
             # Show final stats
             stats = paper_engine.get_stats()
             cost_summary = get_cost_tracker().daily_summary()
-            console.print(f"\n[yellow]Trading stopped[/]")
-            console.print(f"[dim]Final balance: Rs.{stats['balance']:,.2f} | "
-                         f"P&L: Rs.{stats['total_pnl']:+,.2f} | "
-                         f"Win rate: {stats['win_rate']:.1f}%[/]")
-            console.print(f"[dim]LLM spend today: {cost_summary['calls']} calls | "
-                         f"{cost_summary['total_tokens']:,} tokens | "
-                         f"${cost_summary['total_cost_usd']:.4f} (paid-tier equiv)[/]")
+            console.print("\n[yellow]Trading stopped[/]")
+            console.print(
+                f"[dim]Final balance: Rs.{stats['balance']:,.2f} | "
+                f"P&L: Rs.{stats['total_pnl']:+,.2f} | "
+                f"Win rate: {stats['win_rate']:.1f}%[/]"
+            )
+            console.print(
+                f"[dim]LLM spend today: {cost_summary['calls']} calls | "
+                f"{cost_summary['total_tokens']:,} tokens | "
+                f"${cost_summary['total_cost_usd']:.4f} (paid-tier equiv)[/]"
+            )
 
             # Telegram shutdown + P&L summary (best-effort)
             if notifier.enabled:
@@ -706,6 +778,7 @@ def main():
 
     def suppress_threading_errors():
         import warnings
+
         warnings.filterwarnings("ignore", category=RuntimeWarning)
 
     atexit.register(suppress_threading_errors)

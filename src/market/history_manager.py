@@ -160,7 +160,7 @@ class HistoryManager:
                 last_date = df.index[-1]
 
                 # Same trading day — update the last bar
-                if hasattr(last_date, 'date') and last_date.date() == timestamp.date():
+                if hasattr(last_date, "date") and last_date.date() == timestamp.date():
                     df.at[df.index[-1], "high"] = max(df.iloc[-1]["high"], high)
                     df.at[df.index[-1], "low"] = min(df.iloc[-1]["low"], low)
                     df.at[df.index[-1], "close"] = close

@@ -34,6 +34,7 @@ def _service(engine, **kwargs):
 # Mode resolution
 # ---------------------------------------------------------------------------
 
+
 def test_local_paper_fills(engine):
     svc = _service(engine, mode=ExecutionMode.LOCAL_PAPER)
     result = svc.submit(symbol="AAPL", side="BUY", quantity=10, price=100.0, idempotency_key="k1")
@@ -68,7 +69,9 @@ def test_live_via_sync_submit_rejects_directs_to_async(engine):
     fake_settings = MagicMock(dhan_client_id="id", dhan_access_token="tok")
     with patch("src.execution.service.get_settings", return_value=fake_settings):
         svc = ExecutionService(
-            engine=engine, mode=ExecutionMode.LIVE, allow_live_orders=True,
+            engine=engine,
+            mode=ExecutionMode.LIVE,
+            allow_live_orders=True,
             idempotency=IdempotencyStore(),
         )
         assert svc.effective_mode == ExecutionMode.LIVE
@@ -83,6 +86,7 @@ def test_live_via_sync_submit_rejects_directs_to_async(engine):
 # ---------------------------------------------------------------------------
 # Idempotency + kill switch
 # ---------------------------------------------------------------------------
+
 
 def test_duplicate_submission_is_suppressed(engine):
     svc = _service(engine, mode=ExecutionMode.LOCAL_PAPER)
@@ -119,6 +123,7 @@ def test_rejected_order_is_not_recorded_as_duplicate(engine):
 # ---------------------------------------------------------------------------
 # IdempotencyStore persistence
 # ---------------------------------------------------------------------------
+
 
 def test_idempotency_store_persists(tmp_path):
     path = tmp_path / "idem.json"

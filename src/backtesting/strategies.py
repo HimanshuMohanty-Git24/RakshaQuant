@@ -9,7 +9,6 @@ Strategies:
 - SMAcrossoverStrategy: Classic moving average crossover
 """
 
-import numpy as np
 import pandas as pd
 
 from src.market.indicators import Timeframe, calculate_indicators
@@ -75,17 +74,17 @@ class RealSignalStrategy(Strategy):
 class MomentumStrategy(Strategy):
     """
     Momentum-based strategy.
-    
+
     Buy when price shows strong upward momentum.
     Sell when momentum reverses.
-    
+
     Signals:
     - BUY: Price > 20-day SMA AND RSI crosses above 50
     - SELL: Price < 20-day SMA OR RSI crosses below 50
     """
-    
+
     name = "Momentum"
-    
+
     def __init__(
         self,
         sma_period: int = 20,
@@ -98,30 +97,30 @@ class MomentumStrategy(Strategy):
         self.rsi_buy = rsi_buy
         self.rsi_sell = rsi_sell
         self.in_position = False
-    
+
     def _calculate_rsi(self, prices: pd.Series) -> float:
         """Calculate RSI."""
         delta = prices.diff()
         gain = delta.where(delta > 0, 0).rolling(self.rsi_period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(self.rsi_period).mean()
-        
+
         if loss.iloc[-1] == 0:
             return 100
-        
+
         rs = gain.iloc[-1] / loss.iloc[-1]
         return 100 - (100 / (1 + rs))
-    
+
     def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
         if len(history) < self.sma_period:
             return None
-        
+
         close = row["Close"]
         closes = history["Close"]
-        
+
         # Calculate indicators
         sma = closes.tail(self.sma_period).mean()
         rsi = self._calculate_rsi(closes)
-        
+
         # Generate signals
         if not self.in_position:
             if close > sma and rsi > self.rsi_buy:
@@ -131,24 +130,24 @@ class MomentumStrategy(Strategy):
             if close < sma or rsi < self.rsi_sell:
                 self.in_position = False
                 return "SELL"
-        
+
         return None
 
 
 class MeanReversionStrategy(Strategy):
     """
     Mean reversion strategy.
-    
+
     Buy when price is oversold (below lower Bollinger Band).
     Sell when price reaches mean or overbought.
-    
+
     Signals:
     - BUY: Price < Lower BB AND RSI < 30
     - SELL: Price > Middle BB OR RSI > 70
     """
-    
+
     name = "MeanReversion"
-    
+
     def __init__(
         self,
         bb_period: int = 20,
@@ -163,40 +162,40 @@ class MeanReversionStrategy(Strategy):
         self.rsi_oversold = rsi_oversold
         self.rsi_overbought = rsi_overbought
         self.in_position = False
-    
+
     def _calculate_rsi(self, prices: pd.Series) -> float:
         """Calculate RSI."""
         delta = prices.diff()
         gain = delta.where(delta > 0, 0).rolling(self.rsi_period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(self.rsi_period).mean()
-        
+
         if loss.iloc[-1] == 0:
             return 100
-        
+
         rs = gain.iloc[-1] / loss.iloc[-1]
         return 100 - (100 / (1 + rs))
-    
+
     def _calculate_bollinger(self, prices: pd.Series) -> tuple[float, float, float]:
         """Calculate Bollinger Bands."""
         sma = prices.tail(self.bb_period).mean()
         std = prices.tail(self.bb_period).std()
-        
+
         upper = sma + (self.bb_std * std)
         lower = sma - (self.bb_std * std)
-        
+
         return lower, sma, upper
-    
+
     def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
         if len(history) < self.bb_period:
             return None
-        
+
         close = row["Close"]
         closes = history["Close"]
-        
+
         # Calculate indicators
         lower_bb, middle_bb, upper_bb = self._calculate_bollinger(closes)
         rsi = self._calculate_rsi(closes)
-        
+
         # Generate signals
         if not self.in_position:
             if close < lower_bb and rsi < self.rsi_oversold:
@@ -206,23 +205,23 @@ class MeanReversionStrategy(Strategy):
             if close > middle_bb or rsi > self.rsi_overbought:
                 self.in_position = False
                 return "SELL"
-        
+
         return None
 
 
 class SMACrossoverStrategy(Strategy):
     """
     Simple Moving Average Crossover.
-    
+
     Classic trend-following strategy.
-    
+
     Signals:
     - BUY: Fast SMA crosses above Slow SMA
     - SELL: Fast SMA crosses below Slow SMA
     """
-    
+
     name = "SMA_Crossover"
-    
+
     def __init__(
         self,
         fast_period: int = 10,
@@ -233,19 +232,19 @@ class SMACrossoverStrategy(Strategy):
         self.in_position = False
         self.prev_fast = None
         self.prev_slow = None
-    
+
     def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
         if len(history) < self.slow_period:
             return None
-        
+
         closes = history["Close"]
-        
+
         # Calculate SMAs
         fast_sma = closes.tail(self.fast_period).mean()
         slow_sma = closes.tail(self.slow_period).mean()
-        
+
         signal = None
-        
+
         # Check for crossover
         if self.prev_fast is not None and self.prev_slow is not None:
             # Golden cross (fast crosses above slow)
@@ -253,30 +252,30 @@ class SMACrossoverStrategy(Strategy):
                 if not self.in_position:
                     self.in_position = True
                     signal = "BUY"
-            
+
             # Death cross (fast crosses below slow)
             elif self.prev_fast >= self.prev_slow and fast_sma < slow_sma:
                 if self.in_position:
                     self.in_position = False
                     signal = "SELL"
-        
+
         self.prev_fast = fast_sma
         self.prev_slow = slow_sma
-        
+
         return signal
 
 
 class RSIStrategy(Strategy):
     """
     RSI-based strategy.
-    
+
     Signals:
     - BUY: RSI crosses above oversold level
     - SELL: RSI crosses above overbought level
     """
-    
+
     name = "RSI"
-    
+
     def __init__(
         self,
         rsi_period: int = 14,
@@ -288,40 +287,40 @@ class RSIStrategy(Strategy):
         self.overbought = overbought
         self.in_position = False
         self.prev_rsi = None
-    
+
     def _calculate_rsi(self, prices: pd.Series) -> float:
         """Calculate RSI."""
         delta = prices.diff()
         gain = delta.where(delta > 0, 0).rolling(self.rsi_period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(self.rsi_period).mean()
-        
+
         if loss.iloc[-1] == 0:
             return 100
-        
+
         rs = gain.iloc[-1] / loss.iloc[-1]
         return 100 - (100 / (1 + rs))
-    
+
     def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
         if len(history) < self.rsi_period + 5:
             return None
-        
+
         closes = history["Close"]
         rsi = self._calculate_rsi(closes)
-        
+
         signal = None
-        
+
         if self.prev_rsi is not None:
             # RSI crosses above oversold
             if self.prev_rsi <= self.oversold and rsi > self.oversold:
                 if not self.in_position:
                     self.in_position = True
                     signal = "BUY"
-            
+
             # RSI crosses above overbought
             elif rsi > self.overbought:
                 if self.in_position:
                     self.in_position = False
                     signal = "SELL"
-        
+
         self.prev_rsi = rsi
         return signal
