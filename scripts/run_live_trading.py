@@ -30,6 +30,7 @@ from src.market.manager import MarketDataManager, MarketQuote, is_market_open
 from src.market.history_manager import HistoryManager
 from src.market.indicators import Timeframe, get_indicator_cache
 from src.market.signals import SignalEngine
+from src.market.sizing import calculate_position_size
 from src.market.stock_discovery import StockDiscovery
 from src.memory.database import AgentMemoryDB
 from src.memory.performance_tracker import get_performance_tracker
@@ -514,7 +515,24 @@ async def run_live_trading():
                 stop_loss = trade.get("stop_loss", entry_price * 0.98)
                 target_price = trade.get("target_price", entry_price * 1.04)
                 strategy = trade.get("strategy", "unknown")
-                quantity = max(1, int((paper_engine.get_balance() * 0.05) / entry_price)) if entry_price > 0 else 1
+
+                # Risk-based position sizing: size from the risk budget (risk-per-trade and the
+                # stop distance) using the real PositionSizer — and the strategy's actual
+                # win-rate (Kelly) when enough history exists — instead of a flat 5% of cash.
+                if entry_price > 0 and abs(entry_price - stop_loss) > 0:
+                    win_rate = perf_tracker.get_strategy_performance(strategy, regime).win_rate
+                    sizing = calculate_position_size(
+                        capital=paper_engine.get_balance(),
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        target_price=target_price,
+                        risk_per_trade=settings.risk_per_trade,
+                        max_position_pct=settings.max_position_pct,
+                        win_rate=win_rate,
+                    )
+                    quantity = max(1, sizing.shares)
+                else:
+                    quantity = 1
 
                 # Execute via the unified execution service (idempotent; shadow-aware;
                 # awaits the broker for live modes).
