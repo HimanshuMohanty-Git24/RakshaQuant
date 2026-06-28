@@ -387,20 +387,24 @@ A rich CLI dashboard built with `rich` providing real-time visibility into the s
 - [Groq API Key](https://console.groq.com) (for LLM inference) - **FREE**
 - [DhanHQ Account](https://dhan.co) (optional, for live trading only)
 
-### Installation
+### Installation (3 steps)
 
 ```bash
-# Clone the repository
+# 1. Clone + install (uv is fast)
 git clone https://github.com/yourusername/RakshaQuant.git
 cd RakshaQuant
-
-# Install dependencies with uv (fast!)
 uv sync
 
-# Configure environment
-cp .env.example .env
-# Edit .env and add your API keys
+# 2. Guided setup — creates .env, checks your keys, prints a readiness checklist
+uv run python scripts/setup.py
+
+# 3. Add your FREE Groq key to .env (the setup output links you straight there), then:
+uv run python scripts/setup.py     # re-run to confirm "[READY]"
 ```
+
+That's it — `setup.py` is the only thing you need to get from clone to running. It is 100%
+free by default (YFinance data + local paper wallet + Groq free tier); no broker account
+required and no real orders are ever placed.
 
 ### Configuration
 
@@ -438,23 +442,30 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 ### Running the System
 
-**1. Check Configuration**
-
 ```bash
-uv run python scripts/check_config.py
-```
+# Validate config (guided setup also does this)
+uv run python scripts/setup.py        # or: scripts/check_config.py
 
-**2. Run Paper Trading Dashboard**
-
-```bash
+# Launch the live/paper dashboard (main entry point)
 uv run python scripts/run_live_trading.py
-```
 
-**3. Run Backtest**
-
-```bash
+# Run a backtest
 uv run python src/backtesting/engine.py
 ```
+
+### The Dashboard
+
+The live dashboard (`rich` TUI) is the main interface. At a glance it shows:
+
+- **Header status bar** — mode/data badges, **NSE OPEN/CLOSED** (in IST) and a live IST clock,
+  and session uptime.
+- **Account** — balance, total & realized/unrealized P&L, return %, best/worst, and goal pace.
+- **Market Overview / Open Positions** — top movers and live position P&L.
+- **Market Regime / AI Decision / Agent Activity** — what the agents decided and *why*.
+- **Session & Cost** (footer) — today's LLM calls / tokens / **$ cost** (FinOps) and the
+  profit-goal pace bar — alongside the scrolling **Activity Log**.
+
+Press `Ctrl+C` to stop (it prints a final P&L + spend summary).
 
 ---
 
@@ -501,8 +512,9 @@ RakshaQuant/
 │   ├── memory/              # 📚 Learning System (closed loop: feedback.py)
 │   └── config/              # ⚙️ Configuration
 ├── scripts/                 # 🏃‍♂️ Entry Points
-│   ├── run_live_trading.py  # Main application
-│   └── check_config.py      # 🆕 Config validator
+│   ├── setup.py             # 🆕 Guided one-command setup
+│   ├── run_live_trading.py  # Main application (dashboard)
+│   └── check_config.py      # Config validator
 ├── tests/                   # 🧪 Unit Tests
 └── README.md
 ```

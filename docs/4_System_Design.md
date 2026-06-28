@@ -1,5 +1,8 @@
 # 4. System Design & Patterns
 
+> **📌 v2.1 hardening note.** Beyond the cognitive patterns described here, the system now closes its learn-from-losses loop at runtime, derives **evidence-based** signal confidence and **risk-based** position sizing, tracks LLM cost against daily budgets (FinOps), and runs all execution through a unified `ExecutionService` with order idempotency and a safe **shadow mode** (real broker orders only with `ALLOW_LIVE_ORDERS=true`). See README "What's New (v2.1)".
+
+
 ## How It Thinks: Agent Cognitive Strategy
 
 The TradingAgent leverages **Multi-Agent Orchestration (Ensemble AI)** to decompose complex trading decisions into specialized, bounded subtasks. Instead of one large prompt attempting to evaluate news, regime, risk, and math in one go, the work is divided among focused agents:
