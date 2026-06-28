@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from src.config import get_settings
+from src.finops import record_llm_response
 from src.utils.rate_limiter import get_groq_limiter
 from src.utils.circuit_breaker import get_groq_circuit_breaker, CircuitBreakerOpenError
 from src.utils.errors import RateLimitError
@@ -120,8 +121,9 @@ def strategy_selection_node(state: TradingState) -> dict[str, Any]:
             return agent.invoke(messages)
         
         response = circuit_breaker.call(invoke_llm)
+        record_llm_response("strategy_selection", response, model=settings.groq_model_primary)
         result = _parse_strategy_response(response.content)
-        
+
         logger.info(f"Selected strategies: {result['active_strategies']}")
         
         return {

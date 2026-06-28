@@ -247,9 +247,29 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # FinOps - Cost tracking & budgets
+    # ===========================================
+    finops_enabled: bool = Field(
+        default=True,
+        description="Enable LLM cost/token accounting and budget alerts",
+    )
+    daily_token_budget: int = Field(
+        default=0,
+        description="Max Groq tokens per IST day across all agents (0 = unlimited)",
+    )
+    daily_cost_budget_usd: float = Field(
+        default=0.0,
+        description="Max paid-tier-equivalent LLM spend per IST day in USD (0 = unlimited)",
+    )
+    finops_budget_soft_pct: float = Field(
+        default=0.8,
+        description="Soft-alert threshold as a fraction of a daily budget (0.8 = 80%)",
+    )
+
+    # ===========================================
     # Validation
     # ===========================================
-    
+
     @model_validator(mode='after')
     def validate_configuration(self) -> "Settings":
         """Validate configuration consistency."""

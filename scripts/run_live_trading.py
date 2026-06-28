@@ -23,6 +23,8 @@ from rich.live import Live
 from src.config import get_settings
 from src.agents.graph import create_trading_graph, run_trading_cycle
 from src.agents.risk_compliance import check_kill_switch
+from src.finops import get_alert_manager, get_cost_tracker
+from src.notifications.telegram import get_notifier
 from src.market.manager import MarketDataManager, MarketQuote, is_market_open
 from src.market.history_manager import HistoryManager
 from src.market.indicators import calculate_indicators, Timeframe
@@ -136,6 +138,15 @@ async def run_live_trading():
     is_live = await market_manager.start()
     data_source = "WebSocket LIVE" if is_live else "Simulated"
     dashboard.stats.log_activity(f"Data source: {data_source}", "SUCCESS")
+
+    # Telegram startup notification (best-effort; no-op if unconfigured)
+    notifier = get_notifier()
+    if notifier.enabled:
+        try:
+            await notifier.send_startup_message()
+            dashboard.stats.log_activity("Telegram notifications active", "INFO")
+        except Exception as e:
+            logger.warning("Telegram startup notification failed: %s", e)
 
     with Live(create_dashboard_layout(dashboard.stats), console=console, refresh_per_second=4) as live:
 
@@ -271,6 +282,27 @@ async def run_live_trading():
                     live.update(create_dashboard_layout(dashboard.stats))
                 return
 
+            # ── FinOps spend gate ──────────────────────────────────
+            # The agent pipeline below is the only LLM spend. If the daily token/cost
+            # budget is exhausted, skip it (and any new entries) to conserve spend —
+            # exits in Step 0 already ran, so risk is still managed.
+            cost_tracker = get_cost_tracker()
+            if cost_tracker.is_over_hard_budget():
+                status = cost_tracker.budget_status()
+                await get_alert_manager().alert(
+                    "finops_hard_budget",
+                    f"Daily LLM budget exhausted ({status['tokens_used']:,} tokens / "
+                    f"${status['cost_used_usd']:.4f} used) — pausing new agent cycles.",
+                    level="CRITICAL",
+                )
+                dashboard.stats.log_activity(
+                    "FinOps HARD budget reached — skipping agent pipeline this cycle", "WARNING"
+                )
+                for _ in range(15):
+                    time.sleep(1)
+                    live.update(create_dashboard_layout(dashboard.stats))
+                return
+
             # ── Step 5: Run agent pipeline ─────────────────────────
             market_data = {s: q.to_dict() for s, q in quotes.items()}
             indicators_dict = {top_candidate.symbol: indicators.to_dict()}
@@ -389,6 +421,21 @@ async def run_live_trading():
             # Update dashboard balance from paper engine
             dashboard.stats.current_balance = paper_engine.get_balance()
 
+            # ── FinOps: surface today's LLM spend + soft-budget alert ──
+            cost_summary = cost_tracker.daily_summary()
+            dashboard.stats.llm_calls = cost_summary["calls"]
+            dashboard.stats.llm_tokens = cost_summary["total_tokens"]
+            dashboard.stats.llm_cost_usd = cost_summary["total_cost_usd"]
+            budget = cost_tracker.budget_status()
+            if budget["soft_breached"] and not budget["hard_breached"]:
+                await get_alert_manager().alert(
+                    "finops_soft_budget",
+                    f"Approaching daily LLM budget: {budget['tokens_used']:,} tokens / "
+                    f"${budget['cost_used_usd']:.4f} used "
+                    f"(soft limit {budget['soft_pct']:.0%}).",
+                    level="WARNING",
+                )
+
             # Increment cycle
             dashboard.increment_cycle()
             live.update(create_dashboard_layout(dashboard.stats))
@@ -444,10 +491,28 @@ async def run_live_trading():
             await market_manager.stop()
             # Show final stats
             stats = paper_engine.get_stats()
+            cost_summary = get_cost_tracker().daily_summary()
             console.print(f"\n[yellow]Trading stopped[/]")
             console.print(f"[dim]Final balance: Rs.{stats['balance']:,.2f} | "
                          f"P&L: Rs.{stats['total_pnl']:+,.2f} | "
                          f"Win rate: {stats['win_rate']:.1f}%[/]")
+            console.print(f"[dim]LLM spend today: {cost_summary['calls']} calls | "
+                         f"{cost_summary['total_tokens']:,} tokens | "
+                         f"${cost_summary['total_cost_usd']:.4f} (paid-tier equiv)[/]")
+
+            # Telegram shutdown + P&L summary (best-effort)
+            if notifier.enabled:
+                try:
+                    await notifier.send_pnl_summary(
+                        balance=stats["balance"],
+                        realized_pnl=stats["total_pnl"],
+                        unrealized_pnl=0.0,
+                        total_trades=stats.get("total_trades", 0),
+                        win_rate=stats["win_rate"],
+                    )
+                    await notifier.send_shutdown_message(reason="Session ended")
+                except Exception as e:
+                    logger.warning("Telegram shutdown notification failed: %s", e)
 
 
 def main():

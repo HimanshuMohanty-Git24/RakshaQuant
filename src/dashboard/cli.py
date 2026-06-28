@@ -67,6 +67,11 @@ class TradingStats:
     current_regime: str = "unknown"
     regime_confidence: float = 0.0
     active_strategies: list = field(default_factory=list)
+
+    # FinOps (LLM cost tracking, today / IST)
+    llm_calls: int = 0
+    llm_tokens: int = 0
+    llm_cost_usd: float = 0.0
     
     # Market data
     market_quotes: dict = field(default_factory=dict)  # symbol -> quote dict
@@ -343,7 +348,12 @@ def create_agent_panel(stats: TradingStats) -> Panel:
     if stats.signals_generated > 0:
         approval_rate = (stats.signals_validated / stats.signals_generated) * 100
         table.add_row("Approval Rate", f"[cyan]{approval_rate:.0f}%[/]")
-    
+
+    # FinOps: LLM spend today
+    table.add_row("LLM Calls", f"[white]{stats.llm_calls}[/]")
+    table.add_row("LLM Tokens", f"[white]{stats.llm_tokens:,}[/]")
+    table.add_row("Est Cost", f"[cyan]${stats.llm_cost_usd:.4f}[/]")
+
     return Panel(table, title="[bold white]🤖 Agent Activity[/]", border_style="magenta", box=box.ROUNDED)
 
 
