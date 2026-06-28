@@ -290,7 +290,7 @@ class PredictionAgent:
                     recent_change = 0
             else:
                 recent_change = 0
-        except:
+        except Exception:
             recent_change = 0
 
         direction = "up" if recent_change > 0 else "down"

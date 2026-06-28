@@ -75,7 +75,7 @@ def compute_outcome(trade: dict[str, Any]) -> TradeOutcome | None:
     a TradeOutcome directly for the learning feedback loop.
     """
     try:
-        entry_price = trade.get("entry_price", 0)
+        trade.get("entry_price", 0)
         exit_price = trade.get("exit_price", 0)
         stop_loss = trade.get("stop_loss", 0)
         target = trade.get("target_price", 0)

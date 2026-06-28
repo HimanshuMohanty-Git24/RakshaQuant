@@ -70,7 +70,7 @@ def test_get_top_lessons_for_context(memory_db):
 
     lessons = memory_db.get_top_lessons_for_context(regime="bull", strategies=["strat1"], n=10)
 
-    ids = [l["lesson_id"] for l in lessons]
+    ids = [ls["lesson_id"] for ls in lessons]
     assert "l1" in ids
     assert "l2" in ids
     assert "l3" in ids
@@ -110,7 +110,7 @@ def test_cleanup_expired(memory_db):
     assert count >= 1  # l1
 
     lessons = memory_db.get_lessons(include_expired=True)
-    ids = [l["lesson_id"] for l in lessons]
+    ids = [ls["lesson_id"] for ls in lessons]
     assert "l1" not in ids
     assert "l2" in ids
 

@@ -75,6 +75,15 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+# E501 (line length) is owned by `ruff format` (line-length 100); it only flags string
+# literals the formatter intentionally won't split, so it's not enforced as a lint rule.
+# N806 is disabled because the codebase idiomatically uses `X` (ML feature matrix),
+# `Session` (SQLAlchemy sessionmaker), and `Mock*` (test doubles) as local names.
+ignore = ["E501", "N806"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts insert the repo root onto sys.path before importing `src`, so imports follow code.
+"scripts/*" = ["E402"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -86,3 +95,13 @@ filterwarnings = [
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+# Third-party libraries without type stubs / py.typed markers. Silencing the missing-import
+# noise lets mypy focus on our own code. (Reaching full strict-clean across the legacy
+# modules is a separate, larger annotation effort.)
+[[tool.mypy.overrides]]
+module = [
+    "ta.*", "dhanhq.*", "feedparser", "sklearn.*", "yfinance.*",
+    "pandas.*", "requests.*", "langchain_groq.*",
+]
+ignore_missing_imports = true

@@ -274,8 +274,8 @@ def test_simulated_data():
         print(f"  {g.symbol}: {g.change_percent:+.2f}%")
 
     print("\nTop Losers:")
-    for l in losers:
-        print(f"  {l.symbol}: {l.change_percent:+.2f}%")
+    for loser in losers:
+        print(f"  {loser.symbol}: {loser.change_percent:+.2f}%")
 
     print("\n[TEST] Trading Candidates (>0.5% move)...")
     candidates = market.get_trading_candidates(0.5)

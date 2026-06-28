@@ -251,7 +251,7 @@ class AgentMemoryDB:
             if min_severity:
                 severity_order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
                 min_level = severity_order.get(min_severity, 1)
-                valid_severities = [s for s, l in severity_order.items() if l >= min_level]
+                valid_severities = [s for s, level in severity_order.items() if level >= min_level]
                 query = query.filter(LessonRecord.severity.in_(valid_severities))
 
             # Sort by current score (relevance)

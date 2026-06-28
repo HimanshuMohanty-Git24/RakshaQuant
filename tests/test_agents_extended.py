@@ -47,7 +47,7 @@ def test_fetch_news(news_analyst):
 
 @pytest.mark.asyncio
 async def test_analyze_sentiment(news_analyst):
-    with patch("src.agents.news_analyst.ChatGroq") as mock_llm_cls:
+    with patch("src.agents.news_analyst.ChatGroq"):
         mock_llm = MagicMock()
         mock_llm.invoke.return_value.content = '{"sentiment": 0.8, "reasoning": "Good news"}'
         news_analyst._llm = mock_llm
@@ -113,8 +113,6 @@ def test_predict_sklearn(prediction_agent):
     with patch("src.agents.prediction.SKLEARN_AVAILABLE", True):
         # We need to ensure sklearn is actually importable or mocked if not
         try:
-            from sklearn.linear_model import LinearRegression
-
             signal = prediction_agent.predict(df, "AAPL")
             assert signal.symbol == "AAPL"
             assert signal.confidence >= 0.3

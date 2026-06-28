@@ -59,7 +59,7 @@ async def run_demo_cycle():
 
     # Initialize memory system
     memory_db = AgentMemoryDB()
-    injector = MemoryInjector(memory_db=memory_db)
+    MemoryInjector(memory_db=memory_db)
 
     # Generate sample data
     logger.info("\n--- Generating Sample Market Data ---")

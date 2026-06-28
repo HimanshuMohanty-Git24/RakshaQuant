@@ -120,7 +120,7 @@ async def check_groq_api() -> ServiceHealth:
             max_tokens=5,
         )
 
-        response = llm.invoke([HumanMessage(content="Say OK")])
+        llm.invoke([HumanMessage(content="Say OK")])
 
         latency = (time.time() - start) * 1000
         return ServiceHealth(

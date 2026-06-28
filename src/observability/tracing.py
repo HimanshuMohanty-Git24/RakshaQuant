@@ -43,7 +43,7 @@ def setup_tracing() -> bool:
         client = Client()
 
         # Try to list projects to verify connection
-        projects = list(client.list_projects(limit=1))
+        list(client.list_projects(limit=1))
 
         logger.info(f"LangSmith tracing enabled for project: {settings.langsmith_project}")
         return True

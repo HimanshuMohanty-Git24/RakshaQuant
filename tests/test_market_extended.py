@@ -277,7 +277,7 @@ async def test_discover(discovery):
 async def test_websocket_feed_connect():
     with patch(
         "src.market.websocket_feed.websockets.connect", new_callable=AsyncMock
-    ) as mock_connect:
+    ):
         with patch("src.market.websocket_feed.get_settings") as mock_settings:
             mock_settings.return_value.dhan_access_token.get_secret_value.return_value = "token"
             mock_settings.return_value.dhan_client_id = "id"

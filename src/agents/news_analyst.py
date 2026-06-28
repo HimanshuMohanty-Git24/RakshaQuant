@@ -83,7 +83,7 @@ Analyze the following news headlines and rate the overall sentiment on a scale f
 - -1.0 = Extremely bearish (very negative for stock price)
 - -0.5 = Bearish
 - 0.0 = Neutral
-- +0.5 = Bullish  
+- +0.5 = Bullish
 - +1.0 = Extremely bullish (very positive for stock price)
 
 Consider:
