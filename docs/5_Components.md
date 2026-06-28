@@ -27,22 +27,50 @@ This section details every code component.
   - **`cli.py`**: Utilizes the `rich` library to render a terminal based dashboard providing live updates of the Agent Graph processing.
 
 - **`execution/`**
-  - **`adapter.py`**: Abstract Broker Interface.
-  - **`paper_engine.py`**: Simulated exchange. Tracks portfolio balance precisely.
-  - **`exit_manager.py`**: Handles checking trailing stops, take profits independent of the LLMs.
-  - **`journal.py`**: PostgreSQL serialization logging what was bought/sold and why.
+  - **`service.py`**: `ExecutionService` — the single mode-switched entry point for order
+    submission. Adds **order idempotency** (a persisted `IdempotencyStore`), a **shadow mode**
+    (mirror live, send nothing), and no-silent-downgrade mode resolution.
+  - **`live_executor.py`**: `LiveBrokerExecutor` (submit + poll status to a terminal fill) and
+    `reconcile_positions` (local vs broker, broker = source of truth). Gated behind
+    `allow_live_orders`.
+  - **`costs.py`**: `CostModel` — slippage + NSE-style fees applied to paper fills.
+  - **`adapter.py`**: DhanHQ / local broker adapters (lazy DhanHQ import).
+  - **`paper_engine.py`**: Simulated exchange — cost-aware fills, long/short/partial accounting,
+    **atomic, crash-safe** state persistence.
+  - **`exit_manager.py`**: Trailing stops / time / partial / regime exits, with MAE/MFE tracking;
+    state **persisted across restarts**.
+  - **`journal.py`**: Durable trade history (SQLAlchemy); records net P&L + partial exits.
+
+- **`finops/`**
+  - **`cost_tracker.py`**: Per-agent, per-IST-day Groq token + cost accounting with daily
+    budgets and a `budget_status()` used as a spend kill-switch.
+  - **`alerts.py`**: `AlertManager` — logs + best-effort Telegram, de-duped per day (budget,
+    drawdown, data-staleness, ...).
+
+- **`profit/`**
+  - **`goal_engine.py`**: Turns a monthly return target into a **risk-bounded plan** (required
+    win-rate / trade frequency) and an on/off-pace tracker. Advisory only — never relaxes risk.
 
 - **`market/`**
-  - Handles the universe of obtaining the numbers. From Live Data pulling (`live_data.py`), to YFinance (`yfinance_feed.py`), and managing standard technicals (`indicators.py`). Sizing rules and stock screeners are managed here (`stock_discovery.py`).
+  - Obtains the data and computes technicals: Live/WebSocket (`live_data.py`,
+    `websocket_feed.py`), YFinance (`yfinance_feed.py`), simulated (`simulated_data.py`), the
+    `MarketDataManager`, `indicators.py` (+ `IndicatorCache`), `signals.py` (evidence-based
+    confidence), `sizing.py` (risk-based `PositionSizer`), `stock_discovery.py`, and
+    `history_manager.py`.
 
 - **`memory/`**
-  - Core component for the learning loop. Trade analyzers (`analyzer.py`), categorizing mistakes (`classifier.py`), hooking to DB (`database.py`), and inserting knowledge (`injection.py`). 
+  - The **closed** learning loop: `analyzer.py` (`compute_outcome`), `classifier.py` (mistake →
+    lesson), `database.py` (storage + unified `decayed_score`), `injection.py` (inject lessons),
+    `feedback.py` (wires close → lesson + marks lessons useful), `performance_tracker.py`
+    (persisted per-strategy win-rates).
 
 - **`utils/`**
-  - Safety and reliability toolkit. Circuit Breakers, Rate Limiting to not annoy APIs, Caching for deduplication context, custom Error classes.
+  - Safety/reliability toolkit: circuit breaker, rate limiter, TTL cache, custom errors,
+    events, and **`market_time.py`** (fixed UTC+05:30 IST helpers).
 
 ### Scripts (`scripts/`)
 These act as the `main` entrypoints for users.
-- `run_live_trading.py` / `run_trading.py`: Kicks off the orchestration pipeline connecting the live data feeds to the compiled LangGraph.
-- `run_with_dashboard.py`: Starts the runner alongside the Rich dashboard.
-- `diagnose_risk.py`, `check_config.py`, `test_dhan_connection.py`: Simple utility scripts validating components without firing LLMs.
+- `setup.py`: **Guided one-command setup** — creates `.env`, checks keys, prints a readiness checklist.
+- `run_live_trading.py`: The main app — connects live/simulated data to the compiled LangGraph
+  and drives the `rich` dashboard, execution, exits, journaling, FinOps and the learning loop.
+- `diagnose_risk.py`, `check_config.py`, `test_dhan_connection.py`: Utility scripts validating components without firing LLMs.

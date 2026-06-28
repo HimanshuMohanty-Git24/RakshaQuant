@@ -1,5 +1,13 @@
 # 1. Introduction
 
+> **📌 v2.1 hardening note.** These design docs describe the core architecture. Since they were
+> written, the system gained: a **FinOps** layer (token/cost budgets + alerts), a **profit-target
+> goal engine**, execution safety (a unified `ExecutionService` with **order idempotency** + a
+> **shadow mode**, gated live fill-lifecycle + broker reconciliation), realistic paper costs
+> (slippage + fees), a **closed** learn-from-losses loop, evidence-based signal confidence, and
+> risk-based position sizing. See the README's "What's New (v2.1)" and `CLAUDE.md` for the
+> current shape. Real broker orders are only ever sent with `ALLOW_LIVE_ORDERS=true`.
+
 ## Overview
 
 **RakshaQuant TradingAgent** is an **Agentic Paper Trading System** engineered for the **Indian National Stock Exchange (NSE)**. Unlike traditional algorithmic trading systems that rely on deterministic, hard-coded rules, TradingAgent separates *thinking (decision-making)* from *execution* by modeling real-world trading desk roles — Portfolio Manager, Trader, Risk Manager, and Analyst — through an **ensemble of AI Agents** orchestrated by **LangGraph**.

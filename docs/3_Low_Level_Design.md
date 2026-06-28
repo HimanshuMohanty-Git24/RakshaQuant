@@ -1,5 +1,8 @@
 # 3. Low-Level Design (LLD)
 
+> **📌 v2.1 hardening note.** Newer modules not yet detailed below: `src/finops/` (cost tracking + budgets + alerts), `src/profit/goal_engine.py` (risk-bounded profit plan), `src/execution/service.py` (`ExecutionService`: idempotency + shadow mode), `src/execution/live_executor.py` (live fill-lifecycle + reconciliation), `src/execution/costs.py` (`CostModel`), `src/memory/feedback.py` (closes the learning loop), and `src/utils/market_time.py` (IST helpers). See README "What's New (v2.1)" + `CLAUDE.md`.
+
+
 This document provides a deep-dive into the code-level architecture, class relationships, interface contracts, data structures, and module interactions of the TradingAgent system.
 
 ---

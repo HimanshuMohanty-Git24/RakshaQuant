@@ -1,5 +1,12 @@
 # 2. High-Level Design (HLD)
 
+> **📌 v2.1 hardening note.** Two cross-cutting layers were added on top of the six below:
+> a **FinOps layer** (`src/finops/` — token/cost accounting, daily budgets, alerts, spend
+> kill-switch) and a **Profit-Goal layer** (`src/profit/` — risk-bounded target plan + pace
+> tracker). The Execution layer is now fronted by a unified **`ExecutionService`** (order
+> idempotency + **shadow mode** + gated live fill-lifecycle/reconciliation), and the Memory
+> layer's learn-from-losses loop is now **closed at runtime**. See README "What's New (v2.1)".
+
 ## Architecture Overview
 
 The TradingAgent follows a **decoupled, layered micro-architecture** pattern orchestrating AI via LangGraph state machines. The system is organized into **six primary layers**, each with distinct responsibilities and well-defined interfaces.
