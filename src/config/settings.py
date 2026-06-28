@@ -137,9 +137,15 @@ class Settings(BaseSettings):
         default="yfinance",
         description="Market data source: yfinance (free) or dhan (requires account)",
     )
-    execution_mode: Literal["local_paper", "dhan_paper", "live"] = Field(
+    execution_mode: Literal["local_paper", "shadow", "dhan_paper", "live"] = Field(
         default="local_paper",
-        description="Execution mode: local_paper (free), dhan_paper (sandbox), or live",
+        description="Execution mode: local_paper (free), shadow (mirror live, send nothing), "
+        "dhan_paper (sandbox), or live",
+    )
+    allow_live_orders: bool = Field(
+        default=False,
+        description="Master safety gate: real broker orders are only ever sent when this is "
+        "True. With live/dhan_paper but this False, execution runs in SHADOW (no orders sent).",
     )
     enable_news_analysis: bool = Field(
         default=True,
