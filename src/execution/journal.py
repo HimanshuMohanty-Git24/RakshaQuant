@@ -120,6 +120,7 @@ class TradeJournal:
     """
     
     database_url: str = ""
+    is_persistent: bool = field(default=True, init=False)
     _engine: Any = field(default=None, repr=False)
     _session: Any = field(default=None, repr=False)
     
@@ -138,15 +139,21 @@ class TradeJournal:
             Base.metadata.create_all(self._engine)
             Session = sessionmaker(bind=self._engine)
             self._session = Session()
+            self.is_persistent = "memory" not in self.database_url
             logger.info("Trade journal database initialized")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
-            # Use in-memory fallback for testing
+            # Fall back to in-memory SQLite so the system keeps running, but make it LOUD:
+            # the trade journal will NOT persist across restarts in this mode.
             self._engine = create_engine("sqlite:///:memory:")
             Base.metadata.create_all(self._engine)
             Session = sessionmaker(bind=self._engine)
             self._session = Session()
-            logger.warning("Using in-memory database fallback")
+            self.is_persistent = False
+            logger.error(
+                "Trade journal is using a NON-PERSISTENT in-memory database — trade history "
+                "will be lost on restart. Set a reachable DATABASE_URL for durable journaling."
+            )
     
     def record_trade(
         self,
@@ -206,6 +213,8 @@ class TradeJournal:
         exit_reason: str,
         mae: float = 0,
         mfe: float = 0,
+        pnl: float | None = None,
+        exit_quantity: int | None = None,
     ) -> bool:
         """
         Close an open trade with exit details.
@@ -227,20 +236,28 @@ class TradeJournal:
                 logger.warning(f"Trade not found: {trade_id}")
                 return False
             
-            # Calculate P&L
-            if record.side == "BUY":
-                pnl = (exit_price - record.entry_price) * record.entry_quantity
-                pnl_pct = ((exit_price - record.entry_price) / record.entry_price) * 100
+            qty = exit_quantity if exit_quantity is not None else record.entry_quantity
+
+            # Prefer the caller's realized P&L (which is net of fees/slippage from the
+            # execution engine); otherwise fall back to a gross estimate.
+            if pnl is None:
+                if record.side == "BUY":
+                    pnl = (exit_price - record.entry_price) * qty
+                else:
+                    pnl = (record.entry_price - exit_price) * qty
+
+            entry_price = record.entry_price or 0
+            if entry_price:
+                pnl_pct = (pnl / (entry_price * qty)) * 100 if qty else 0.0
             else:
-                pnl = (record.entry_price - exit_price) * record.entry_quantity
-                pnl_pct = ((record.entry_price - exit_price) / record.entry_price) * 100
-            
+                pnl_pct = 0.0  # guard against zero/absent entry price
+
             # Calculate hold duration
             hold_duration = (datetime.now() - record.entry_time).total_seconds() / 60
-            
+
             # Update record
             record.exit_price = exit_price
-            record.exit_quantity = record.entry_quantity
+            record.exit_quantity = qty
             record.exit_time = datetime.now()
             record.exit_reason = exit_reason
             record.profit_loss = pnl
