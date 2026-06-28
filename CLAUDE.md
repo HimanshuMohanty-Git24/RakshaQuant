@@ -110,6 +110,13 @@ Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
     reach signals or the agent JSON as `NaN`. Indicator results are memoized via
     `get_indicator_cache()` (keyed by symbol/last-bar/close). The loop skips **new entries**
     when the freshest quote is older than `max_quote_staleness_seconds` (exits still run).
+  - **Decision quality (do not regress):** signal **confidence is evidence-based** —
+    `SignalEngine._directional_confidence` blends the strategy's base with how many independent
+    indicators (RSI/MACD/DI/price-vs-MA) agree with the direction, not a hardcoded constant.
+    The live loop sizes entries with the real `PositionSizer`
+    ([sizing.py](src/market/sizing.py)) off `risk_per_trade` + the stop distance (Kelly when a
+    strategy win-rate exists), **not** a flat % of cash. Agent prompts ask for *calibrated*
+    confidence and to weigh the news/mood/ML enrichment.
 - **Execution** — [src/execution/service.py](src/execution/service.py) `ExecutionService` is
   the single mode-switched entry point the live loop uses to place orders. It wraps
   `paper_engine.py` (and, later, the broker in [adapter.py](src/execution/adapter.py):
@@ -182,6 +189,17 @@ the daily-loss limit, or the trade cap, the plan is `feasible=False` and the rec
 action is to *lower the target*, never to take more risk. `run_live_trading.py` logs the
 plan at startup, shows pace on the dashboard, and alerts (via the FinOps `AlertManager`)
 when off-pace or infeasible — always with the "do not increase risk" message.
+
+### Backtesting & evaluation
+
+[src/backtesting/](src/backtesting/) runs strategies on historical OHLCV. Prefer
+`RealSignalStrategy` ([strategies.py](src/backtesting/strategies.py)) — it feeds the **real**
+`calculate_indicators` + `SignalEngine` into the backtest, so results reflect live behaviour
+(the other strategies are standalone re-implementations and will diverge). `BacktestResult`
+includes an `expectancy` (per-trade edge); `compare_results(baseline, candidate)` produces a
+before/after scorecard (return/win-rate/profit-factor/expectancy/Sharpe/drawdown deltas +
+an `improved` flag) so a change can be *proven* to help before trusting it. The engine uses
+strictly-prior bars (`history = data.iloc[:i]`), so no look-ahead.
 
 ### Cross-cutting
 

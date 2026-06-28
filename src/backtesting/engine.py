@@ -70,6 +70,7 @@ class BacktestResult:
     avg_win: float
     avg_loss: float
     profit_factor: float
+    expectancy: float  # expected P&L per trade (the trade-by-trade edge)
     max_drawdown: float
     max_drawdown_pct: float
     sharpe_ratio: float
@@ -88,6 +89,7 @@ class BacktestResult:
             "total_trades": self.total_trades,
             "win_rate": round(self.win_rate, 2),
             "profit_factor": round(self.profit_factor, 2),
+            "expectancy": round(self.expectancy, 2),
             "max_drawdown_pct": round(self.max_drawdown_pct, 2),
             "sharpe_ratio": round(self.sharpe_ratio, 2),
         }
@@ -111,6 +113,7 @@ class BacktestResult:
         print(f"Avg Win:         ₹{self.avg_win:,.2f}")
         print(f"Avg Loss:        ₹{self.avg_loss:,.2f}")
         print(f"Profit Factor:   {self.profit_factor:.2f}")
+        print(f"Expectancy:      ₹{self.expectancy:+,.2f} per trade")
         print("-" * 50)
         print(f"Max Drawdown:    ₹{self.max_drawdown:,.2f} ({self.max_drawdown_pct:.2f}%)")
         print(f"Sharpe Ratio:    {self.sharpe_ratio:.2f}")
@@ -308,6 +311,9 @@ class BacktestEngine:
         gross_profit = sum(t.pnl for t in winning)
         gross_loss = abs(sum(t.pnl for t in losing))
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf')
+
+        # Expectancy: average P&L per trade (the realised edge).
+        expectancy = (sum(t.pnl for t in trades) / len(trades)) if trades else 0.0
         
         # Drawdown
         equity = np.array(equity_curve)
@@ -339,12 +345,45 @@ class BacktestEngine:
             avg_win=avg_win,
             avg_loss=avg_loss,
             profit_factor=profit_factor,
+            expectancy=expectancy,
             max_drawdown=max_drawdown,
             max_drawdown_pct=max_drawdown_pct,
             sharpe_ratio=sharpe,
             trades=trades,
             equity_curve=equity_curve,
         )
+
+
+def compare_results(baseline: BacktestResult, candidate: BacktestResult) -> dict[str, Any]:
+    """
+    Before/after scorecard: deltas of key metrics between two backtests.
+
+    Lets a change be *proven* to help (or not) before trusting it — e.g. baseline vs a
+    tweaked strategy/prompt/sizing run on the same data. Positive `improved` means the
+    candidate beat the baseline on net (return up, drawdown down).
+    """
+    def _delta(metric: str) -> float:
+        return round(float(getattr(candidate, metric)) - float(getattr(baseline, metric)), 4)
+
+    deltas = {
+        "total_return_pct": _delta("total_return_pct"),
+        "win_rate": _delta("win_rate"),
+        "profit_factor": _delta("profit_factor"),
+        "expectancy": _delta("expectancy"),
+        "sharpe_ratio": _delta("sharpe_ratio"),
+        "max_drawdown_pct": _delta("max_drawdown_pct"),  # lower is better
+    }
+    improved = (
+        deltas["total_return_pct"] > 0
+        and deltas["expectancy"] >= 0
+        and deltas["max_drawdown_pct"] <= 0
+    )
+    return {
+        "baseline": baseline.strategy_name,
+        "candidate": candidate.strategy_name,
+        "deltas": deltas,
+        "improved": improved,
+    }
 
 
 def test_backtest_engine():

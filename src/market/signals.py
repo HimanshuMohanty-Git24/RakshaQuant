@@ -360,6 +360,28 @@ class SignalEngine:
             ind, signal_type, strength, StrategyType.TREND_FOLLOWING, confidence, reasons
         )
     
+    def _directional_confidence(self, ind: IndicatorResult, signal_type: SignalType) -> float:
+        """
+        Confidence in [0.35, 0.90] from how many independent indicators agree with the
+        signal direction (RSI, MACD histogram, +DI/-DI, price vs moving average). More
+        agreement → higher confidence; this replaces the old hardcoded confidence constants.
+        """
+        is_buy = signal_type == SignalType.BUY
+        votes: list[bool] = []
+        if ind.rsi is not None:
+            votes.append(ind.rsi < 50 if is_buy else ind.rsi > 50)
+        if ind.macd_histogram is not None:
+            votes.append(ind.macd_histogram > 0 if is_buy else ind.macd_histogram < 0)
+        if ind.plus_di is not None and ind.minus_di is not None:
+            votes.append(ind.plus_di > ind.minus_di if is_buy else ind.minus_di > ind.plus_di)
+        ref_ma = (ind.ema or {}).get(21) or (ind.sma or {}).get(20)
+        if ref_ma is not None:
+            votes.append(ind.close > ref_ma if is_buy else ind.close < ref_ma)
+        if not votes:
+            return 0.5
+        agreement = sum(1 for v in votes if v) / len(votes)
+        return round(0.35 + 0.55 * agreement, 2)
+
     def _create_signal(
         self,
         ind: IndicatorResult,
@@ -404,7 +426,13 @@ class SignalEngine:
             SignalStrength.MODERATE: 5.0,
             SignalStrength.STRONG: min(8.0, self.max_position_size_pct),
         }[strength]
-        
+
+        # Principled confidence: blend the strategy's base confidence with how strongly the
+        # independent indicators actually agree with the signal direction — evidence-based,
+        # not a fixed constant pulled from a hardcoded ladder.
+        agreement = self._directional_confidence(ind, signal_type)
+        final_confidence = round(min(0.95, 0.4 * confidence + 0.6 * agreement), 2)
+
         return TradingSignal(
             signal_id=signal_id,
             symbol=ind.symbol,
@@ -417,7 +445,7 @@ class SignalEngine:
             target_price=target_price,
             risk_reward_ratio=risk_reward,
             position_size_pct=position_pct,
-            confidence=confidence,
+            confidence=final_confidence,
             reasons=reasons,
             indicators=ind.to_dict(),
         )
