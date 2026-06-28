@@ -285,19 +285,24 @@ def _build_validation_context_enriched(
             enrichment.append("\n> If a signal contradicts a high-confidence ML prediction, "
                             "consider rejecting or reducing position size.")
     
-    # Add news sentiment for signal symbols
-    news_sentiment = state.get("news_sentiment")
-    if news_sentiment is not None:
-        enrichment.append(f"\n## News Sentiment: {news_sentiment:.2f} (-1 bearish to +1 bullish)")
-        if abs(news_sentiment) > 0.5:
-            direction = "bullish" if news_sentiment > 0 else "bearish"
+    # Add news sentiment for signal symbols.
+    # Contract: news_sentiment is a dict {"avg_sentiment": float} (see state.py).
+    news_sentiment = state.get("news_sentiment") or {}
+    avg_sentiment = news_sentiment.get("avg_sentiment") if isinstance(news_sentiment, dict) else None
+    if avg_sentiment is not None:
+        enrichment.append(f"\n## News Sentiment: {avg_sentiment:.2f} (-1 bearish to +1 bullish)")
+        if abs(avg_sentiment) > 0.5:
+            direction = "bullish" if avg_sentiment > 0 else "bearish"
             enrichment.append(f"> Strong {direction} news sentiment — factor this into validation.")
-    
-    # Add market mood
-    market_mood = state.get("market_mood")
-    if market_mood is not None:
-        mood_label = state.get("mood_label", "neutral")
-        enrichment.append(f"\n## Market Mood: {mood_label} ({market_mood:.0f}/100)")
+
+    # Add market mood.
+    # Contract: market_mood is SentimentSignal.to_dict() (see state.py).
+    market_mood = state.get("market_mood") or {}
+    if isinstance(market_mood, dict) and market_mood.get("mood_index") is not None:
+        mood_label = market_mood.get("mood_label", "neutral")
+        enrichment.append(
+            f"\n## Market Mood: {mood_label} ({float(market_mood['mood_index']):.0f}/100)"
+        )
     
     if enrichment:
         return base + "\n" + "\n".join(enrichment)

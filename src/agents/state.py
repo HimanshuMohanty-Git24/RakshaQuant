@@ -158,12 +158,18 @@ class TradingState(TypedDict):
     # Sentiment & Prediction (Free Tier)
     # ===========================================
     
-    # News sentiment from NewsAnalyst
+    # News sentiment from NewsAnalyst.
+    # Canonical contract: {"avg_sentiment": float} (empty dict {} when unavailable).
     news_sentiment: dict[str, Any]
-    
-    # Market Mood Index from SentimentAgent
+
+    # Recent news headlines from NewsAnalyst: list of {"title": str, "sentiment": str}.
+    news_headlines: list[dict[str, Any]]
+
+    # Market Mood Index from SentimentAgent.
+    # Canonical contract: SentimentSignal.to_dict() (keys: mood_index, mood_label,
+    # news_score, volatility_score, breadth_score, ...) or {} when unavailable.
     market_mood: dict[str, Any]
-    
+
     # Price predictions from PredictionAgent
     prediction_signals: list[dict[str, Any]]
 
@@ -229,6 +235,7 @@ def create_initial_state(
         
         # Sentiment & Prediction (Free Tier)
         news_sentiment={},
+        news_headlines=[],
         market_mood={},
         prediction_signals=[],
     )

@@ -71,6 +71,17 @@ reference implementation) follows the same resilience pattern — **preserve it 
   `_fallback_*` result instead of raising. The graph must never crash on a bad LLM call.
 - LLM output is JSON; parsing strips ```` ```json ```` / ```` ``` ```` fences and clamps/validates fields.
 
+**Support-agent state contracts.** The support agents enrich `TradingState` with keys the
+regime/validation agents read; the *types must match* or the enrichment is silently dropped
+(the consumer raises `TypeError`, which the agent's broad `except` swallows → it falls back
+without the context). The canonical contracts (declared in [state.py](src/agents/state.py)):
+`news_sentiment` is a **dict** `{"avg_sentiment": float}` (not a bare float), `market_mood` is
+the full `SentimentSignal.to_dict()` dict (read `market_mood["mood_index"]`, not `market_mood`
+itself), `news_headlines` is a list of `{"title","sentiment"}`, and `prediction_signals` is a
+list of `PredictionSignal.to_dict()`. The prediction node sources from raw `signals` (populated
+when support agents run), **not** `validated_signals` (still empty at that stage). When adding a
+consumer, read with `isinstance`/`.get(...)` guards so a stray type never crashes the node.
+
 ### Configuration
 
 All config is centralized in [src/config/settings.py](src/config/settings.py): a
@@ -108,9 +119,9 @@ falls back to an in-memory SQLite database if that connection fails — so memor
 ### Cross-cutting
 
 `utils/` holds the shared `rate_limiter`, `circuit_breaker`, `cache` (TTL), `errors`
-(custom exceptions like `RateLimitError`, `LLMResponseError`), and `events`.
-`observability/tracing.py` wires LangSmith. `dashboard/cli.py` is the `rich` terminal UI.
-`notifications/telegram.py` sends trade alerts.
+(custom exceptions like `RateLimitError`, `LLMResponseError`), `events`, and `market_time`
+(IST helpers — see below). `observability/tracing.py` wires LangSmith. `dashboard/cli.py` is
+the `rich` terminal UI. `notifications/telegram.py` sends trade alerts.
 
 ## Conventions & gotchas
 
@@ -120,6 +131,15 @@ falls back to an in-memory SQLite database if that connection fails — so memor
   include the `sys.path` line so it works regardless of the working directory.
 - **Graph nodes return partial state dicts**, never the full state; let LangGraph merge.
 - **Never let an LLM/agent failure propagate** — return a fallback, matching existing agents.
+- **Market-hour decisions use IST, not host-local time.** Use `src/utils/market_time.py`
+  (`now_ist()`, `is_market_hours()`, `IST`) — never bare `datetime.now()` — for `is_market_open()`
+  and the risk engine's trading-hours check. IST is a fixed UTC+05:30 offset (NSE has no DST), so
+  this stays correct on a UTC cloud host / CI runner.
+- **The kill switch must gate execution, not just the graph.** `check_kill_switch` ends the agent
+  graph at the regime edge *and* is re-checked in `run_live_trading.py` before placing approved
+  entries (exits still run, to flatten risk). Re-check it at any new order-submission site.
 - Python target is **3.11** (`pyproject.toml`, ruff, mypy) even though the README says 3.12;
   prefer 3.11-compatible syntax. `mypy` runs in **strict** mode, so annotate new code fully.
+  (Note: the repo currently carries pre-existing ruff/mypy debt; keep *new* code clean and avoid
+  adding violations rather than boiling the ocean.)
 - Timestamps in the DB use timezone-aware UTC (`datetime.now(UTC)`).

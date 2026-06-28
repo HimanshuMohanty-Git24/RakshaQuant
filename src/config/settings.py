@@ -8,7 +8,7 @@ Includes cross-field validation to ensure configuration consistency.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,16 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    # Cross-field validation warnings collected by validate_configuration().
+    # Populated rather than raised so invalid config degrades instead of failing
+    # startup; tooling (e.g. check_config.py) can surface these to the operator.
+    _config_warnings: list[str] = PrivateAttr(default_factory=list)
+
+    @property
+    def config_warnings(self) -> list[str]:
+        """Cross-field configuration warnings detected at load time (may be empty)."""
+        return self._config_warnings
 
     # ===========================================
     # LLM Provider - Groq
@@ -288,13 +298,15 @@ class Settings(BaseSettings):
             if self.telegram_chat_id and not self.telegram_bot_token:
                 errors.append("telegram_bot_token required when telegram_chat_id is set")
         
+        # Store warnings on the instance so tooling can surface them, and log them.
+        self._config_warnings = errors
         if errors:
             # Log warnings instead of raising for non-critical issues
             import logging
             logger = logging.getLogger(__name__)
             for error in errors:
                 logger.warning(f"Configuration warning: {error}")
-        
+
         return self
 
 
