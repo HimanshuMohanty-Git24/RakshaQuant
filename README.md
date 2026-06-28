@@ -6,7 +6,7 @@
 
 _Where Large Language Models Meet Financial Markets_
 
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Powered-orange.svg)](https://github.com/langchain-ai/langgraph)
 [![LangSmith](https://img.shields.io/badge/LangSmith-Observable-green.svg)](https://smith.langchain.com)
 [![Groq](https://img.shields.io/badge/Groq-Fast%20Inference-purple.svg)](https://groq.com)
@@ -26,10 +26,16 @@ Unlike traditional algorithmic trading that relies solely on hardcoded logic, Ra
 
 - **🤖 Cognitive Agents**: Multi-agent system that "thinks" before it trades
 - **🌐 Live Market Analysis**: Real-time multi-stock monitoring via WebSocket
-- **🛡️ Dynamic Risk Management**: Agents that can veto trades based on risk parameters
+- **🛡️ Dynamic Risk Management**: Deterministic rules engine + a kill switch that gates execution
 - **📊 Professional Dashboard**: Real-time CLI interface for monitoring agent thought processes
-- **📝 Self-Improving Memory**: Learns from past mistakes using semantic memory
-- **🆓 100% Free Tier Mode**: Paper trading without any paid API dependencies
+- **📝 Self-Improving Memory**: A *closed* learn-from-losses loop — classifies closed trades into
+  lessons and tracks whether acting on them helped
+- **💰 FinOps**: Tracks Groq token usage + cost with daily budgets, alerts, and a spend kill-switch
+- **🎯 Profit-Target Engine**: Turns a return goal into a risk-bounded plan + on/off-pace tracker
+- **🧪 Realistic Paper Trading**: Slippage + NSE-style fees, risk-based sizing, durable state
+- **🔌 Gated Live Trading**: A unified execution path with order idempotency, a **shadow mode**,
+  and broker reconciliation — real orders only fire behind an explicit opt-in
+- **🆓 100% Free Tier Mode**: Paper trading without any paid API dependencies (the default)
 
 ---
 
@@ -63,6 +69,37 @@ No more hardcoded watchlists! The system now **automatically discovers** which s
 | `src/backtesting/`              | Test strategies on historical data    |
 | `src/market/stock_discovery.py` | Dynamic stock discovery               |
 | `src/execution/paper_engine.py` | Local paper trading engine            |
+
+---
+
+## 🔧 What's New (v2.1 — Production Hardening)
+
+A focused hardening pass made the system correct, measurable, and safe end-to-end. Highlights:
+
+| Area | What changed |
+| ---- | ------------ |
+| **Correctness** | Market hours evaluated in **IST** (not host-local time); kill switch now **gates order execution**, not just the agent graph; the news/sentiment/ML enrichment is fixed so it actually reaches the LLMs; each trading cycle is error-isolated. |
+| **FinOps** (`src/finops/`) | Per-agent, per-IST-day Groq **token + cost accounting**, soft/hard **daily budgets**, an alerting layer (logs + Telegram), and a **spend kill-switch** that pauses LLM cycles when the budget is hit. |
+| **Profit goal** (`src/profit/`) | A goal engine turns a monthly target into a **risk-bounded plan** (required win-rate / trade-frequency) and tracks on/off-pace — advisory only, it never relaxes risk limits. |
+| **Data quality** | No look-ahead (indicators on settled bars), volume double-count fixed, NaN-sanitized indicators, indicator caching, and a **data-staleness gate**. |
+| **Paper realism** | Fills model **slippage + NSE-style fees**; correct long/short/partial accounting (no cash leak); **atomic, crash-safe** state. |
+| **Execution safety** (`src/execution/service.py`, `live_executor.py`) | One mode-switched path with **order idempotency**, a **shadow mode** (mirrors live, sends nothing), **broker reconciliation**, and a live fill-lifecycle — all gated behind `ALLOW_LIVE_ORDERS` (default off). |
+| **Decision quality** | Signal **confidence is evidence-based** (indicator agreement); position **sizing is risk-based** (risk-per-trade + stop distance, Kelly with real win-rates); the **learning loop is closed**; the **backtester runs the real signal engine** with a before/after scorecard. |
+
+> Every change is covered by tests (**325 passing**), `ruff check` is clean, and the default
+> stays 100% free with **no real broker orders** unless explicitly enabled.
+
+### Hardening modules
+
+| Module | Purpose |
+| ------ | ------- |
+| `src/finops/cost_tracker.py` · `alerts.py` | LLM cost/token accounting, budgets, alerts |
+| `src/profit/goal_engine.py` | Risk-bounded profit-target plan + pace tracker |
+| `src/execution/service.py` | Unified execution: idempotency + shadow mode |
+| `src/execution/live_executor.py` | Live order fill-lifecycle + broker reconciliation |
+| `src/execution/costs.py` | Slippage + NSE-style fee model for paper fills |
+| `src/memory/feedback.py` | Closes the learn-from-losses loop at trade close |
+| `src/utils/market_time.py` | IST (UTC+05:30) market-time helpers |
 
 ---
 
@@ -298,6 +335,10 @@ For a comprehensive deep dive into the system's architecture, reasoning capabili
 4. 🧠 **[System Design & Cognitive Patterns](docs/4_System_Design.md)** – How the AI thinks (ensemble AI vs single prompt), fault tolerance, and design patterns.
 5. 📂 **[Component Breakdown](docs/5_Components.md)** – Complete mapping of every script and node.
 
+> ℹ️ These deep-dive design docs describe the core architecture; for the latest hardening
+> work (FinOps, profit engine, execution safety/shadow mode, closed learning loop, risk-based
+> sizing) see the **What's New (v2.1)** section above and [`CLAUDE.md`](CLAUDE.md).
+
 ---
 
 ## ✨ Features
@@ -327,11 +368,13 @@ A rich CLI dashboard built with `rich` providing real-time visibility into the s
 
 ### 🛡️ Robust Engineering
 
-- **Live/Sim Switch**: Automatically switches to simulated data when markets are closed
+- **Live/Sim Switch**: Automatically switches to simulated data when markets are closed (IST)
 - **Rate Limit Handling**: Token bucket rate limiter with exponential backoff
-- **Caching**: TTL cache for news, quotes, and sentiment data
-- **Confidence Scoring**: Every decision comes with a confidence score (0-100%)
-- **Observability**: Full decision traces synced to LangSmith
+- **Caching**: TTL cache for news/quotes/sentiment + an incremental indicator cache
+- **Evidence-Based Confidence**: Signal confidence comes from indicator agreement, not constants
+- **Risk-Based Sizing**: Positions sized from risk-per-trade + stop distance (Kelly with real win-rates)
+- **Order Idempotency**: A persisted dedup store prevents double-submitting on retry/restart
+- **Observability**: Full decision traces synced to LangSmith + per-day token/cost accounting
 
 ---
 
@@ -339,7 +382,7 @@ A rich CLI dashboard built with `rich` providing real-time visibility into the s
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.11+
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
 - [Groq API Key](https://console.groq.com) (for LLM inference) - **FREE**
 - [DhanHQ Account](https://dhan.co) (optional, for live trading only)
@@ -361,16 +404,32 @@ cp .env.example .env
 
 ### Configuration
 
-Edit `.env` for your setup:
+Copy `.env.example` to `.env` — it documents every knob. The essentials:
 
 ```bash
 # Required
 GROQ_API_KEY=your_groq_api_key
+LANGSMITH_API_KEY=your_langsmith_api_key   # free tier; for tracing
 
-# Free Tier Mode (default)
+# Free Tier Mode (default — 100% free, no real orders)
 MARKET_DATA_SOURCE=yfinance
-EXECUTION_MODE=local_paper
+EXECUTION_MODE=local_paper        # or `shadow` to mirror live without sending orders
+ALLOW_LIVE_ORDERS=false           # master safety gate — real orders ONLY when true
 PAPER_WALLET_BALANCE=1000000
+
+# Realistic paper costs (set to 0 for ideal fills)
+PAPER_SLIPPAGE_BPS=2.0
+PAPER_BROKERAGE_BPS=3.0
+
+# FinOps budgets (0 = unlimited; free tier cost is $0)
+DAILY_TOKEN_BUDGET=0
+DAILY_COST_BUDGET_USD=0.0
+
+# Profit-target goal engine (0 = disabled)
+MONTHLY_PROFIT_TARGET_PCT=0.0
+
+# Learning loop (classify closed trades into lessons)
+ENABLE_LEARNING=true
 
 # Optional: Telegram Alerts
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -419,19 +478,27 @@ RakshaQuant/
 │   │   ├── websocket_feed.py# DhanHQ WebSocket client
 │   │   └── simulated_data.py# Realistic market simulator
 │   ├── execution/           # ⚡ Order Execution
-│   │   ├── adapter.py       # Execution routing
-│   │   └── paper_engine.py  # 🆕 Local paper trading
+│   │   ├── service.py       # 🆕 Unified path: idempotency + shadow mode
+│   │   ├── live_executor.py # 🆕 Live fill-lifecycle + reconciliation
+│   │   ├── costs.py         # 🆕 Slippage + NSE fee model
+│   │   ├── adapter.py       # Broker/local routing
+│   │   ├── paper_engine.py  # Local paper trading (costs, shorts, atomic state)
+│   │   ├── exit_manager.py  # Trailing/time/partial exits (persisted)
+│   │   └── journal.py       # Durable trade history
+│   ├── finops/              # 💰 🆕 Cost tracking, budgets, alerts
+│   ├── profit/              # 🎯 🆕 Profit-target goal engine
 │   ├── backtesting/         # 📈 Strategy Testing
-│   │   ├── engine.py        # 🆕 Backtest runner
-│   │   └── strategies.py    # 🆕 Pre-built strategies
+│   │   ├── engine.py        # Backtest runner + compare_results scorecard
+│   │   └── strategies.py    # RealSignalStrategy (uses the live engine) + others
 │   ├── utils/               # 🔧 Utilities
-│   │   ├── rate_limiter.py  # 🆕 API rate limiting
-│   │   └── cache.py         # 🆕 TTL caching
+│   │   ├── rate_limiter.py  # API rate limiting
+│   │   ├── market_time.py   # 🆕 IST market-time helpers
+│   │   └── cache.py         # TTL caching
 │   ├── notifications/       # 📱 Alerts
-│   │   └── telegram.py      # 🆕 Mobile notifications
+│   │   └── telegram.py      # Mobile notifications
 │   ├── dashboard/           # 📊 UI Components
-│   │   └── cli.py           # Rich terminal dashboard
-│   ├── memory/              # 📚 Learning System
+│   │   └── cli.py           # Rich terminal dashboard (account/cost/goal panels)
+│   ├── memory/              # 📚 Learning System (closed loop: feedback.py)
 │   └── config/              # ⚙️ Configuration
 ├── scripts/                 # 🏃‍♂️ Entry Points
 │   ├── run_live_trading.py  # Main application
@@ -457,10 +524,20 @@ result.print_summary()
 
 **Available Strategies:**
 
+- `RealSignalStrategy` - **runs the live indicator + SignalEngine logic** (faithful to live trading)
 - `MomentumStrategy` - Buy on upward momentum
 - `MeanReversionStrategy` - Buy oversold, sell overbought
 - `SMACrossoverStrategy` - Moving average crossover
 - `RSIStrategy` - RSI-based entries
+
+**Prove a change helps** with the before/after scorecard:
+
+```python
+from src.backtesting.engine import compare_results
+
+report = compare_results(baseline_result, candidate_result)
+print(report["improved"], report["deltas"])  # return/win-rate/expectancy/Sharpe/drawdown deltas
+```
 
 ---
 
@@ -495,7 +572,9 @@ All these questions can be answered by inspecting the traces in the LangSmith da
 >
 > RakshaQuant is a research project to explore Agentic AI in finance. It is **not** financial advice.
 >
-> - The default mode is **PAPER TRADING**.
+> - The default mode is **PAPER TRADING** and is 100% free.
+> - Real broker orders are **never** sent unless you explicitly set `ALLOW_LIVE_ORDERS=true`
+>   with valid broker credentials; otherwise live/dhan modes run in safe **shadow** mode.
 > - Do not connect to a live trading account with real funds unless you fully understand the risks.
 > - Algorithmic trading involves significant risk of loss.
 
