@@ -21,7 +21,7 @@ from src.market.websocket_feed import (
 from src.market.simulated_data import SimulatedMarketData, SimulatedQuote
 from src.market.yfinance_feed import YFinanceFeed, YFinanceQuote
 from src.config import get_settings
-from src.utils.market_time import MARKET_CLOSE, MARKET_OPEN, is_market_hours
+from src.utils.market_time import MARKET_CLOSE, MARKET_OPEN, is_market_hours, now_ist
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,26 @@ class MarketQuote:
     change_percent: float
     volume: int
     is_live: bool  # True if from WebSocket, False if simulated
-    timestamp: datetime = field(default_factory=datetime.now)
-    
+    timestamp: datetime = field(default_factory=now_ist)
+
     @property
     def is_bullish(self) -> bool:
         return self.change_percent > 0
+
+    @property
+    def age_seconds(self) -> float:
+        """Seconds since this quote was recorded (IST clock)."""
+        now = now_ist()
+        ts = self.timestamp
+        if ts.tzinfo is None:
+            now = now.replace(tzinfo=None)
+        return max(0.0, (now - ts).total_seconds())
+
+    def is_stale(self, max_age_seconds: float) -> bool:
+        """True if the quote is older than max_age_seconds (<= 0 disables the check)."""
+        if max_age_seconds <= 0:
+            return False
+        return self.age_seconds > max_age_seconds
     
     def to_dict(self) -> dict:
         return {

@@ -28,7 +28,7 @@ from src.notifications.telegram import get_notifier
 from src.profit import ProfitGoalEngine
 from src.market.manager import MarketDataManager, MarketQuote, is_market_open
 from src.market.history_manager import HistoryManager
-from src.market.indicators import calculate_indicators, Timeframe
+from src.market.indicators import Timeframe, get_indicator_cache
 from src.market.signals import SignalEngine
 from src.market.stock_discovery import StockDiscovery
 from src.memory.database import AgentMemoryDB
@@ -46,18 +46,21 @@ def calculate_real_indicators(history_manager: HistoryManager, symbol: str):
     """
     Calculate REAL indicators from historical data.
 
-    This replaces the old quote_to_indicators() which fabricated
-    all indicators from a single price point.
+    Computes on settled bars only (dropping the still-forming current-day bar) when
+    ``signals_exclude_forming_bar`` is set, to avoid intra-bar repainting / look-ahead,
+    and memoizes via the shared IndicatorCache so unchanged data is not recomputed
+    every cycle.
     """
-    df = history_manager.get_history(symbol, bars=200)
+    settings = get_settings()
+    include_forming = not settings.signals_exclude_forming_bar
+    df = history_manager.get_history(symbol, bars=200, include_forming=include_forming)
     if df is None or len(df) < 26:  # Need at least MACD slow period
         return None
 
     try:
-        return calculate_indicators(df, symbol, timeframe=Timeframe.D1)
+        return get_indicator_cache().get_or_compute(df, symbol, timeframe=Timeframe.D1)
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Indicator calc failed for {symbol}: {e}")
+        logger.warning(f"Indicator calc failed for {symbol}: {e}")
         return None
 
 
@@ -241,6 +244,29 @@ async def run_live_trading():
                     low=quote.low, close=quote.last_price,
                     volume=quote.volume,
                 )
+
+            # ── Data freshness gate ────────────────────────────────
+            # If the feed has stalled (even the freshest quote is too old), skip NEW
+            # entries this cycle — trading on stale prices is unsafe. Exits in Step 0
+            # already ran on the last known price.
+            max_stale = settings.max_quote_staleness_seconds
+            if max_stale > 0 and quotes:
+                freshest_age = min(q.age_seconds for q in quotes.values())
+                if freshest_age > max_stale:
+                    await get_alert_manager().alert(
+                        "data_staleness",
+                        f"Market data stale: freshest quote is {freshest_age:.0f}s old "
+                        f"(limit {max_stale}s). Skipping new entries this cycle.",
+                        level="WARNING",
+                    )
+                    dashboard.stats.log_activity(
+                        f"Stale data ({freshest_age:.0f}s old) — skipping trading this cycle",
+                        "WARNING",
+                    )
+                    for _ in range(15):
+                        time.sleep(1)
+                        live.update(create_dashboard_layout(dashboard.stats))
+                    return
 
             # ── Step 2: Find trading candidates ────────────────────
             candidates = market_manager.get_trading_candidates(min_change=0.3)

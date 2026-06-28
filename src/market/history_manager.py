@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from src.market.yfinance_feed import YFinanceFeed
+from src.utils.market_time import now_ist
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +143,10 @@ class HistoryManager:
             low: Low price
             close: Close price
             volume: Volume
-            timestamp: Quote timestamp (default: now)
+            timestamp: Quote timestamp (default: now, in IST)
         """
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = now_ist()
 
         with self._lock:
             if symbol not in self._history:
@@ -163,7 +164,10 @@ class HistoryManager:
                     df.at[df.index[-1], "high"] = max(df.iloc[-1]["high"], high)
                     df.at[df.index[-1], "low"] = min(df.iloc[-1]["low"], low)
                     df.at[df.index[-1], "close"] = close
-                    df.at[df.index[-1], "volume"] = df.iloc[-1]["volume"] + volume
+                    # Quote volume is the cumulative daily total, not a per-tick delta —
+                    # keep the latest (monotonic) cumulative value instead of summing,
+                    # which previously inflated volume without bound each cycle.
+                    df.at[df.index[-1], "volume"] = max(float(df.iloc[-1]["volume"]), float(volume))
                     return
 
             # New day or first bar — append new row
@@ -188,6 +192,7 @@ class HistoryManager:
         self,
         symbol: str,
         bars: int | None = None,
+        include_forming: bool = True,
     ) -> pd.DataFrame | None:
         """
         Get historical DataFrame for a symbol.
@@ -195,6 +200,11 @@ class HistoryManager:
         Args:
             symbol: Stock symbol
             bars: Number of recent bars to return (None = all)
+            include_forming: If False, drop the current (still-forming) bar — i.e. any
+                trailing rows dated today (IST). The forming bar's OHLC repaints as live
+                quotes arrive, so indicators/signals computed on it look ahead within the
+                bar; pass False to compute on settled bars only. Never returns empty
+                purely from this trim (falls back to the full history if everything is today).
 
         Returns:
             DataFrame with OHLCV columns, or None if not available
@@ -204,6 +214,12 @@ class HistoryManager:
                 return None
 
             df = self._history[symbol].copy()
+
+        if not include_forming and len(df) > 0:
+            today = now_ist().date()
+            settled = df[[not (hasattr(ts, "date") and ts.date() == today) for ts in df.index]]
+            if len(settled) > 0:
+                df = settled
 
         if bars is not None and len(df) > bars:
             df = df.iloc[-bars:]
