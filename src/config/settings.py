@@ -267,6 +267,30 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Paper trading costs (slippage + NSE-style charges; configurable approximations)
+    # ===========================================
+    paper_slippage_bps: float = Field(
+        default=2.0,
+        description="Adverse slippage applied to paper fills, in basis points (2 = 0.02%)",
+    )
+    paper_brokerage_bps: float = Field(
+        default=3.0,
+        description="Brokerage as basis points of notional (3 = 0.03%)",
+    )
+    paper_brokerage_max: float = Field(
+        default=20.0,
+        description="Per-order brokerage cap in INR (0 = uncapped); mirrors discount brokers",
+    )
+    paper_statutory_bps: float = Field(
+        default=5.0,
+        description="Combined STT + exchange txn + SEBI + stamp charges, in basis points",
+    )
+    paper_gst_pct: float = Field(
+        default=18.0,
+        description="GST as a percentage of brokerage",
+    )
+
+    # ===========================================
     # Data ingestion / efficiency
     # ===========================================
     signals_exclude_forming_bar: bool = Field(
