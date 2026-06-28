@@ -129,6 +129,11 @@ class Settings(BaseSettings):
         default=30,
         description="Days after which lesson relevance starts decaying",
     )
+    enable_learning: bool = Field(
+        default=True,
+        description="Close the learn-from-losses loop: classify closed trades into lessons and "
+        "mark injected lessons as successful/not (adds an LLM call per loss). Disable to skip.",
+    )
 
     # ===========================================
     # Free Tier Configuration
