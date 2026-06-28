@@ -116,6 +116,21 @@ PostgreSQL `DATABASE_URL` from settings, but `AgentMemoryDB._initialize_db()` si
 falls back to an in-memory SQLite database if that connection fails — so memory works
 (non-persistently, lost on restart) even without Postgres.
 
+### FinOps (cost tracking & alerts)
+
+[src/finops/](src/finops/) accounts for LLM spend and raises operational alerts.
+`cost_tracker.py` is **pure accounting** (no I/O, thread-safe), so it is safe to call from
+sync agent nodes: each LLM agent calls `record_llm_response(agent, response, model=...)`
+immediately after its `circuit_breaker.call(...)` (the helper never raises). It tracks
+tokens + paid-tier-equivalent cost per agent and per **IST day** (rolls over via
+`utils/market_time`), keyed off a Groq pricing table (free tier = $0; configurable). Budgets
+come from settings (`daily_token_budget`, `daily_cost_budget_usd`, `finops_budget_soft_pct`;
+`0` = unlimited). `alerts.py` (`AlertManager`, async) logs + best-effort Telegram, de-duped
+per key per IST day — reuse it for drawdown/staleness/anomaly alerts too. `run_live_trading.py`
+gates the agent pipeline on `is_over_hard_budget()` (a spend kill-switch: skips new LLM cycles
+and entries while still running exits), surfaces today's spend on the dashboard, and fires
+soft-budget + startup/shutdown Telegram messages.
+
 ### Cross-cutting
 
 `utils/` holds the shared `rate_limiter`, `circuit_breaker`, `cache` (TTL), `errors`
