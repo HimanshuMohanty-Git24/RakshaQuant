@@ -267,6 +267,38 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Profit-target goal engine
+    # ===========================================
+    monthly_profit_target_pct: float = Field(
+        default=0.0,
+        description="Monthly profit target as a fraction of capital (0.05 = 5%/mo; 0 = disabled)",
+    )
+    monthly_profit_target_amount: float = Field(
+        default=0.0,
+        description="Monthly profit target in INR (alternative to pct; the larger of the two wins)",
+    )
+    trading_days_per_month: int = Field(
+        default=21,
+        description="Assumed NSE trading days per month, used to derive the daily pace target",
+    )
+    expected_trades_per_day: int = Field(
+        default=5,
+        description="Expected trades/day, used to derive the win-rate the target requires",
+    )
+    goal_assumed_win_rate: float = Field(
+        default=0.5,
+        description="Assumed win rate, used to derive the trade frequency the target requires",
+    )
+    goal_reward_risk_ratio: float = Field(
+        default=1.5,
+        description="Assumed reward:risk per trade for goal math (matches risk min_risk_reward)",
+    )
+    goal_off_pace_tolerance: float = Field(
+        default=0.2,
+        description="How far below straight-line pace before flagged off-pace (0.2 = 20%)",
+    )
+
+    # ===========================================
     # Validation
     # ===========================================
 
