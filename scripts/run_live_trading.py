@@ -39,6 +39,7 @@ from src.memory.injection import MemoryInjector
 from src.memory import feedback
 from src.execution.paper_engine import LocalPaperEngine
 from src.execution.exit_manager import ExitManager
+from src.execution.journal import TradeJournal
 from src.execution.service import ExecutionService, IdempotencyStore
 from src.observability.tracing import setup_tracing
 from src.dashboard.cli import TradingDashboard, create_dashboard_layout
@@ -111,6 +112,15 @@ async def run_live_trading():
         f"Paper engine: Rs. {paper_engine.get_balance():,.0f} balance", "INFO"
     )
 
+    # Durable trade journal (records every entry/exit). Persists to DATABASE_URL; falls back
+    # to a non-persistent in-memory DB (logged loudly) if that is unreachable.
+    journal = TradeJournal()
+    open_trades: dict[str, str] = {}  # execution order_id -> journal trade_id
+    dashboard.stats.log_activity(
+        f"Trade journal: {'persistent' if journal.is_persistent else 'in-memory (NOT durable)'}",
+        "INFO" if journal.is_persistent else "WARNING",
+    )
+
     # Unified execution service: one mode-switched path for order submission with
     # idempotency (no double-submit on retry/restart) and shadow-mode safety.
     execution_service = ExecutionService.from_settings(
@@ -154,6 +164,7 @@ async def run_live_trading():
         max_hold_minutes=240,
         partial_profit_r=1.0,
         partial_exit_pct=0.5,
+        state_file=Path("exit_manager_state.json"),
     )
     dashboard.stats.log_activity("Exit manager initialized", "INFO")
 
@@ -306,6 +317,18 @@ async def run_live_trading():
                                 memory_db, active_lessons.pop(pos.position_id, []),
                                 was_successful=pnl > 0,
                             )
+
+                        # Close the trade in the durable journal with the net realized P&L.
+                        journal_trade_id = open_trades.pop(pos.position_id, None)
+                        if journal_trade_id:
+                            try:
+                                journal.close_trade(
+                                    journal_trade_id, exit_price, exit_rule.exit_type,
+                                    mae=pos.mae, mfe=pos.mfe, pnl=pnl,
+                                    exit_quantity=int(pos.quantity * exit_rule.partial_pct),
+                                )
+                            except Exception as e:
+                                logger.warning("Journal close_trade failed: %s", e)
                     else:
                         pos.partial_taken = True
 
@@ -567,6 +590,15 @@ async def run_live_trading():
                     # mark them successful/unsuccessful when this position closes.
                     if settings.enable_learning:
                         active_lessons[result.order_id] = feedback.lesson_ids(memory_lessons)
+
+                    # Record the entry in the durable trade journal (resilient).
+                    try:
+                        trade_record = {**trade, "quantity": quantity, "entry_price": entry_price}
+                        open_trades[result.order_id] = journal.record_trade(
+                            trade_record, workflow_id, final_state
+                        )
+                    except Exception as e:
+                        logger.warning("Journal record_trade failed: %s", e)
                 else:
                     dashboard.stats.log_activity(
                         f"ORDER {result.status}: {symbol} — {result.message}", "WARNING"
