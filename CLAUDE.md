@@ -101,6 +101,15 @@ Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
   `is_market_open()` and connection availability. Indicators (`ta` library) are computed in
   `indicators.py`; `signals.py` `SignalEngine` turns them into signals; `stock_discovery.py`
   dynamically finds symbols to trade (no hardcoded watchlist).
+  - **Data-ingestion gotchas (do not regress):** `HistoryManager.append_quote` treats a
+    quote's `volume` as the **cumulative daily total** (keeps the max, never sums — summing
+    inflated volume every cycle). `get_history(..., include_forming=False)` drops the
+    still-forming current-day bar; the live loop computes indicators on settled bars by
+    default (`signals_exclude_forming_bar`) to avoid intra-bar repainting/look-ahead.
+    Indicator floats are NaN/inf-sanitized to `None` (`_safe_float`) so warm-up values never
+    reach signals or the agent JSON as `NaN`. Indicator results are memoized via
+    `get_indicator_cache()` (keyed by symbol/last-bar/close). The loop skips **new entries**
+    when the freshest quote is older than `max_quote_staleness_seconds` (exits still run).
 - **Execution** — [src/execution/adapter.py](src/execution/adapter.py) routes orders by
   `execution_mode`: `LocalExecutionAdapter` (wraps `paper_engine.py`'s virtual wallet, free)
   or `ExecutionAdapter` (DhanHQ, imported lazily and optional). `exit_manager.py` handles
