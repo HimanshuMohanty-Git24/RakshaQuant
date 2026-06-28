@@ -114,6 +114,14 @@ Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
   `execution_mode`: `LocalExecutionAdapter` (wraps `paper_engine.py`'s virtual wallet, free)
   or `ExecutionAdapter` (DhanHQ, imported lazily and optional). `exit_manager.py` handles
   trailing stops / time exits / partial profits; `journal.py` logs trade history.
+  - **Paper engine realism (do not regress):** `LocalPaperEngine` fills through a
+    [`CostModel`](src/execution/costs.py) (slippage + NSE-style brokerage/STT/GST, all
+    configurable via `paper_*` settings; pass `CostModel.zero()` for ideal fills in unit
+    tests). `place_order` does proper **long/short/partial** accounting: an opposite-side
+    order closes/covers (FIFO) and only the remainder opens a new position; realized P&L is
+    **net of both legs' charges**, and opening commits capital (no cash leak on shorts).
+    State is persisted **atomically** (temp file + `os.replace`); a corrupt state file is
+    **quarantined** (renamed `.corrupt-*`) and logged loudly, never silently discarded.
 
 ### Memory & learning loop
 
