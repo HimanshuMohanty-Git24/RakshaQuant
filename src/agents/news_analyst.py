@@ -25,6 +25,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from src.config import get_settings
+from src.finops import record_llm_response
 from src.utils.cache import get_news_cache, get_sentiment_cache
 from src.utils.rate_limiter import get_groq_limiter
 from src.utils.circuit_breaker import get_groq_circuit_breaker, CircuitBreakerOpenError
@@ -217,6 +218,7 @@ class NewsAnalyst:
                 return llm.invoke(messages)
             
             response = self._circuit_breaker.call(invoke_llm)
+            record_llm_response("news_analyst", response, model=self.settings.groq_model_fallback)
             content = response.content.strip()
             
             # Parse JSON response

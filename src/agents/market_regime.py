@@ -19,6 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from src.config import get_settings
+from src.finops import record_llm_response
 from src.utils.rate_limiter import get_groq_limiter
 from src.utils.circuit_breaker import get_groq_circuit_breaker, CircuitBreakerOpenError
 from src.utils.errors import RateLimitError, LLMResponseError
@@ -154,7 +155,10 @@ def market_regime_node(state: TradingState) -> dict[str, Any]:
             if last_error:
                 raise last_error
             raise RateLimitError("groq", retry_after=60.0)
-        
+
+        # Record token usage / cost for FinOps (never raises).
+        record_llm_response("market_regime", response, model=model_name)
+
         # Parse response
         result = _parse_regime_response(response.content)
         
