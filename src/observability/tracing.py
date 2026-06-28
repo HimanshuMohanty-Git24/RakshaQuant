@@ -9,9 +9,10 @@ import functools
 import logging
 import os
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from langsmith import Client, traceable
 from langsmith.run_helpers import get_current_run_tree
@@ -24,29 +25,29 @@ logger = logging.getLogger(__name__)
 def setup_tracing() -> bool:
     """
     Setup LangSmith tracing for the trading system.
-    
+
     Configures environment variables and validates connection.
-    
+
     Returns:
         True if tracing is enabled and working
     """
     try:
         settings = get_settings()
-        
+
         # Set environment variables for LangSmith
         os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key.get_secret_value()
         os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
         os.environ["LANGSMITH_TRACING_V2"] = str(settings.langsmith_tracing_v2).lower()
-        
+
         # Validate connection
         client = Client()
-        
+
         # Try to list projects to verify connection
         projects = list(client.list_projects(limit=1))
-        
+
         logger.info(f"LangSmith tracing enabled for project: {settings.langsmith_project}")
         return True
-        
+
     except Exception as e:
         logger.warning(f"LangSmith tracing not available: {e}")
         return False
@@ -59,20 +60,21 @@ def trace_agent(
 ) -> Callable:
     """
     Decorator for tracing agent functions.
-    
+
     Args:
         agent_name: Name of the agent (e.g., "market_regime", "strategy_selection")
         run_type: Type of run (chain, llm, tool, etc.)
         metadata: Additional metadata to attach to the trace
-        
+
     Returns:
         Decorated function with tracing
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             start_time = time.time()
-            
+
             # Build trace metadata
             trace_metadata = {
                 "agent": agent_name,
@@ -80,26 +82,26 @@ def trace_agent(
             }
             if metadata:
                 trace_metadata.update(metadata)
-            
+
             try:
                 # Execute with tracing
                 result = func(*args, **kwargs)
-                
+
                 # Calculate latency
                 latency_ms = int((time.time() - start_time) * 1000)
-                
+
                 # Log success
                 logger.debug(f"Agent {agent_name} completed in {latency_ms}ms")
-                
+
                 return result
-                
+
             except Exception as e:
                 logger.error(f"Agent {agent_name} failed: {e}")
                 raise
-        
+
         # Apply LangSmith traceable decorator
         return traceable(name=agent_name, run_type=run_type, metadata=metadata or {})(wrapper)
-    
+
     return decorator
 
 
@@ -112,9 +114,9 @@ def trading_trace(
 ):
     """
     Context manager for tracing a complete trading cycle.
-    
+
     Creates a parent trace with full context for the trading workflow.
-    
+
     Usage:
         with trading_trace("WF-123", regime="trending_up") as trace:
             # Trading operations
@@ -127,21 +129,21 @@ def trading_trace(
         "signals_count": signals_count,
         "started_at": datetime.now().isoformat(),
     }
-    
+
     start_time = time.time()
-    
+
     try:
         yield metadata
-        
+
         metadata["status"] = "success"
         metadata["duration_ms"] = int((time.time() - start_time) * 1000)
-        
+
     except Exception as e:
         metadata["status"] = "error"
         metadata["error"] = str(e)
         metadata["duration_ms"] = int((time.time() - start_time) * 1000)
         raise
-    
+
     finally:
         logger.info(
             f"Trading cycle {workflow_id} completed: "
@@ -155,7 +157,7 @@ def add_trace_metadata(
 ) -> None:
     """
     Add metadata to the current trace.
-    
+
     Args:
         key: Metadata key
         value: Metadata value
@@ -179,7 +181,7 @@ def tag_trace(
 ) -> None:
     """
     Tag the current trace with trading-specific identifiers.
-    
+
     Args:
         trade_id: Trade identifier
         decision: Decision made (approve/reject/hold)
@@ -196,24 +198,26 @@ def tag_trace(
 class TracingCallback:
     """
     Callback handler for custom tracing events.
-    
+
     Can be used to capture additional data during agent execution.
     """
-    
+
     def __init__(self, workflow_id: str):
         self.workflow_id = workflow_id
         self.events = []
-    
+
     def on_agent_start(self, agent_name: str, input_data: dict[str, Any]) -> None:
         """Called when an agent starts execution."""
-        self.events.append({
-            "type": "agent_start",
-            "agent": agent_name,
-            "timestamp": datetime.now().isoformat(),
-            "workflow_id": self.workflow_id,
-        })
+        self.events.append(
+            {
+                "type": "agent_start",
+                "agent": agent_name,
+                "timestamp": datetime.now().isoformat(),
+                "workflow_id": self.workflow_id,
+            }
+        )
         logger.debug(f"Agent {agent_name} started")
-    
+
     def on_agent_end(
         self,
         agent_name: str,
@@ -221,15 +225,17 @@ class TracingCallback:
         latency_ms: int,
     ) -> None:
         """Called when an agent completes execution."""
-        self.events.append({
-            "type": "agent_end",
-            "agent": agent_name,
-            "timestamp": datetime.now().isoformat(),
-            "latency_ms": latency_ms,
-            "workflow_id": self.workflow_id,
-        })
+        self.events.append(
+            {
+                "type": "agent_end",
+                "agent": agent_name,
+                "timestamp": datetime.now().isoformat(),
+                "latency_ms": latency_ms,
+                "workflow_id": self.workflow_id,
+            }
+        )
         logger.debug(f"Agent {agent_name} completed in {latency_ms}ms")
-    
+
     def on_decision(
         self,
         agent_name: str,
@@ -238,29 +244,33 @@ class TracingCallback:
         reasoning: str,
     ) -> None:
         """Called when an agent makes a decision."""
-        self.events.append({
-            "type": "decision",
-            "agent": agent_name,
-            "decision": decision,
-            "confidence": confidence,
-            "reasoning": reasoning[:200],  # Truncate long reasoning
-            "timestamp": datetime.now().isoformat(),
-            "workflow_id": self.workflow_id,
-        })
+        self.events.append(
+            {
+                "type": "decision",
+                "agent": agent_name,
+                "decision": decision,
+                "confidence": confidence,
+                "reasoning": reasoning[:200],  # Truncate long reasoning
+                "timestamp": datetime.now().isoformat(),
+                "workflow_id": self.workflow_id,
+            }
+        )
         add_trace_metadata(f"{agent_name}_decision", decision)
         add_trace_metadata(f"{agent_name}_confidence", confidence)
-    
+
     def on_error(self, agent_name: str, error: str) -> None:
         """Called when an agent encounters an error."""
-        self.events.append({
-            "type": "error",
-            "agent": agent_name,
-            "error": error,
-            "timestamp": datetime.now().isoformat(),
-            "workflow_id": self.workflow_id,
-        })
+        self.events.append(
+            {
+                "type": "error",
+                "agent": agent_name,
+                "error": error,
+                "timestamp": datetime.now().isoformat(),
+                "workflow_id": self.workflow_id,
+            }
+        )
         logger.error(f"Agent {agent_name} error: {error}")
-    
+
     def get_summary(self) -> dict[str, Any]:
         """Get a summary of all traced events."""
         return {
@@ -277,11 +287,11 @@ def create_tracing_config(
 ) -> dict[str, Any]:
     """
     Create configuration dict for LangGraph with tracing.
-    
+
     Args:
         workflow_id: Unique workflow identifier
         metadata: Additional metadata
-        
+
     Returns:
         Config dict for graph.invoke()
     """
@@ -296,8 +306,8 @@ def create_tracing_config(
         },
         "callbacks": [],
     }
-    
+
     if metadata:
         config["metadata"].update(metadata)
-    
+
     return config

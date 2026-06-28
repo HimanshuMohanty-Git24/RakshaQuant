@@ -26,6 +26,7 @@ from src.utils.market_time import IST, is_market_hours, now_ist
 # C3 — IST market hours (host-timezone independent)
 # ---------------------------------------------------------------------------
 
+
 def test_now_ist_is_fixed_utc_plus_530():
     """now_ist() must always be UTC+05:30, independent of the host timezone."""
     assert now_ist().utcoffset() == timedelta(hours=5, minutes=30)
@@ -59,6 +60,7 @@ def test_is_market_hours_uses_ist_not_host_clock():
 # ---------------------------------------------------------------------------
 # C2 — support-agent state contracts
 # ---------------------------------------------------------------------------
+
 
 def test_regime_context_does_not_crash_on_empty_initial_state():
     """
@@ -123,6 +125,7 @@ def test_regime_context_tolerates_legacy_float_news_sentiment():
 #       validated_signals), and de-duplicates symbols.
 # ---------------------------------------------------------------------------
 
+
 def test_prediction_node_sources_from_signals_and_dedupes():
     state = create_initial_state()
     state["signals"] = [
@@ -132,9 +135,10 @@ def test_prediction_node_sources_from_signals_and_dedupes():
     ]
     state["validated_signals"] = []  # empty at support-agent stage
 
-    with patch("src.market.yfinance_feed.YFinanceFeed") as mock_feed_cls, patch(
-        "src.agents.prediction.PredictionAgent.predict"
-    ) as mock_predict:
+    with (
+        patch("src.market.yfinance_feed.YFinanceFeed") as mock_feed_cls,
+        patch("src.agents.prediction.PredictionAgent.predict") as mock_predict,
+    ):
         mock_feed_cls.return_value.get_historical.return_value = pd.DataFrame(
             {"Close": [1.0, 2.0, 3.0]}
         )
@@ -163,6 +167,7 @@ def test_prediction_node_ignores_validated_signals():
 # C1 — kill-switch predicate (the gate added to the live loop relies on this)
 # ---------------------------------------------------------------------------
 
+
 def test_kill_switch_on_daily_loss():
     state = create_initial_state()
     limits = RiskLimits(max_daily_loss=10000.0, max_drawdown_pct=99.0)
@@ -190,6 +195,7 @@ def test_kill_switch_safe_when_within_limits():
 # ---------------------------------------------------------------------------
 # M10 — config warnings surfaced on the Settings instance
 # ---------------------------------------------------------------------------
+
 
 def test_config_warnings_flag_inconsistent_risk_params():
     s = Settings(

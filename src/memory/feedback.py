@@ -79,7 +79,9 @@ def learn_from_outcome(
             injector.store_from_classifier(mistake)
             logger.info(
                 "Lesson learned from %s: [%s] %s",
-                outcome.trade_id, mistake.severity, mistake.category,
+                outcome.trade_id,
+                mistake.severity,
+                mistake.category,
             )
         return mistake
     except Exception as e:  # pragma: no cover - defensive

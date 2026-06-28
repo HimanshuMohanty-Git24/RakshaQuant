@@ -1,16 +1,17 @@
-import pytest
-import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, time
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.market.manager import MarketDataManager, MarketQuote, is_market_open
+import pytest
+
 from src.market.live_data import LiveMarketData, LiveQuote
+from src.market.manager import MarketDataManager, MarketQuote, is_market_open
 from src.market.simulated_data import SimulatedMarketData, SimulatedQuote
-from src.market.stock_discovery import StockDiscovery, DiscoveredStock
-from src.market.websocket_feed import DhanWebSocketFeed, QuoteData, TickerData
-from src.market.yfinance_feed import YFinanceFeed, YFinanceQuote
+from src.market.stock_discovery import StockDiscovery
+from src.market.websocket_feed import DhanWebSocketFeed, QuoteData
+from src.market.yfinance_feed import YFinanceFeed
 
 # --- MarketDataManager Tests ---
+
 
 @pytest.fixture
 def mock_settings():
@@ -19,6 +20,7 @@ def mock_settings():
         mock.return_value.dhan_client_id = "test_id"
         mock.return_value.dhan_access_token.get_secret_value.return_value = "test_token"
         yield mock
+
 
 def test_is_market_open():
     # is_market_open() now evaluates in IST via utils.market_time.now_ist(),
@@ -41,6 +43,7 @@ def test_is_market_open():
         clock.time.return_value = time(8, 0)
         assert is_market_open() is False
 
+
 @pytest.mark.asyncio
 async def test_manager_start_simulated(mock_settings):
     mock_settings.return_value.market_data_source = "simulated"
@@ -59,6 +62,7 @@ async def test_manager_start_simulated(mock_settings):
         assert "RELIANCE" in manager.quotes
         assert manager.quotes["RELIANCE"].is_live is False
 
+
 @pytest.mark.asyncio
 async def test_manager_start_yfinance(mock_settings):
     mock_settings.return_value.market_data_source = "yfinance"
@@ -74,6 +78,7 @@ async def test_manager_start_yfinance(mock_settings):
         assert manager.data_source == "yfinance"
         # Note: manager.is_live is set to False for yfinance in code as it is delayed, but start returns True for active feed
         assert manager.is_live is False
+
 
 @pytest.mark.asyncio
 async def test_manager_start_dhan(mock_settings):
@@ -93,19 +98,23 @@ async def test_manager_start_dhan(mock_settings):
             assert manager.data_source == "dhan"
             assert manager.is_live is True
 
+
 def test_manager_on_websocket_quote(mock_settings):
     manager = MarketDataManager()
-    quote = QuoteData("RELIANCE", 1, "NSE_EQ", 100, 1, datetime.now(), 100, 1000, 0, 0, 90, 110, 110, 90)
+    quote = QuoteData(
+        "RELIANCE", 1, "NSE_EQ", 100, 1, datetime.now(), 100, 1000, 0, 0, 90, 110, 110, 90
+    )
 
     manager._on_websocket_quote(quote)
     assert "RELIANCE" in manager.quotes
     assert manager.quotes["RELIANCE"].last_price == 100
 
+
 def test_manager_get_trading_candidates(mock_settings):
     manager = MarketDataManager()
     manager.quotes = {
-        "A": MarketQuote("A", 100, 100, 100, 100, 100, 10, 10, 1000, False), # 10%
-        "B": MarketQuote("B", 100, 100, 100, 100, 100, 1, 1, 1000, False)   # 1%
+        "A": MarketQuote("A", 100, 100, 100, 100, 100, 10, 10, 1000, False),  # 10%
+        "B": MarketQuote("B", 100, 100, 100, 100, 100, 1, 1, 1000, False),  # 1%
     }
 
     candidates = manager.get_trading_candidates(min_change=5.0)
@@ -115,6 +124,7 @@ def test_manager_get_trading_candidates(mock_settings):
 
 # --- LiveMarketData Tests ---
 
+
 @pytest.fixture
 def live_market():
     with patch("src.market.live_data.get_settings") as mock_settings:
@@ -122,6 +132,7 @@ def live_market():
         mock_settings.return_value.dhan_access_token.get_secret_value.return_value = "token"
         mock_settings.return_value.dhan_client_id = "id"
         yield LiveMarketData()
+
 
 def test_live_get_quotes(live_market):
     with patch("src.market.live_data.requests.post") as mock_post:
@@ -131,10 +142,10 @@ def test_live_get_quotes(live_market):
                 "NSE_EQ": {
                     "2885": {
                         "last_price": 2500,
-                        "ohlc": {"open": 2400, "high": 2550, "low": 2400, "close": 2400}
+                        "ohlc": {"open": 2400, "high": 2550, "low": 2400, "close": 2400},
                     }
                 }
-            }
+            },
         }
 
         quotes = live_market.get_quotes(["RELIANCE"])
@@ -142,18 +153,21 @@ def test_live_get_quotes(live_market):
         assert quotes["RELIANCE"].last_price == 2500
         assert quotes["RELIANCE"].is_bullish is True
 
+
 def test_live_get_trading_candidates(live_market):
     with patch.object(live_market, "get_quotes") as mock_get_quotes:
         mock_get_quotes.return_value = {
             "A": LiveQuote("A", 1, 110, 100, 110, 100, 100, 10, 10.0),
-            "B": LiveQuote("B", 2, 100.1, 100, 100.1, 100, 100, 0.1, 0.1)
+            "B": LiveQuote("B", 2, 100.1, 100, 100.1, 100, 100, 0.1, 0.1),
         }
 
         candidates = live_market.get_trading_candidates()
         assert len(candidates) == 1
         assert candidates[0].symbol == "A"
 
+
 # --- SimulatedMarketData Tests ---
+
 
 def test_simulated_get_quotes():
     sim = SimulatedMarketData()
@@ -163,15 +177,17 @@ def test_simulated_get_quotes():
     assert quotes["RELIANCE"].symbol == "RELIANCE"
     assert quotes["RELIANCE"].last_price > 0
 
+
 def test_simulated_tick():
     sim = SimulatedMarketData()
-    sim.get_quotes() # Init
+    sim.get_quotes()  # Init
 
     initial_price = sim.current_prices["RELIANCE"]
     sim.tick()
     new_price = sim.current_prices["RELIANCE"]
 
     assert initial_price != new_price
+
 
 def test_simulated_get_trading_candidates():
     sim = SimulatedMarketData()
@@ -183,10 +199,12 @@ def test_simulated_get_trading_candidates():
 
 # --- StockDiscovery Tests ---
 
+
 @pytest.fixture
 def discovery():
     with patch("src.market.stock_discovery.get_settings"):
         return StockDiscovery(max_stocks=10)
+
 
 def test_extract_stock_mentions(discovery):
     text = "Reliance and TCS are doing well today. Also Bajaj Auto."
@@ -195,17 +213,19 @@ def test_extract_stock_mentions(discovery):
     assert "TCS" in mentions
     assert "BAJAJ-AUTO" in mentions
 
+
 def test_discover_from_news(discovery):
     with patch("src.market.stock_discovery.feedparser.parse") as mock_parse:
         mock_parse.return_value.entries = [
             {"title": "Reliance surges", "summary": "Reliance hits new high"},
-            {"title": "Market down", "summary": "Nothing happening"}
+            {"title": "Market down", "summary": "Nothing happening"},
         ]
 
         mentions = discovery.discover_from_news()
         # Since the code loops over 3 queries, and we mock the response for all of them,
         # "Reliance" will be found 3 times (once per query)
         assert mentions.get("RELIANCE") == 3
+
 
 def test_discover_market_movers(discovery):
     with patch("src.market.stock_discovery.yf.Tickers") as mock_tickers:
@@ -216,10 +236,14 @@ def test_discover_market_movers(discovery):
         mock_hist.__len__.return_value = 2
         # iloc should return a dict-like object for -1 and -2
         mock_hist.iloc = MagicMock()
+
         def iloc_side_effect(arg):
-            if arg == -1: return {"Close": 110}
-            if arg == -2: return {"Close": 100}
+            if arg == -1:
+                return {"Close": 110}
+            if arg == -2:
+                return {"Close": 100}
             return {"Close": 100}
+
         mock_hist.iloc.__getitem__.side_effect = iloc_side_effect
 
         mock_ticker_obj.history.return_value = mock_hist
@@ -233,11 +257,13 @@ def test_discover_market_movers(discovery):
         # Should find movers because we mocked 10% gain
         assert len(movers) > 0
 
+
 @pytest.mark.asyncio
 async def test_discover(discovery):
-    with patch.object(discovery, "discover_from_news", return_value={"RELIANCE": 5}), \
-         patch.object(discovery, "discover_market_movers", return_value=[]):
-
+    with (
+        patch.object(discovery, "discover_from_news", return_value={"RELIANCE": 5}),
+        patch.object(discovery, "discover_market_movers", return_value=[]),
+    ):
         stocks = await discovery.discover()
         assert "RELIANCE" in stocks
         # Should also have fallback stocks
@@ -246,9 +272,12 @@ async def test_discover(discovery):
 
 # --- DhanWebSocketFeed Tests ---
 
+
 @pytest.mark.asyncio
 async def test_websocket_feed_connect():
-    with patch("src.market.websocket_feed.websockets.connect", new_callable=AsyncMock) as mock_connect:
+    with patch(
+        "src.market.websocket_feed.websockets.connect", new_callable=AsyncMock
+    ) as mock_connect:
         with patch("src.market.websocket_feed.get_settings") as mock_settings:
             mock_settings.return_value.dhan_access_token.get_secret_value.return_value = "token"
             mock_settings.return_value.dhan_client_id = "id"
@@ -257,6 +286,7 @@ async def test_websocket_feed_connect():
             success = await feed.connect()
             assert success is True
             assert feed.connected is True
+
 
 @pytest.mark.asyncio
 async def test_websocket_feed_subscribe():
@@ -277,13 +307,14 @@ async def test_websocket_feed_subscribe():
 
 # --- YFinanceFeed Tests ---
 
+
 def test_yfinance_feed_fetch():
     with patch("src.market.yfinance_feed.yf.Tickers") as mock_tickers:
         mock_ticker = MagicMock()
         mock_ticker.fast_info.last_price = 150.0
         mock_ticker.history.return_value.iloc = [
-            {"Open": 140, "High": 155, "Low": 138, "Close": 145, "Volume": 1000}, # Prev
-            {"Open": 145, "High": 152, "Low": 148, "Close": 150, "Volume": 2000}  # Latest
+            {"Open": 140, "High": 155, "Low": 138, "Close": 145, "Volume": 1000},  # Prev
+            {"Open": 145, "High": 152, "Low": 148, "Close": 150, "Volume": 2000},  # Latest
         ]
         # Make history return valid dataframe
         mock_ticker.history.return_value.empty = False
@@ -297,11 +328,12 @@ def test_yfinance_feed_fetch():
         assert "RELIANCE" in quotes
         assert quotes["RELIANCE"].last_price == 150.0
 
+
 def test_yfinance_get_nifty50():
     with patch("src.market.yfinance_feed.yf.Ticker") as mock_ticker:
         mock_ticker.return_value.history.return_value.iloc = [
-             {"Close": 10000},
-             {"Close": 10100, "High": 10200, "Low": 10050, "Volume": 5000}
+            {"Close": 10000},
+            {"Close": 10100, "High": 10200, "Low": 10050, "Volume": 5000},
         ]
         mock_ticker.return_value.history.return_value.empty = False
         mock_ticker.return_value.history.return_value.__len__.return_value = 2

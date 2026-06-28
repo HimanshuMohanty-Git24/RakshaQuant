@@ -36,6 +36,7 @@ CAPITAL = 1_000_000.0
 # Plan derivation
 # ---------------------------------------------------------------------------
 
+
 def test_plan_disabled_without_target():
     engine = ProfitGoalEngine(settings=_settings())
     plan = engine.build_plan(CAPITAL)
@@ -104,6 +105,7 @@ def test_infeasible_when_expected_value_non_positive():
 # ---------------------------------------------------------------------------
 # Pace tracking
 # ---------------------------------------------------------------------------
+
 
 def test_evaluate_on_pace():
     engine = ProfitGoalEngine(settings=_settings(monthly_profit_target_pct=0.03))

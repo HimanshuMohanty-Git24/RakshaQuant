@@ -11,11 +11,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import numpy as np
 import pandas as pd
-import ta
 from ta.momentum import RSIIndicator, StochasticOscillator
-from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
+from ta.trend import MACD, ADXIndicator, EMAIndicator, SMAIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import VolumeWeightedAveragePrice
 
@@ -42,6 +40,7 @@ def _safe_float(value: Any) -> float | None:
 
 class Timeframe(Enum):
     """Candle timeframes."""
+
     M1 = "1m"
     M5 = "5m"
     M15 = "15m"
@@ -54,27 +53,27 @@ class Timeframe(Enum):
 @dataclass
 class IndicatorConfig:
     """Configuration for indicator calculation."""
-    
+
     # Moving Averages
     sma_periods: list[int] = None
     ema_periods: list[int] = None
-    
+
     # Momentum
     rsi_period: int = 14
     stoch_k_period: int = 14
     stoch_d_period: int = 3
-    
+
     # Trend
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
     adx_period: int = 14
-    
+
     # Volatility
     atr_period: int = 14
     bb_period: int = 20
     bb_std: int = 2
-    
+
     def __post_init__(self):
         if self.sma_periods is None:
             self.sma_periods = [20, 50, 200]
@@ -85,26 +84,26 @@ class IndicatorConfig:
 @dataclass
 class IndicatorResult:
     """Result of indicator calculations for a symbol."""
-    
+
     symbol: str
     timeframe: Timeframe
-    
+
     # Price data
     open: float
     high: float
     low: float
     close: float
     volume: int
-    
+
     # Moving Averages
     sma: dict[int, float] = None  # period -> value
     ema: dict[int, float] = None
-    
+
     # Momentum
     rsi: float = None
     stoch_k: float = None
     stoch_d: float = None
-    
+
     # Trend
     macd: float = None
     macd_signal: float = None
@@ -112,17 +111,17 @@ class IndicatorResult:
     adx: float = None
     plus_di: float = None
     minus_di: float = None
-    
+
     # Volatility
     atr: float = None
     bb_upper: float = None
     bb_middle: float = None
     bb_lower: float = None
     bb_percent: float = None
-    
+
     # VWAP
     vwap: float = None
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -171,28 +170,28 @@ def calculate_indicators(
 ) -> IndicatorResult:
     """
     Calculate all technical indicators for a symbol.
-    
+
     Args:
         df: DataFrame with columns: open, high, low, close, volume
         symbol: Trading symbol
         timeframe: Candle timeframe
         config: Indicator configuration (uses defaults if None)
-    
+
     Returns:
         IndicatorResult with all calculated indicators
     """
     if config is None:
         config = IndicatorConfig()
-    
+
     # Ensure required columns exist
     required_cols = ["open", "high", "low", "close", "volume"]
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
-    
+
     # Get latest values
     latest = df.iloc[-1]
-    
+
     # Calculate Moving Averages (skip NaN/warm-up values so membership guards hold)
     sma_values = {}
     for period in config.sma_periods:
@@ -220,7 +219,9 @@ def calculate_indicators(
     stoch_k, stoch_d = None, None
     if len(df) >= config.stoch_k_period:
         stoch = StochasticOscillator(
-            df["high"], df["low"], df["close"],
+            df["high"],
+            df["low"],
+            df["close"],
             window=config.stoch_k_period,
             smooth_window=config.stoch_d_period,
         )
@@ -244,7 +245,9 @@ def calculate_indicators(
     adx_val, plus_di, minus_di = None, None, None
     if len(df) >= config.adx_period:
         adx = ADXIndicator(
-            df["high"], df["low"], df["close"],
+            df["high"],
+            df["low"],
+            df["close"],
             window=config.adx_period,
         )
         adx_val = _safe_float(adx.adx().iloc[-1])
@@ -255,7 +258,9 @@ def calculate_indicators(
     atr = None
     if len(df) >= config.atr_period:
         atr_indicator = AverageTrueRange(
-            df["high"], df["low"], df["close"],
+            df["high"],
+            df["low"],
+            df["close"],
             window=config.atr_period,
         )
         atr = _safe_float(atr_indicator.average_true_range().iloc[-1])
@@ -277,10 +282,13 @@ def calculate_indicators(
     vwap = None
     if len(df) >= 1:
         vwap_indicator = VolumeWeightedAveragePrice(
-            df["high"], df["low"], df["close"], df["volume"],
+            df["high"],
+            df["low"],
+            df["close"],
+            df["volume"],
         )
         vwap = _safe_float(vwap_indicator.volume_weighted_average_price().iloc[-1])
-    
+
     return IndicatorResult(
         symbol=symbol,
         timeframe=timeframe,
@@ -388,21 +396,21 @@ def aggregate_candles(
 ) -> pd.DataFrame:
     """
     Aggregate tick data into OHLCV candles.
-    
+
     Args:
         ticks: List of tick dictionaries with 'price', 'volume', 'timestamp'
         timeframe: Target candle timeframe
-        
+
     Returns:
         DataFrame with OHLCV columns
     """
     if not ticks:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-    
+
     df = pd.DataFrame(ticks)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df.set_index("timestamp", inplace=True)
-    
+
     # Map timeframe to pandas resample string
     resample_map = {
         Timeframe.M1: "1min",
@@ -413,13 +421,15 @@ def aggregate_candles(
         Timeframe.H4: "4h",
         Timeframe.D1: "1D",
     }
-    
-    resampled = df.resample(resample_map[timeframe]).agg({
-        "price": ["first", "max", "min", "last"],
-        "volume": "sum",
-    })
-    
+
+    resampled = df.resample(resample_map[timeframe]).agg(
+        {
+            "price": ["first", "max", "min", "last"],
+            "volume": "sum",
+        }
+    )
+
     resampled.columns = ["open", "high", "low", "close", "volume"]
     resampled.dropna(inplace=True)
-    
+
     return resampled

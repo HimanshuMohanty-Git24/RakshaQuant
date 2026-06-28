@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class HealthStatus(Enum):
     """Health status levels."""
+
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -28,14 +29,14 @@ class HealthStatus(Enum):
 @dataclass
 class ServiceHealth:
     """Health status of a single service."""
-    
+
     name: str
     status: HealthStatus
     latency_ms: float = 0.0
     message: str = ""
     details: dict[str, Any] = field(default_factory=dict)
     checked_at: datetime = field(default_factory=datetime.now)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -50,13 +51,13 @@ class ServiceHealth:
 @dataclass
 class SystemHealth:
     """Overall system health."""
-    
+
     status: HealthStatus
     services: list[ServiceHealth]
     uptime_seconds: float
     version: str = "2.0.0"
     checked_at: datetime = field(default_factory=datetime.now)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
@@ -74,15 +75,16 @@ _system_start_time = time.time()
 async def check_database() -> ServiceHealth:
     """Check database connectivity."""
     start = time.time()
-    
+
     try:
         from sqlalchemy import create_engine, text
+
         settings = get_settings()
-        
+
         engine = create_engine(settings.database_url)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        
+
         latency = (time.time() - start) * 1000
         return ServiceHealth(
             name="database",
@@ -103,12 +105,13 @@ async def check_database() -> ServiceHealth:
 async def check_groq_api() -> ServiceHealth:
     """Check Groq API connectivity."""
     start = time.time()
-    
+
     try:
-        from langchain_groq import ChatGroq
         from langchain_core.messages import HumanMessage
+        from langchain_groq import ChatGroq
+
         settings = get_settings()
-        
+
         # Simple ping to Groq
         llm = ChatGroq(
             api_key=settings.groq_api_key.get_secret_value(),
@@ -116,9 +119,9 @@ async def check_groq_api() -> ServiceHealth:
             temperature=0,
             max_tokens=5,
         )
-        
+
         response = llm.invoke([HumanMessage(content="Say OK")])
-        
+
         latency = (time.time() - start) * 1000
         return ServiceHealth(
             name="groq_api",
@@ -129,7 +132,7 @@ async def check_groq_api() -> ServiceHealth:
         )
     except Exception as e:
         latency = (time.time() - start) * 1000
-        
+
         # Check if rate limited
         if "rate_limit" in str(e).lower() or "429" in str(e):
             return ServiceHealth(
@@ -138,7 +141,7 @@ async def check_groq_api() -> ServiceHealth:
                 latency_ms=latency,
                 message="Groq API rate limited",
             )
-        
+
         return ServiceHealth(
             name="groq_api",
             status=HealthStatus.UNHEALTHY,
@@ -150,17 +153,17 @@ async def check_groq_api() -> ServiceHealth:
 async def check_market_data() -> ServiceHealth:
     """Check market data feed."""
     start = time.time()
-    
+
     try:
         import yfinance as yf
-        
+
         # Quick check with a known symbol
         ticker = yf.Ticker("RELIANCE.NS")
         info = ticker.fast_info
-        
+
         latency = (time.time() - start) * 1000
-        
-        if info and hasattr(info, 'last_price'):
+
+        if info and hasattr(info, "last_price"):
             return ServiceHealth(
                 name="market_data",
                 status=HealthStatus.HEALTHY,
@@ -188,13 +191,13 @@ async def check_market_data() -> ServiceHealth:
 async def check_memory_system() -> ServiceHealth:
     """Check agent memory system."""
     start = time.time()
-    
+
     try:
         from src.memory.database import AgentMemoryDB
-        
+
         memory_db = AgentMemoryDB()
         lessons = memory_db.get_lessons(limit=1)
-        
+
         latency = (time.time() - start) * 1000
         return ServiceHealth(
             name="memory_system",
@@ -216,16 +219,16 @@ async def check_memory_system() -> ServiceHealth:
 async def check_circuit_breakers() -> ServiceHealth:
     """Check circuit breaker states."""
     start = time.time()
-    
+
     try:
         from src.utils.circuit_breaker import get_all_circuit_breaker_stats
-        
+
         stats = get_all_circuit_breaker_stats()
-        
+
         open_breakers = [name for name, s in stats.items() if s["state"] == "open"]
-        
+
         latency = (time.time() - start) * 1000
-        
+
         if open_breakers:
             return ServiceHealth(
                 name="circuit_breakers",
@@ -234,7 +237,7 @@ async def check_circuit_breakers() -> ServiceHealth:
                 message=f"Open breakers: {', '.join(open_breakers)}",
                 details=stats,
             )
-        
+
         return ServiceHealth(
             name="circuit_breakers",
             status=HealthStatus.HEALTHY,
@@ -242,7 +245,7 @@ async def check_circuit_breakers() -> ServiceHealth:
             message="All circuit breakers closed",
             details={"count": len(stats)},
         )
-    except Exception as e:
+    except Exception:
         latency = (time.time() - start) * 1000
         return ServiceHealth(
             name="circuit_breakers",
@@ -255,12 +258,12 @@ async def check_circuit_breakers() -> ServiceHealth:
 async def check_paper_wallet() -> ServiceHealth:
     """Check paper trading wallet state."""
     start = time.time()
-    
+
     try:
         from src.execution.paper_engine import LocalPaperEngine
-        
+
         engine = LocalPaperEngine()
-        
+
         latency = (time.time() - start) * 1000
         return ServiceHealth(
             name="paper_wallet",
@@ -288,10 +291,10 @@ async def health_check(
 ) -> SystemHealth:
     """
     Perform comprehensive system health check.
-    
+
     Args:
         include_slow_checks: Include checks that may be slow (Groq API)
-        
+
     Returns:
         SystemHealth with all service statuses
     """
@@ -301,42 +304,46 @@ async def health_check(
         check_circuit_breakers(),
         check_paper_wallet(),
     ]
-    
+
     # Slow checks - optional
     if include_slow_checks:
-        checks.extend([
-            check_database(),
-            check_groq_api(),
-            check_market_data(),
-        ])
-    
+        checks.extend(
+            [
+                check_database(),
+                check_groq_api(),
+                check_market_data(),
+            ]
+        )
+
     # Run all checks concurrently
     services = await asyncio.gather(*checks, return_exceptions=True)
-    
+
     # Convert exceptions to unhealthy status
     processed_services = []
     for service in services:
         if isinstance(service, Exception):
-            processed_services.append(ServiceHealth(
-                name="unknown",
-                status=HealthStatus.UNHEALTHY,
-                message=str(service),
-            ))
+            processed_services.append(
+                ServiceHealth(
+                    name="unknown",
+                    status=HealthStatus.UNHEALTHY,
+                    message=str(service),
+                )
+            )
         else:
             processed_services.append(service)
-    
+
     # Determine overall status
     statuses = [s.status for s in processed_services]
-    
+
     if any(s == HealthStatus.UNHEALTHY for s in statuses):
         overall_status = HealthStatus.UNHEALTHY
     elif any(s == HealthStatus.DEGRADED for s in statuses):
         overall_status = HealthStatus.DEGRADED
     else:
         overall_status = HealthStatus.HEALTHY
-    
+
     uptime = time.time() - _system_start_time
-    
+
     return SystemHealth(
         status=overall_status,
         services=processed_services,

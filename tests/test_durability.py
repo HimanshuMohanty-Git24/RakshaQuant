@@ -16,6 +16,7 @@ from src.memory.database import decayed_score
 # #3 — unified decay
 # ---------------------------------------------------------------------------
 
+
 def test_decay_full_score_within_grace_period():
     assert decayed_score(2.0, age_days=10, decay_days=30) == 2.0
     assert decayed_score(2.0, age_days=30, decay_days=30) == 2.0
@@ -36,13 +37,20 @@ def test_decay_is_monotonic():
 # #2 — ExitManager persistence
 # ---------------------------------------------------------------------------
 
+
 def test_exit_manager_persists_positions(tmp_path):
     path = tmp_path / "exit_state.json"
     em1 = ExitManager(state_file=path)
     em1.register_position(
-        position_id="P1", symbol="X", side="BUY", quantity=10,
-        entry_price=100.0, stop_loss=95.0, target_price=110.0,
-        strategy="momentum", regime="trending_up",
+        position_id="P1",
+        symbol="X",
+        side="BUY",
+        quantity=10,
+        entry_price=100.0,
+        stop_loss=95.0,
+        target_price=110.0,
+        strategy="momentum",
+        regime="trending_up",
     )
     # A price update should be persisted (MFE moves).
     em1.check_exits({"X": 105.0})
@@ -60,8 +68,13 @@ def test_exit_manager_unregister_persists(tmp_path):
     path = tmp_path / "exit_state.json"
     em1 = ExitManager(state_file=path)
     em1.register_position(
-        position_id="P1", symbol="X", side="BUY", quantity=1,
-        entry_price=100.0, stop_loss=95.0, target_price=110.0,
+        position_id="P1",
+        symbol="X",
+        side="BUY",
+        quantity=1,
+        entry_price=100.0,
+        stop_loss=95.0,
+        target_price=110.0,
     )
     em1.unregister_position("P1")
     em2 = ExitManager(state_file=path)
@@ -71,6 +84,7 @@ def test_exit_manager_unregister_persists(tmp_path):
 # ---------------------------------------------------------------------------
 # #1 — TradeJournal close_trade
 # ---------------------------------------------------------------------------
+
 
 def _journal():
     return TradeJournal(database_url="sqlite:///:memory:")

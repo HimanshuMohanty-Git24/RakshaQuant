@@ -5,13 +5,13 @@ Provides health checks and monitoring endpoints.
 """
 
 from .health import (
-    health_check,
     HealthStatus,
     ServiceHealth,
+    health_check,
 )
 
 __all__ = [
     "health_check",
-    "HealthStatus", 
+    "HealthStatus",
     "ServiceHealth",
 ]

@@ -1,24 +1,18 @@
-import pytest
-import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+import pandas as pd
+import pytest
 
 from src.market.indicators import (
-    calculate_indicators,
-    aggregate_candles,
     IndicatorConfig,
     IndicatorResult,
-    Timeframe
+    Timeframe,
+    aggregate_candles,
+    calculate_indicators,
 )
-from src.market.signals import (
-    SignalEngine,
-    SignalType,
-    SignalStrength,
-    StrategyType,
-    TradingSignal
-)
+from src.market.signals import SignalEngine, SignalType, StrategyType
 
 # --- Indicators Tests ---
+
 
 @pytest.fixture
 def sample_df():
@@ -29,9 +23,10 @@ def sample_df():
         "high": np.linspace(105, 205, 100),
         "low": np.linspace(95, 195, 100),
         "close": np.linspace(102, 202, 100),
-        "volume": np.random.randint(1000, 5000, 100)
+        "volume": np.random.randint(1000, 5000, 100),
     }
     return pd.DataFrame(data, index=dates)
+
 
 def test_calculate_indicators(sample_df):
     result = calculate_indicators(sample_df, "TEST")
@@ -61,13 +56,15 @@ def test_calculate_indicators(sample_df):
     # Check VWAP
     assert result.vwap is not None
 
+
 def test_calculate_indicators_config(sample_df):
     config = IndicatorConfig(sma_periods=[10], rsi_period=5)
     result = calculate_indicators(sample_df, "TEST", config=config)
 
     assert 10 in result.sma
-    assert 20 not in result.sma # Default not used
+    assert 20 not in result.sma  # Default not used
     assert result.rsi is not None
+
 
 def test_aggregate_candles():
     ticks = [
@@ -94,26 +91,41 @@ def test_aggregate_candles():
 
 # --- Signals Tests ---
 
+
 @pytest.fixture
 def signal_engine():
     return SignalEngine()
+
 
 @pytest.fixture
 def indicator_result():
     return IndicatorResult(
         symbol="TEST",
         timeframe=Timeframe.M5,
-        open=100, high=105, low=95, close=100, volume=1000,
+        open=100,
+        high=105,
+        low=95,
+        close=100,
+        volume=1000,
         sma={20: 95, 50: 90},
         ema={21: 95},
         rsi=40,
-        stoch_k=20, stoch_d=20,
-        macd=1, macd_signal=0.5, macd_histogram=0.5,
-        adx=30, plus_di=25, minus_di=15,
+        stoch_k=20,
+        stoch_d=20,
+        macd=1,
+        macd_signal=0.5,
+        macd_histogram=0.5,
+        adx=30,
+        plus_di=25,
+        minus_di=15,
         atr=2,
-        bb_upper=110, bb_middle=100, bb_lower=90, bb_percent=0.5,
-        vwap=100
+        bb_upper=110,
+        bb_middle=100,
+        bb_lower=90,
+        bb_percent=0.5,
+        vwap=100,
     )
+
 
 def test_momentum_strategy_buy(signal_engine, indicator_result):
     # RSI < 50 and MACD hist > 0 -> BUY
@@ -125,6 +137,7 @@ def test_momentum_strategy_buy(signal_engine, indicator_result):
     assert signal.signal_type == SignalType.BUY
     assert signal.strategy == StrategyType.MOMENTUM
 
+
 def test_momentum_strategy_sell(signal_engine, indicator_result):
     # RSI > 50 and MACD hist < 0 -> SELL
     indicator_result.rsi = 55
@@ -134,6 +147,7 @@ def test_momentum_strategy_sell(signal_engine, indicator_result):
     assert signal is not None
     assert signal.signal_type == SignalType.SELL
     assert signal.strategy == StrategyType.MOMENTUM
+
 
 def test_mean_reversion_strategy_buy(signal_engine, indicator_result):
     # Close <= BB lower -> BUY
@@ -145,16 +159,18 @@ def test_mean_reversion_strategy_buy(signal_engine, indicator_result):
     assert signal.signal_type == SignalType.BUY
     assert signal.strategy == StrategyType.MEAN_REVERSION
 
+
 def test_mean_reversion_strategy_sell(signal_engine, indicator_result):
     # Close >= BB upper -> SELL
     indicator_result.close = 110
     indicator_result.bb_upper = 110
-    indicator_result.rsi = 75 # Overbought
+    indicator_result.rsi = 75  # Overbought
 
     signal = signal_engine._mean_reversion_strategy(indicator_result)
     assert signal is not None
     assert signal.signal_type == SignalType.SELL
     assert signal.strategy == StrategyType.MEAN_REVERSION
+
 
 def test_breakout_strategy(signal_engine, indicator_result):
     # Squeeze
@@ -171,6 +187,7 @@ def test_breakout_strategy(signal_engine, indicator_result):
     assert signal.signal_type == SignalType.BUY
     assert signal.strategy == StrategyType.BREAKOUT
 
+
 def test_trend_following_strategy(signal_engine, indicator_result):
     # ADX > 25, +DI > -DI, Price > EMA
     indicator_result.adx = 30
@@ -184,6 +201,7 @@ def test_trend_following_strategy(signal_engine, indicator_result):
     assert signal.signal_type == SignalType.BUY
     assert signal.strategy == StrategyType.TREND_FOLLOWING
 
+
 def test_generate_signals(signal_engine, indicator_result):
     # Set up conditions for Momentum BUY
     indicator_result.rsi = 45
@@ -194,6 +212,7 @@ def test_generate_signals(signal_engine, indicator_result):
     assert len(signals) >= 1
     types = [s.strategy for s in signals]
     assert StrategyType.MOMENTUM in types
+
 
 def test_signal_risk_management(signal_engine, indicator_result):
     indicator_result.close = 100
@@ -206,6 +225,6 @@ def test_signal_risk_management(signal_engine, indicator_result):
     signal = signal_engine._momentum_strategy(indicator_result)
 
     # Check ATR based stops
-    assert signal.stop_loss == 100 - (2 * 2) # 96
-    assert signal.target_price == 100 + (3 * 2) # 106
-    assert signal.risk_reward_ratio == 1.5 # 6/4
+    assert signal.stop_loss == 100 - (2 * 2)  # 96
+    assert signal.target_price == 100 + (3 * 2)  # 106
+    assert signal.risk_reward_ratio == 1.5  # 6/4

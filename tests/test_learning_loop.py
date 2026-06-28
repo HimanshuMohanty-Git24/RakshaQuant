@@ -21,10 +21,19 @@ from src.memory.performance_tracker import PerformanceTracker
 # compute_outcome (standalone, no journal)
 # ---------------------------------------------------------------------------
 
+
 def test_compute_outcome_loser():
     outcome = compute_outcome(
-        {"side": "BUY", "entry_price": 100, "exit_price": 95, "profit_loss": -50,
-         "mfe": 0, "mae": 50, "stop_loss": 95, "target_price": 110}
+        {
+            "side": "BUY",
+            "entry_price": 100,
+            "exit_price": 95,
+            "profit_loss": -50,
+            "mfe": 0,
+            "mae": 50,
+            "stop_loss": 95,
+            "target_price": 110,
+        }
     )
     assert outcome is not None
     assert outcome.is_winner is False
@@ -33,8 +42,14 @@ def test_compute_outcome_loser():
 
 def test_compute_outcome_inefficient_winner():
     outcome = compute_outcome(
-        {"side": "BUY", "entry_price": 100, "exit_price": 105, "profit_loss": 50,
-         "mfe": 200, "mae": 0}
+        {
+            "side": "BUY",
+            "entry_price": 100,
+            "exit_price": 105,
+            "profit_loss": 50,
+            "mfe": 200,
+            "mae": 0,
+        }
     )
     assert outcome.is_winner is True
     assert outcome.efficiency == 0.25  # captured 50 of 200 MFE
@@ -44,11 +59,23 @@ def test_compute_outcome_inefficient_winner():
 # feedback helpers
 # ---------------------------------------------------------------------------
 
+
 def test_build_outcome():
     outcome = build_outcome(
-        trade_id="T1", symbol="AAPL", strategy="momentum", regime="trending_up", side="BUY",
-        entry_price=100, exit_price=90, stop_loss=92, target_price=110, pnl=-100, pnl_pct=-10,
-        mae=120, mfe=20, hold_minutes=15,
+        trade_id="T1",
+        symbol="AAPL",
+        strategy="momentum",
+        regime="trending_up",
+        side="BUY",
+        entry_price=100,
+        exit_price=90,
+        stop_loss=92,
+        target_price=110,
+        pnl=-100,
+        pnl_pct=-10,
+        mae=120,
+        mfe=20,
+        hold_minutes=15,
     )
     assert outcome is not None
     assert outcome.is_winner is False
@@ -106,6 +133,7 @@ def test_lesson_ids_extracts_and_skips_missing():
 # ---------------------------------------------------------------------------
 # PerformanceTracker persistence + get_summary
 # ---------------------------------------------------------------------------
+
 
 def test_perf_tracker_persists_across_restart(tmp_path):
     path = tmp_path / "perf.json"

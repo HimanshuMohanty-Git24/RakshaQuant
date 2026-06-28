@@ -20,13 +20,15 @@ def _req():
 
 
 def _result(status, filled=0, avg=0.0, oid="O1"):
-    return OrderResult(order_id=oid, request=_req(), status=status,
-                       filled_quantity=filled, average_price=avg)
+    return OrderResult(
+        order_id=oid, request=_req(), status=status, filled_quantity=filled, average_price=avg
+    )
 
 
 # ---------------------------------------------------------------------------
 # LiveBrokerExecutor.place_and_confirm
 # ---------------------------------------------------------------------------
+
 
 async def test_place_and_confirm_filled():
     adapter = MagicMock()
@@ -81,6 +83,7 @@ async def test_place_and_confirm_unconfirmed_within_budget():
 # reconcile_positions
 # ---------------------------------------------------------------------------
 
+
 def test_reconcile_in_sync():
     local = [{"symbol": "A", "quantity": 10, "side": "BUY"}]
     broker = [{"symbol": "A", "quantity": 10, "side": "BUY"}]
@@ -118,6 +121,7 @@ def test_reconcile_accepts_position_objects():
 # ExecutionService live submission (mocked broker)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def engine(tmp_path):
     return LocalPaperEngine(
@@ -129,8 +133,11 @@ def _live_service(engine, broker_executor):
     fake_settings = MagicMock(dhan_client_id="id", dhan_access_token="tok")
     with patch("src.execution.service.get_settings", return_value=fake_settings):
         return ExecutionService(
-            engine=engine, mode=ExecutionMode.LIVE, allow_live_orders=True,
-            idempotency=IdempotencyStore(), broker_executor=broker_executor,
+            engine=engine,
+            mode=ExecutionMode.LIVE,
+            allow_live_orders=True,
+            idempotency=IdempotencyStore(),
+            broker_executor=broker_executor,
         )
 
 

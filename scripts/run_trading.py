@@ -14,17 +14,12 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.config import get_settings
 from src.agents.graph import create_trading_graph, run_trading_cycle
-from src.agents.state import create_initial_state
-from src.market.indicators import IndicatorResult, Timeframe, calculate_indicators
+from src.config import get_settings
+from src.market.indicators import IndicatorResult, Timeframe
 from src.market.signals import SignalEngine
-from src.execution.adapter import ExecutionAdapter, execute_trades
-from src.execution.journal import TradeJournal
 from src.memory.database import AgentMemoryDB
 from src.memory.injection import MemoryInjector
-from src.memory.analyzer import TradeOutcomeAnalyzer
-from src.memory.classifier import MistakeClassifier
 from src.observability.tracing import setup_tracing, trading_trace
 
 # Configure logging
@@ -34,7 +29,7 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(f"logs/trading_{datetime.now().strftime('%Y%m%d')}.log"),
-    ]
+    ],
 )
 
 logger = logging.getLogger(__name__)
@@ -43,44 +38,44 @@ logger = logging.getLogger(__name__)
 async def run_demo_cycle():
     """
     Run a demonstration trading cycle with sample data.
-    
+
     This demonstrates the full system flow without live market data.
     """
     logger.info("=" * 60)
     logger.info("AGENTIC PAPER TRADING SYSTEM - DEMO MODE")
     logger.info("=" * 60)
-    
+
     # Setup tracing
     tracing_enabled = setup_tracing()
     logger.info(f"LangSmith tracing: {'enabled' if tracing_enabled else 'disabled'}")
-    
+
     # Initialize components
     settings = get_settings()
     logger.info(f"Trading mode: {settings.trading_mode}")
-    
+
     # Create the trading graph
     graph = create_trading_graph()
     logger.info("Trading graph compiled")
-    
+
     # Initialize memory system
     memory_db = AgentMemoryDB()
     injector = MemoryInjector(memory_db=memory_db)
-    
+
     # Generate sample data
     logger.info("\n--- Generating Sample Market Data ---")
     sample_indicators = _create_sample_indicators()
-    
+
     # Generate signals using signal engine
     signal_engine = SignalEngine()
     signals = signal_engine.generate_signals(sample_indicators)
     logger.info(f"Generated {len(signals)} signals")
-    
+
     for signal in signals:
         logger.info(
             f"  Signal: {signal.signal_type.value} {signal.symbol} "
             f"[{signal.strategy.value}] confidence={signal.confidence:.2f}"
         )
-    
+
     # Get relevant memory lessons
     memory_lessons = memory_db.get_top_lessons_for_context(
         regime="trending_up",
@@ -88,12 +83,12 @@ async def run_demo_cycle():
         n=5,
     )
     logger.info(f"Injected {len(memory_lessons)} memory lessons")
-    
+
     # Run trading cycle
     logger.info("\n--- Running Trading Cycle ---")
-    
+
     workflow_id = f"DEMO-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
+
     with trading_trace(
         workflow_id=workflow_id,
         regime="trending_up",
@@ -110,28 +105,30 @@ async def run_demo_cycle():
             daily_stats={"trades_count": 0, "profit_loss": 0, "max_drawdown": 0},
             thread_id=workflow_id,
         )
-    
+
     # Print results
     logger.info("\n--- Trading Cycle Results ---")
-    logger.info(f"Regime: {final_state.get('regime')} (confidence: {final_state.get('regime_confidence', 0):.2f})")
+    logger.info(
+        f"Regime: {final_state.get('regime')} (confidence: {final_state.get('regime_confidence', 0):.2f})"
+    )
     logger.info(f"Active strategies: {final_state.get('active_strategies', [])}")
     logger.info(f"Validated signals: {len(final_state.get('validated_signals', []))}")
     logger.info(f"Rejected signals: {len(final_state.get('rejected_signals', []))}")
     logger.info(f"Approved trades: {len(final_state.get('approved_trades', []))}")
     logger.info(f"Risk rejected: {len(final_state.get('risk_rejected', []))}")
-    
+
     if final_state.get("risk_warnings"):
         logger.info(f"Warnings: {final_state['risk_warnings']}")
-    
+
     # Execute approved trades (paper mode)
     trades_to_execute = final_state.get("trades_to_execute", [])
-    
+
     if trades_to_execute:
         logger.info(f"\n--- Executing {len(trades_to_execute)} Trades ---")
-        
+
         # Note: In demo mode, we skip actual execution
         logger.info("(Demo mode - skipping actual order placement)")
-        
+
         for trade in trades_to_execute:
             logger.info(
                 f"  Would execute: {trade.get('signal_type')} {trade.get('symbol')} "
@@ -139,15 +136,15 @@ async def run_demo_cycle():
             )
     else:
         logger.info("\nNo trades approved for execution")
-    
+
     # Print errors if any
     if final_state.get("errors"):
         logger.error(f"Errors: {final_state['errors']}")
-    
+
     logger.info("\n" + "=" * 60)
     logger.info("DEMO CYCLE COMPLETE")
     logger.info("=" * 60)
-    
+
     return final_state
 
 

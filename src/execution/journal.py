@@ -7,12 +7,12 @@ Uses PostgreSQL for persistence with SQLAlchemy.
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, JSON
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from src.config import get_settings
@@ -24,57 +24,57 @@ Base = declarative_base()
 
 class TradeRecord(Base):
     """SQLAlchemy model for trade records."""
-    
+
     __tablename__ = "trade_journal"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    
+
     # Trade identification
     trade_id = Column(String(50), unique=True, index=True)
     signal_id = Column(String(50), index=True)
     workflow_id = Column(String(50), index=True)
-    
+
     # Symbol and direction
     symbol = Column(String(20), index=True)
     exchange = Column(String(10))
     side = Column(String(10))  # BUY/SELL
     strategy = Column(String(50), index=True)
-    
+
     # Entry details
     entry_price = Column(Float)
     entry_quantity = Column(Integer)
     entry_time = Column(DateTime, index=True)
-    
+
     # Exit details (filled after trade closes)
     exit_price = Column(Float, nullable=True)
     exit_quantity = Column(Integer, nullable=True)
     exit_time = Column(DateTime, nullable=True)
     exit_reason = Column(String(50), nullable=True)  # target, stop_loss, manual, etc.
-    
+
     # Levels
     stop_loss = Column(Float)
     target_price = Column(Float)
-    
+
     # Performance (filled after trade closes)
     profit_loss = Column(Float, nullable=True)
     profit_loss_pct = Column(Float, nullable=True)
     mae = Column(Float, nullable=True)  # Maximum Adverse Excursion
     mfe = Column(Float, nullable=True)  # Maximum Favorable Excursion
     hold_duration_minutes = Column(Integer, nullable=True)
-    
+
     # Agent decisions (JSON)
     regime = Column(String(20))
     regime_confidence = Column(Float)
     signal_confidence = Column(Float)
     validation_confidence = Column(Float)
     risk_warnings = Column(Text, nullable=True)  # JSON array
-    
+
     # Full decision chain (JSON)
     decision_chain = Column(Text)  # Full agent reasoning
-    
+
     # Status
     status = Column(String(20), index=True)  # open, closed, cancelled
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -82,27 +82,27 @@ class TradeRecord(Base):
 
 class DecisionLog(Base):
     """SQLAlchemy model for agent decision logs."""
-    
+
     __tablename__ = "decision_logs"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    
+
     workflow_id = Column(String(50), index=True)
     agent = Column(String(50), index=True)  # regime, strategy, signal, risk
-    
+
     # Input/Output
     input_data = Column(Text)  # JSON
     output_data = Column(Text)  # JSON
-    
+
     # Decision details
     decision = Column(String(20))
     confidence = Column(Float)
     reasoning = Column(Text)
-    
+
     # Performance
     latency_ms = Column(Integer)
     tokens_used = Column(Integer, nullable=True)
-    
+
     # Timestamp
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
@@ -111,27 +111,27 @@ class DecisionLog(Base):
 class TradeJournal:
     """
     Trade journal for recording and retrieving trade data.
-    
+
     Provides methods for:
     - Recording new trades
     - Updating trade outcomes
     - Querying historical trades
     - Generating trade analytics
     """
-    
+
     database_url: str = ""
     is_persistent: bool = field(default=True, init=False)
     _engine: Any = field(default=None, repr=False)
     _session: Any = field(default=None, repr=False)
-    
+
     def __post_init__(self):
         """Initialize database connection."""
         if not self.database_url:
             settings = get_settings()
             self.database_url = settings.database_url
-        
+
         self._initialize_db()
-    
+
     def _initialize_db(self) -> None:
         """Initialize database and create tables."""
         try:
@@ -154,7 +154,7 @@ class TradeJournal:
                 "Trade journal is using a NON-PERSISTENT in-memory database — trade history "
                 "will be lost on restart. Set a reachable DATABASE_URL for durable journaling."
             )
-    
+
     def record_trade(
         self,
         trade: dict[str, Any],
@@ -163,17 +163,17 @@ class TradeJournal:
     ) -> str:
         """
         Record a new trade entry.
-        
+
         Args:
             trade: Trade details from risk agent
             workflow_id: Current workflow ID
             state: Full trading state for decision chain
-            
+
         Returns:
             Trade ID
         """
         trade_id = f"TRD-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
-        
+
         record = TradeRecord(
             trade_id=trade_id,
             signal_id=trade.get("signal_id", ""),
@@ -195,7 +195,7 @@ class TradeJournal:
             decision_chain=json.dumps(self._extract_decision_chain(state)),
             status="open",
         )
-        
+
         try:
             self._session.add(record)
             self._session.commit()
@@ -203,9 +203,9 @@ class TradeJournal:
         except Exception as e:
             logger.error(f"Failed to record trade: {e}")
             self._session.rollback()
-        
+
         return trade_id
-    
+
     def close_trade(
         self,
         trade_id: str,
@@ -218,24 +218,24 @@ class TradeJournal:
     ) -> bool:
         """
         Close an open trade with exit details.
-        
+
         Args:
             trade_id: Trade to close
             exit_price: Exit price
             exit_reason: Reason for exit (target, stop_loss, manual)
             mae: Maximum adverse excursion
             mfe: Maximum favorable excursion
-            
+
         Returns:
             True if successful
         """
         try:
             record = self._session.query(TradeRecord).filter_by(trade_id=trade_id).first()
-            
+
             if not record:
                 logger.warning(f"Trade not found: {trade_id}")
                 return False
-            
+
             qty = exit_quantity if exit_quantity is not None else record.entry_quantity
 
             # Prefer the caller's realized P&L (which is net of fees/slippage from the
@@ -266,16 +266,16 @@ class TradeJournal:
             record.mfe = mfe
             record.hold_duration_minutes = int(hold_duration)
             record.status = "closed"
-            
+
             self._session.commit()
             logger.info(f"Closed trade {trade_id}: P&L = ₹{pnl:.2f} ({pnl_pct:.2f}%)")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to close trade: {e}")
             self._session.rollback()
             return False
-    
+
     def get_trade(self, trade_id: str) -> dict[str, Any] | None:
         """Get trade details by ID."""
         try:
@@ -285,7 +285,7 @@ class TradeJournal:
         except Exception as e:
             logger.error(f"Failed to get trade: {e}")
         return None
-    
+
     def get_trades_by_date(
         self,
         start_date: datetime,
@@ -293,31 +293,32 @@ class TradeJournal:
     ) -> list[dict[str, Any]]:
         """Get trades within a date range."""
         try:
-            query = self._session.query(TradeRecord).filter(
-                TradeRecord.entry_time >= start_date
-            )
-            
+            query = self._session.query(TradeRecord).filter(TradeRecord.entry_time >= start_date)
+
             if end_date:
                 query = query.filter(TradeRecord.entry_time <= end_date)
-            
+
             records = query.order_by(TradeRecord.entry_time.desc()).all()
             return [self._record_to_dict(r) for r in records]
-            
+
         except Exception as e:
             logger.error(f"Failed to get trades by date: {e}")
             return []
-    
+
     def get_trades_by_strategy(self, strategy: str) -> list[dict[str, Any]]:
         """Get all trades for a specific strategy."""
         try:
-            records = self._session.query(TradeRecord).filter_by(
-                strategy=strategy
-            ).order_by(TradeRecord.entry_time.desc()).all()
+            records = (
+                self._session.query(TradeRecord)
+                .filter_by(strategy=strategy)
+                .order_by(TradeRecord.entry_time.desc())
+                .all()
+            )
             return [self._record_to_dict(r) for r in records]
         except Exception as e:
             logger.error(f"Failed to get trades by strategy: {e}")
             return []
-    
+
     def get_performance_summary(
         self,
         start_date: datetime | None = None,
@@ -325,26 +326,26 @@ class TradeJournal:
     ) -> dict[str, Any]:
         """
         Calculate performance summary statistics.
-        
+
         Returns aggregated statistics for closed trades.
         """
         try:
             query = self._session.query(TradeRecord).filter_by(status="closed")
-            
+
             if start_date:
                 query = query.filter(TradeRecord.entry_time >= start_date)
             if strategy:
                 query = query.filter_by(strategy=strategy)
-            
+
             trades = query.all()
-            
+
             if not trades:
                 return {"message": "No closed trades found"}
-            
+
             total_pnl = sum(t.profit_loss or 0 for t in trades)
             winners = [t for t in trades if (t.profit_loss or 0) > 0]
             losers = [t for t in trades if (t.profit_loss or 0) < 0]
-            
+
             return {
                 "total_trades": len(trades),
                 "winners": len(winners),
@@ -354,15 +355,17 @@ class TradeJournal:
                 "avg_pnl": total_pnl / len(trades) if trades else 0,
                 "avg_winner": sum(t.profit_loss for t in winners) / len(winners) if winners else 0,
                 "avg_loser": sum(t.profit_loss for t in losers) / len(losers) if losers else 0,
-                "avg_hold_duration": sum(t.hold_duration_minutes or 0 for t in trades) / len(trades) if trades else 0,
+                "avg_hold_duration": sum(t.hold_duration_minutes or 0 for t in trades) / len(trades)
+                if trades
+                else 0,
                 "best_trade": max(t.profit_loss for t in trades) if trades else 0,
                 "worst_trade": min(t.profit_loss for t in trades) if trades else 0,
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to calculate performance: {e}")
             return {"error": str(e)}
-    
+
     def log_decision(
         self,
         workflow_id: str,
@@ -391,7 +394,7 @@ class TradeJournal:
         except Exception as e:
             logger.error(f"Failed to log decision: {e}")
             self._session.rollback()
-    
+
     def _record_to_dict(self, record: TradeRecord) -> dict[str, Any]:
         """Convert SQLAlchemy record to dictionary."""
         return {
@@ -419,7 +422,7 @@ class TradeJournal:
             "regime_confidence": record.regime_confidence,
             "status": record.status,
         }
-    
+
     def _extract_decision_chain(self, state: dict[str, Any]) -> dict[str, Any]:
         """Extract decision chain from state for audit trail."""
         return {

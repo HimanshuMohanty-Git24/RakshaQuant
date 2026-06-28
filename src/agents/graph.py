@@ -11,17 +11,17 @@ into the pipeline as a parallel pre-processing step before regime detection.
 import logging
 from typing import Any, Literal
 
-from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
 
-from .state import TradingState, create_initial_state
 from .market_regime import market_regime_node
-from .strategy_selection import strategy_selection_node
-from .signal_validation import signal_validation_node
-from .risk_compliance import risk_compliance_node, check_kill_switch
 from .news_analyst import NewsAnalyst
-from .sentiment import sentiment_analysis_node
 from .prediction import prediction_node
+from .risk_compliance import check_kill_switch, risk_compliance_node
+from .sentiment import sentiment_analysis_node
+from .signal_validation import signal_validation_node
+from .state import TradingState, create_initial_state
+from .strategy_selection import strategy_selection_node
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +29,18 @@ logger = logging.getLogger(__name__)
 def _news_analyst_node(state: dict) -> dict:
     """Wrapper node for the class-based NewsAnalyst."""
     import asyncio
+
     try:
         analyst = NewsAnalyst()
         loop = asyncio.get_event_loop()
         if loop.is_running():
             # We're in an async context, run sync
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                sentiment = pool.submit(
-                    asyncio.run, analyst.get_market_sentiment()
-                ).result(timeout=30)
+                sentiment = pool.submit(asyncio.run, analyst.get_market_sentiment()).result(
+                    timeout=30
+                )
         else:
             sentiment = asyncio.run(analyst.get_market_sentiment())
 
@@ -175,7 +177,7 @@ def create_trading_graph(
         {
             "strategy_selection": "strategy_selection",
             "end": END,
-        }
+        },
     )
 
     # Strategy Selection -> Signal Validation
@@ -188,7 +190,7 @@ def create_trading_graph(
         {
             "risk_compliance": "risk_compliance",
             "end": END,
-        }
+        },
     )
 
     # Risk Compliance -> End
@@ -236,7 +238,7 @@ async def run_trading_cycle(
     state = create_initial_state()
     state["market_data"] = market_data
     state["indicators"] = indicators
-    state["signals"] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in signals]
+    state["signals"] = [s.to_dict() if hasattr(s, "to_dict") else s for s in signals]
     state["memory_lessons"] = memory_lessons or []
     state["portfolio"] = portfolio or {"capital": 1000000, "positions": []}
     state["daily_stats"] = daily_stats or {"trades_count": 0, "profit_loss": 0, "max_drawdown": 0}
