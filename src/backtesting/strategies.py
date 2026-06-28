@@ -12,24 +12,64 @@ Strategies:
 import numpy as np
 import pandas as pd
 
+from src.market.indicators import Timeframe, calculate_indicators
+from src.market.signals import SignalEngine, SignalType
+
 
 class Strategy:
     """Base strategy class."""
-    
+
     name: str = "BaseStrategy"
-    
+
     def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
         """
         Called on each bar of data.
-        
+
         Args:
             row: Current bar (Open, High, Low, Close, Volume)
             history: Historical data up to this point
-            
+
         Returns:
             "BUY", "SELL", or None
         """
         raise NotImplementedError
+
+
+class RealSignalStrategy(Strategy):
+    """
+    Backtests the SAME logic the live system trades.
+
+    Instead of a separate re-implementation of indicators, this feeds the real
+    `ta`-based indicators (src.market.indicators) into the live `SignalEngine`, so a
+    backtest faithfully reflects live behaviour (fixes the audit's backtest≠live divergence).
+    Only uses bars strictly prior to the current one (no look-ahead).
+    """
+
+    name = "RealSignal"
+
+    def __init__(self, symbol: str = "UNKNOWN", min_bars: int = 50):
+        self.symbol = symbol
+        self.min_bars = min_bars
+        self._engine = SignalEngine()
+
+    def on_bar(self, row: pd.Series, history: pd.DataFrame) -> str | None:
+        if len(history) < self.min_bars:
+            return None
+        # The live indicators expect lowercase OHLCV column names.
+        df = history.rename(columns=str.lower)
+        try:
+            indicators = calculate_indicators(df, self.symbol, timeframe=Timeframe.D1)
+            signals = self._engine.generate_signals(indicators)
+        except Exception:
+            return None
+        if not signals:
+            return None
+        top = signals[0]
+        if top.signal_type == SignalType.BUY:
+            return "BUY"
+        if top.signal_type == SignalType.SELL:
+            return "SELL"
+        return None
 
 
 class MomentumStrategy(Strategy):
