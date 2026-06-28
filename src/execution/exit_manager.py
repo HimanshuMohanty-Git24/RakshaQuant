@@ -5,9 +5,12 @@ Manages position exits using trailing stops, time exits, partial profit taking,
 regime change exits, and breakeven stop movement. Tracks MAE/MFE per position.
 """
 
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,7 @@ class ExitManager:
         partial_exit_pct: float = 0.5,
         stale_trade_minutes: int = 60,
         stale_trade_min_pnl_pct: float = 0.5,
+        state_file: Path | None = None,
     ):
         self.trailing_atr_multiplier = trailing_atr_multiplier
         self.breakeven_r_threshold = breakeven_r_threshold
@@ -102,7 +106,39 @@ class ExitManager:
         self.partial_exit_pct = partial_exit_pct
         self.stale_trade_minutes = stale_trade_minutes
         self.stale_trade_min_pnl_pct = stale_trade_min_pnl_pct
+        self.state_file = state_file
         self._positions: dict[str, ManagedPosition] = {}
+        self._load()
+
+    def _load(self) -> None:
+        """Restore tracked positions (trailing stops, breakeven, MAE/MFE) after a restart."""
+        if self.state_file is None or not self.state_file.exists():
+            return
+        try:
+            with open(self.state_file) as f:
+                data = json.load(f)
+            for pid, pos_data in data.items():
+                pos_data = dict(pos_data)
+                pos_data["entry_time"] = datetime.fromisoformat(pos_data["entry_time"])
+                self._positions[pid] = ManagedPosition(**pos_data)
+            logger.info("Restored %d managed positions from %s", len(self._positions), self.state_file)
+        except Exception as e:
+            logger.warning("Could not load exit-manager state (%s); starting empty.", e)
+
+    def _save(self) -> None:
+        """Persist tracked positions atomically (temp file + os.replace)."""
+        if self.state_file is None:
+            return
+        try:
+            data = {pid: pos.to_dict() for pid, pos in self._positions.items()}
+            tmp = self.state_file.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.state_file)
+        except Exception as e:
+            logger.warning("Could not persist exit-manager state (%s).", e)
 
     def register_position(self, position_id: str, symbol: str, side: str,
                           quantity: int, entry_price: float, stop_loss: float,
@@ -115,11 +151,14 @@ class ExitManager:
             regime_at_entry=regime,
         )
         self._positions[position_id] = pos
+        self._save()
         logger.info(f"Exit manager tracking: {symbol} {side} @ {entry_price:,.2f}")
         return pos
 
     def unregister_position(self, position_id: str) -> ManagedPosition | None:
-        return self._positions.pop(position_id, None)
+        pos = self._positions.pop(position_id, None)
+        self._save()
+        return pos
 
     def check_exits(self, market_prices: dict[str, float], current_regime: str = "",
                     atr_values: dict[str, float] | None = None) -> list[tuple[ManagedPosition, ExitRule]]:
@@ -168,6 +207,8 @@ class ExitManager:
             if rules:
                 rules.sort(key=lambda x: x.priority, reverse=True)
                 exits.append((pos, rules[0]))
+        # Persist trailing-stop / breakeven / MAE-MFE updates made this cycle.
+        self._save()
         return exits
 
     def _check_stop(self, pos, price):
