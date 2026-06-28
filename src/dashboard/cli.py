@@ -72,6 +72,15 @@ class TradingStats:
     llm_calls: int = 0
     llm_tokens: int = 0
     llm_cost_usd: float = 0.0
+
+    # Profit-target goal (month-to-date pace)
+    goal_enabled: bool = False
+    goal_feasible: bool = True
+    goal_target_amount: float = 0.0
+    goal_mtd_pnl: float = 0.0
+    goal_expected_to_date: float = 0.0
+    goal_on_pace: bool = True
+    goal_status: str = ""
     
     # Market data
     market_quotes: dict = field(default_factory=dict)  # symbol -> quote dict
@@ -180,7 +189,24 @@ def create_account_panel(stats: TradingStats) -> Panel:
         content.append(f"+Rs. {stats.best_trade:,.2f}\n", style="green")
         content.append("  Worst Trade: ", style="dim")
         content.append(f"Rs. {stats.worst_trade:,.2f}\n", style="red")
-    
+
+    # Profit-target goal pace
+    if stats.goal_enabled:
+        content.append("\n")
+        content.append("  Monthly Goal: ", style="dim")
+        content.append(f"Rs. {stats.goal_target_amount:,.0f}\n", style="bold white")
+        if not stats.goal_feasible:
+            content.append("  Pace: ", style="dim")
+            content.append("⚠ target exceeds risk budget\n", style="bold yellow")
+        else:
+            pace_color = "green" if stats.goal_on_pace else "yellow"
+            pace_icon = "▲" if stats.goal_on_pace else "▼"
+            content.append("  Pace: ", style="dim")
+            content.append(
+                f"{pace_icon} Rs. {stats.goal_mtd_pnl:,.0f} / {stats.goal_expected_to_date:,.0f}\n",
+                style=f"bold {pace_color}",
+            )
+
     return Panel(content, title="[bold white]💰 Account[/]", border_style="blue", box=box.ROUNDED)
 
 

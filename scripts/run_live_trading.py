@@ -25,6 +25,7 @@ from src.agents.graph import create_trading_graph, run_trading_cycle
 from src.agents.risk_compliance import check_kill_switch
 from src.finops import get_alert_manager, get_cost_tracker
 from src.notifications.telegram import get_notifier
+from src.profit import ProfitGoalEngine
 from src.market.manager import MarketDataManager, MarketQuote, is_market_open
 from src.market.history_manager import HistoryManager
 from src.market.indicators import calculate_indicators, Timeframe
@@ -101,6 +102,27 @@ async def run_live_trading():
         partial_exit_pct=0.5,
     )
     dashboard.stats.log_activity("Exit manager initialized", "INFO")
+
+    # Profit-target goal engine: derive a risk-bounded plan from the configured target.
+    # Advisory only — it never changes position sizing or relaxes risk limits.
+    goal_engine = ProfitGoalEngine()
+    goal_plan = goal_engine.build_plan(paper_engine.get_balance())
+    dashboard.stats.goal_enabled = goal_plan.enabled
+    dashboard.stats.goal_feasible = goal_plan.feasible
+    dashboard.stats.goal_target_amount = goal_plan.monthly_target_amount
+    if goal_plan.enabled:
+        wr = goal_plan.required_win_rate
+        wr_str = "n/a" if wr == float("inf") else f"{wr:.0%}"
+        dashboard.stats.log_activity(
+            f"Profit goal: Rs.{goal_plan.monthly_target_amount:,.0f}/mo "
+            f"(needs ~{wr_str} win rate @ {goal_plan.expected_trades_per_day}/day; "
+            f"{'feasible' if goal_plan.feasible else 'NOT feasible within risk'})",
+            "INFO" if goal_plan.feasible else "WARNING",
+        )
+        for warning in goal_plan.warnings:
+            dashboard.stats.log_activity(f"Goal: {warning}", "WARNING")
+    else:
+        dashboard.stats.log_activity("Profit goal: disabled (no target configured)", "INFO")
 
     # Signal engine
     signal_engine = SignalEngine()
@@ -435,6 +457,32 @@ async def run_live_trading():
                     f"(soft limit {budget['soft_pct']:.0%}).",
                     level="WARNING",
                 )
+
+            # ── Profit goal: pace tracking (advisory only — never changes sizing) ──
+            goal_report = goal_engine.evaluate(
+                capital=paper_engine.get_balance(),
+                realized_pnl=dashboard.stats.realized_pnl,
+            )
+            if goal_report.get("enabled"):
+                dashboard.stats.goal_mtd_pnl = goal_report["month_to_date_pnl"]
+                dashboard.stats.goal_expected_to_date = goal_report["expected_to_date"]
+                dashboard.stats.goal_on_pace = goal_report["on_pace"]
+                dashboard.stats.goal_status = goal_report["status"]
+                if not goal_report["feasible"]:
+                    await get_alert_manager().alert(
+                        "goal_infeasible",
+                        "Profit target not feasible within risk budget. "
+                        f"{goal_report['plan']['recommended_action']}",
+                        level="WARNING",
+                    )
+                elif not goal_report["on_pace"]:
+                    await get_alert_manager().alert(
+                        "goal_off_pace",
+                        f"Behind profit pace: month-to-date Rs.{goal_report['month_to_date_pnl']:,.0f} "
+                        f"vs pace Rs.{goal_report['expected_to_date']:,.0f}. "
+                        "Risk limits are fixed — do NOT increase position size to catch up.",
+                        level="WARNING",
+                    )
 
             # Increment cycle
             dashboard.increment_cycle()
