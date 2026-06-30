@@ -43,6 +43,7 @@ from src.memory.performance_tracker import get_performance_tracker
 from src.notifications.telegram import get_notifier
 from src.observability.tracing import setup_tracing
 from src.profit import ProfitGoalEngine
+from src.risk.guards import DrawdownTracker, is_circuit_locked
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -191,6 +192,13 @@ async def run_live_trading():
             dashboard.stats.log_activity(f"Goal: {warning}", "WARNING")
     else:
         dashboard.stats.log_activity("Profit goal: disabled (no target configured)", "INFO")
+
+    # Intraday drawdown tracker (includes unrealized P&L) — feeds the kill switch's drawdown
+    # limb, which was previously dead because the loop fed a hardcoded max_drawdown of 0.
+    drawdown_tracker = DrawdownTracker(
+        peak_equity=settings.paper_wallet_balance,
+        current_equity=settings.paper_wallet_balance,
+    )
 
     # Signal engine
     signal_engine = SignalEngine()
@@ -499,10 +507,15 @@ async def run_live_trading():
 
             workflow_id = f"LIVE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{cycle}"
 
+            # Mark positions to market and update intraday drawdown (incl. unrealized) BEFORE
+            # the kill-switch check, so a deep unrealized drawdown actually halts trading.
+            paper_engine.update_positions_pnl(market_prices)
+            drawdown_tracker.update(paper_engine.get_total_value())
+
             daily_stats = {
                 "trades_count": dashboard.stats.total_trades,
                 "profit_loss": dashboard.stats.realized_pnl,
-                "max_drawdown": 0,
+                "max_drawdown": drawdown_tracker.max_drawdown,
             }
             portfolio = {
                 "capital": paper_engine.get_balance(),
@@ -554,17 +567,68 @@ async def run_live_trading():
             # at the point of execution (exits in Step 0 still run, to flatten risk).
             # Previously the kill switch only ended the agent graph at the regime edge
             # and never re-checked here, so a mid-cycle breach still placed orders.
-            if approved and check_kill_switch({"daily_stats": daily_stats, "portfolio": portfolio}):
-                dashboard.stats.log_activity(
-                    f"KILL SWITCH ACTIVE — blocking {len(approved)} approved "
-                    f"{'entry' if len(approved) == 1 else 'entries'} (daily loss/drawdown limit)",
-                    "WARNING",
-                )
-                approved = []
+            # Use peak equity as the capital base so the drawdown % is true (the graph's
+            # `portfolio.capital` is cash-only and would distort it).
+            kill_state = {
+                "daily_stats": daily_stats,
+                "portfolio": {"capital": max(drawdown_tracker.peak_equity, 1.0)},
+            }
+            if check_kill_switch(kill_state):
+                if approved:
+                    dashboard.stats.log_activity(
+                        f"KILL SWITCH ACTIVE — blocking {len(approved)} approved "
+                        f"{'entry' if len(approved) == 1 else 'entries'} "
+                        f"(loss/drawdown {drawdown_tracker.drawdown_pct:.1f}%)",
+                        "WARNING",
+                    )
+                    approved = []
+
+                # Stop the bleed: flatten all open positions (not just block new entries).
+                if settings.kill_switch_flatten and paper_engine.get_positions():
+                    for pos in list(paper_engine.get_positions()):
+                        px = market_prices.get(pos.symbol, pos.current_price or pos.entry_price)
+                        exit_order = paper_engine.place_order(
+                            symbol=pos.symbol,
+                            side="SELL" if pos.side == "BUY" else "BUY",
+                            quantity=pos.quantity,
+                            current_price=px,
+                        )
+                        if exit_order.status == "FILLED":
+                            fpnl = (px - pos.entry_price) * pos.quantity
+                            if pos.side != "BUY":
+                                fpnl = -fpnl
+                            dashboard.close_trade(fpnl)
+                            dashboard.stats.log_activity(
+                                f"FLATTEN {pos.symbol} @ Rs.{px:,.2f} | P&L Rs.{fpnl:+,.2f}",
+                                "WARNING",
+                            )
+                    exit_manager.clear()
+                    open_trades.clear()
+                    dashboard.stats.current_balance = paper_engine.get_balance()
+                    await get_alert_manager().alert(
+                        "kill_switch_flatten",
+                        f"Kill switch fired (drawdown {drawdown_tracker.drawdown_pct:.1f}%) — "
+                        "flattened all open positions.",
+                        level="CRITICAL",
+                    )
 
             for trade in approved:
                 symbol = trade.get("symbol", "N/A")
                 side = trade.get("signal_type", "BUY")
+
+                # Circuit guard: don't open into a scrip at/through its NSE price band — near a
+                # circuit you can't get a sane fill (limit-up: no sellers; limit-down: no buyers).
+                if settings.circuit_guard_enabled:
+                    q = quotes.get(symbol)
+                    if q is not None and is_circuit_locked(
+                        q.change_percent, settings.default_circuit_band_pct
+                    ):
+                        dashboard.stats.log_activity(
+                            f"CIRCUIT LOCKED: skipping {symbol} ({q.change_percent:+.1f}%)",
+                            "WARNING",
+                        )
+                        continue
+
                 entry_price = market_prices.get(symbol, trade.get("entry_price", 0))
                 stop_loss = trade.get("stop_loss", entry_price * 0.98)
                 target_price = trade.get("target_price", entry_price * 1.04)
