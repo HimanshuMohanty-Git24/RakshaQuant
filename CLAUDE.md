@@ -199,7 +199,19 @@ when off-pace or infeasible — always with the "do not increase risk" message.
 includes an `expectancy` (per-trade edge); `compare_results(baseline, candidate)` produces a
 before/after scorecard (return/win-rate/profit-factor/expectancy/Sharpe/drawdown deltas +
 an `improved` flag) so a change can be *proven* to help before trusting it. The engine uses
-strictly-prior bars (`history = data.iloc[:i]`), so no look-ahead.
+strictly-prior bars (`history = data.iloc[:i]`), so no look-ahead. Pass `BacktestEngine(cost_model=...)`
+to apply the audited `CostModel` (realistic slippage + NSE fees) instead of the flat
+commission/slippage; `CostModel.zero()` for ideal fills.
+
+**Edge validation (the go/no-go gate).** [walk_forward.py](src/backtesting/walk_forward.py)
+(`run_walk_forward`, `aggregate_reports`, `edge_verdict`) evaluates a strategy on rolling
+**out-of-sample** folds, **net of `CostModel` costs**, and returns a `VALIDATED`/`NOT VALIDATED`
+verdict (needs ≥30 OOS trades, positive net expectancy *and* return, and >50% fold consistency).
+`scripts/validate_strategy.py` runs it over a **fixed** universe (never the look-ahead
+`StockDiscovery` output). Survivorship caveat: the universe is current-listed only — a true
+production go/no-go needs a point-in-time, survivorship-free dataset (Bhavcopy/vendor) that
+YFinance can't supply. A green verdict is *necessary, not sufficient* (no circuit/gap/liquidity
+modelling).
 
 ### Cross-cutting
 
