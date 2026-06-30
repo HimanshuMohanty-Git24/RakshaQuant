@@ -64,20 +64,40 @@ async def test_manager_start_simulated(mock_settings):
 
 
 @pytest.mark.asyncio
-async def test_manager_start_yfinance(mock_settings):
+async def test_manager_start_yfinance_when_market_open(mock_settings):
+    # YFinance is only used while the market is open; it is delayed/polled, not a live push,
+    # so start() returns False (push-live status) even though the feed is active.
     mock_settings.return_value.market_data_source = "yfinance"
     manager = MarketDataManager(symbols=["RELIANCE"])
 
-    with patch("src.market.manager.YFinanceFeed") as MockYF:
-        mock_yf = MockYF.return_value
-        mock_yf.start = AsyncMock(return_value=True)
-
+    with (
+        patch("src.market.manager.is_market_open", return_value=True),
+        patch("src.market.manager.YFinanceFeed") as MockYF,
+    ):
+        MockYF.return_value.start = AsyncMock(return_value=True)
         is_live = await manager.start()
 
-        assert is_live is True
-        assert manager.data_source == "yfinance"
-        # Note: manager.is_live is set to False for yfinance in code as it is delayed, but start returns True for active feed
-        assert manager.is_live is False
+    assert manager.data_source == "yfinance"
+    assert manager.is_live is False
+    assert is_live is False
+
+
+@pytest.mark.asyncio
+async def test_manager_yfinance_uses_simulated_after_hours(mock_settings):
+    # After hours YFinance is flat/frozen, so the manager uses the lively simulator instead.
+    mock_settings.return_value.market_data_source = "yfinance"
+    manager = MarketDataManager(symbols=["RELIANCE"])
+
+    with patch("src.market.manager.is_market_open", return_value=False):
+        with patch.object(manager.simulated_data, "get_quotes") as mock_q:
+            mock_q.return_value = {
+                "RELIANCE": SimulatedQuote("RELIANCE", 1, 100, 100, 100, 100, 90, 10, 10, 1000)
+            }
+            is_live = await manager.start()
+
+    assert is_live is False
+    assert manager.data_source == "simulated"
+    assert "RELIANCE" in manager.quotes
 
 
 @pytest.mark.asyncio
