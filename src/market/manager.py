@@ -149,21 +149,25 @@ class MarketDataManager:
         # Check configured data source
         data_source = self.settings.market_data_source
 
-        # Option 1: YFinance (Free, delayed data)
+        # Option 1: YFinance (free, delayed data) — only meaningful while the market is open.
+        # After hours YFinance just returns a frozen, flat last-close snapshot, so we fall
+        # through to the simulator (which has movement) for a useful live demo.
         if data_source == "yfinance":
-            logger.info("Using Yahoo Finance data source (free tier)")
-            self.yfinance_feed = YFinanceFeed(
-                symbols=self.symbols,
-                on_quote=self._on_yfinance_quote,
-            )
-            success = await self.yfinance_feed.start()
-            if success:
-                self.is_live = False  # YFinance is delayed, not truly live
-                self.data_source = "yfinance"
-                logger.info(f"Yahoo Finance feed active for {len(self.symbols)} stocks")
-                return True
+            if is_market_open():
+                logger.info("Market OPEN - using Yahoo Finance data source (free tier)")
+                self.yfinance_feed = YFinanceFeed(
+                    symbols=self.symbols,
+                    on_quote=self._on_yfinance_quote,
+                )
+                success = await self.yfinance_feed.start()
+                if success:
+                    self.is_live = False  # delayed/polled, not a real-time push
+                    self.data_source = "yfinance"
+                    logger.info(f"Yahoo Finance feed active for {len(self.symbols)} stocks")
+                    return self.is_live
+                logger.warning("Yahoo Finance returned no data - using simulated data")
             else:
-                logger.warning("Yahoo Finance failed - using simulated data")
+                logger.info("Market CLOSED - using simulated data (live demo with movement)")
 
         # Option 2: DhanHQ WebSocket (Real-time, requires account)
         elif data_source == "dhan" and is_market_open():
@@ -241,11 +245,24 @@ class MarketDataManager:
             if self.on_quote:
                 self.on_quote(self.quotes[symbol])
 
-    def refresh_simulated(self):
+    def refresh_simulated(self) -> None:
         """Refresh simulated quotes with new random movements."""
         if not self.is_live:
             self.simulated_data.tick()
             self._load_simulated_quotes()
+
+    def refresh(self) -> None:
+        """
+        Pull the latest quotes for the active source — call once per trading cycle.
+
+        - simulated: advance the random walk (new movement each cycle).
+        - yfinance: re-fetch (the previous design fetched once at startup and froze).
+        - dhan websocket: pushes via callback, so this is a no-op.
+        """
+        if self.data_source == "simulated":
+            self.refresh_simulated()
+        elif self.data_source == "yfinance" and self.yfinance_feed is not None:
+            self.yfinance_feed.fetch_quotes()  # repopulates self.quotes via _on_yfinance_quote
 
     async def listen(self):
         """Listen for market data updates."""

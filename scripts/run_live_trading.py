@@ -227,8 +227,12 @@ async def run_live_trading():
 
     # Start market data
     is_live = await market_manager.start()
-    data_source = "WebSocket LIVE" if is_live else "Simulated"
-    dashboard.stats.log_activity(f"Data source: {data_source}", "SUCCESS")
+    dashboard.stats.data_source = market_manager.data_source
+    dashboard.stats.log_activity(
+        f"Data source: {market_manager.data_source}"
+        + ("" if is_live else " (polled/simulated — refreshed each cycle)"),
+        "SUCCESS",
+    )
 
     # Telegram startup notification (best-effort; no-op if unconfigured)
     notifier = get_notifier()
@@ -239,8 +243,13 @@ async def run_live_trading():
         except Exception as e:
             logger.warning("Telegram startup notification failed: %s", e)
 
+    # screen=True uses the alternate screen buffer for a stable, full-screen render with no
+    # scroll/flicker (the previous default redrew in the scrollback and flickered).
     with Live(
-        create_dashboard_layout(dashboard.stats), console=console, refresh_per_second=4
+        create_dashboard_layout(dashboard.stats),
+        console=console,
+        refresh_per_second=4,
+        screen=True,
     ) as live:
 
         async def _run_cycle(cycle: int) -> None:
@@ -360,8 +369,10 @@ async def run_live_trading():
             live.update(create_dashboard_layout(dashboard.stats))
 
             # ── Step 1: Refresh market data ────────────────────────
+            # Pull fresh quotes for the active source every cycle. (Previously yfinance was
+            # fetched once at startup and frozen; only the websocket push updated live.)
             if not is_live:
-                market_manager.refresh_simulated()
+                market_manager.refresh()
 
             quotes = market_manager.get_all_quotes()
             dashboard.update_market_data({s: q.to_dict() for s, q in quotes.items()})
