@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from src.backtesting.engine import BacktestEngine, Strategy, Trade
@@ -128,7 +129,17 @@ def run_walk_forward(
     folds = generate_test_folds(n, warmup_bars, test_bars)
 
     if not folds:
-        return WalkForwardReport(symbol, 0, 0.0, 0.0, 0.0, 0.0, 0.0, [])
+        return WalkForwardReport(
+            symbol=symbol,
+            oos_trades=0,
+            oos_return_pct=0.0,
+            oos_expectancy=0.0,
+            oos_win_rate=0.0,
+            oos_profit_factor=0.0,
+            oos_max_drawdown_pct=0.0,
+            fold_consistency=0.0,
+            folds=[],
+        )
 
     # Run once over the full series; warm-up bars are excluded from evaluation below.
     engine = BacktestEngine(initial_capital=initial_capital, cost_model=cost_model)
@@ -161,7 +172,8 @@ def run_walk_forward(
             FoldResult(
                 fold=i,
                 test_start=str(data.index[start].date()),
-                test_end=str(data.index[min(end, n - 1)].date()),
+                # `end` is exclusive — the last bar actually in the fold is end-1.
+                test_end=str(data.index[min(end - 1, n - 1)].date()),
                 trades=int(m["trades"]),
                 return_pct=m["return_pct"],
                 expectancy=m["expectancy"],
@@ -169,7 +181,10 @@ def run_walk_forward(
         )
 
     agg = _metrics_from_pnls(all_pnls, initial_capital)
-    consistency = (positive_folds / evaluated_folds) if evaluated_folds else 0.0
+    # Consistency = fraction of *trading* folds that were positive. Require trades in at
+    # least 2 folds for it to mean anything — a single positive window would otherwise read
+    # 100% and sail through the gate (the precise "one lucky regime" case it must catch).
+    consistency = (positive_folds / evaluated_folds) if evaluated_folds >= 2 else 0.0
     return WalkForwardReport(
         symbol=symbol,
         oos_trades=int(agg["trades"]),
@@ -184,11 +199,23 @@ def run_walk_forward(
 
 
 def _entry_position(data: pd.DataFrame, trade: Trade) -> int | None:
+    """Integer position of a trade's entry bar.
+
+    A non-unique index (duplicate/intraday timestamps) makes ``get_loc`` return a slice or
+    boolean mask rather than a plain int; take the first matching position in that case so we
+    don't silently drop the trade (which would undercount OOS trades and skew the verdict).
+    """
     try:
         loc = data.index.get_loc(trade.entry_date)
-        return int(loc) if isinstance(loc, int) else None
     except (KeyError, TypeError):
         return None
+    if isinstance(loc, (int, np.integer)):
+        return int(loc)
+    if isinstance(loc, slice):
+        return int(loc.start) if loc.start is not None else None
+    # Boolean mask (np.ndarray) → first True position.
+    matches = np.flatnonzero(np.asarray(loc))
+    return int(matches[0]) if matches.size else None
 
 
 def edge_verdict(
@@ -210,9 +237,9 @@ def edge_verdict(
         reasons.append(f"net OOS expectancy is {oos_expectancy:.4f} (<= 0 after costs)")
     if oos_return_pct <= 0:
         reasons.append(f"net OOS return is {oos_return_pct:.2f}% (<= 0 after costs)")
-    if fold_consistency < 0.5:
+    if fold_consistency <= 0.5:
         reasons.append(
-            f"edge in only {fold_consistency:.0%} of folds (< 50% — likely regime-specific/luck)"
+            f"edge in only {fold_consistency:.0%} of folds (<= 50% — likely regime-specific/luck)"
         )
     validated = not reasons
     return {

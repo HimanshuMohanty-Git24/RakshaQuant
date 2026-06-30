@@ -36,6 +36,18 @@ class _PingPong(Strategy):
         return "BUY" if len(history) % 2 == 0 else "SELL"
 
 
+class _OneFoldStrategy(Strategy):
+    """Trades only inside the first OOS fold (bars [120, 160)) so the edge lives in one window."""
+
+    name = "OneFold"
+
+    def on_bar(self, row, history):
+        n = len(history)
+        if 120 <= n < 160:
+            return "BUY" if n % 2 == 0 else "SELL"
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Fold generation + metrics
 # ---------------------------------------------------------------------------
@@ -78,6 +90,37 @@ def test_run_walk_forward_insufficient_data():
     report = run_walk_forward(_uptrend(80), _PingPong, warmup_bars=120, test_bars=40)
     assert report.oos_trades == 0
     assert report.folds == []
+    # Regression: the no-folds branch once passed args positionally and put [] into the
+    # fold_consistency (float) slot. It must be a number.
+    assert report.fold_consistency == 0.0
+    assert isinstance(report.fold_consistency, float)
+
+
+def test_single_fold_edge_is_not_consistent():
+    # An edge that only shows up in ONE fold must not read as consistent (it would otherwise
+    # be 1/1 = 100% and sail through the verdict gate — the "one lucky regime" trap).
+    data = _uptrend(240)
+    report = run_walk_forward(
+        data, _OneFoldStrategy, warmup_bars=120, test_bars=40, cost_model=CostModel.zero()
+    )
+    assert report.oos_trades > 0
+    assert report.fold_consistency == 0.0
+    v = edge_verdict(
+        report.oos_trades, report.oos_expectancy, report.oos_return_pct, report.fold_consistency
+    )
+    assert v["validated"] is False
+
+
+def test_trade_pnl_is_net_of_costs():
+    # Trade.pnl must be net of brokerage/slippage so walk-forward expectancy/return are not
+    # gross-inflated. The booked P&L across trades must equal the realized capital change.
+    data = _uptrend(240)
+    cm = CostModel(slippage_bps=50, brokerage_bps=10)
+    result = BacktestEngine(initial_capital=100_000.0, cost_model=cm).run(_PingPong(), data, "X")
+    assert result.trades
+    booked = sum(t.pnl for t in result.trades)
+    realized = result.final_capital - result.initial_capital
+    assert abs(booked - realized) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +160,13 @@ def test_edge_verdict_rejects_too_few_trades():
 
 def test_edge_verdict_rejects_inconsistent_edge():
     v = edge_verdict(oos_trades=100, oos_expectancy=1.0, oos_return_pct=5.0, fold_consistency=0.3)
+    assert v["validated"] is False
+    assert any("folds" in r for r in v["reasons"])
+
+
+def test_edge_verdict_rejects_exactly_half_consistency():
+    # Docstring/message say ">50%" — exactly 50% (a coin-flip across folds) must NOT pass.
+    v = edge_verdict(oos_trades=100, oos_expectancy=1.0, oos_return_pct=5.0, fold_consistency=0.5)
     assert v["validated"] is False
     assert any("folds" in r for r in v["reasons"])
 
