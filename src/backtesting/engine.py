@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.execution.costs import CostModel
 from src.market.yfinance_feed import YFinanceFeed
 
 logger = logging.getLogger(__name__)
@@ -154,8 +155,9 @@ class BacktestEngine:
     def __init__(
         self,
         initial_capital: float = 100000.0,
-        commission: float = 0.0003,  # 0.03% per trade
-        slippage: float = 0.0001,  # 0.01% slippage
+        commission: float = 0.0003,  # 0.03% per trade (used only when cost_model is None)
+        slippage: float = 0.0001,  # 0.01% slippage (used only when cost_model is None)
+        cost_model: "CostModel | None" = None,
     ):
         """
         Initialize backtest engine.
@@ -168,6 +170,9 @@ class BacktestEngine:
         self.initial_capital = initial_capital
         self.commission = commission
         self.slippage = slippage
+        # When provided, the audited CostModel (realistic NSE slippage + fees) is used for
+        # fills and charges instead of the flat commission/slippage above.
+        self.cost_model = cost_model
 
     def fetch_data(
         self,
@@ -229,15 +234,23 @@ class BacktestEngine:
             if signal == "BUY" and position == 0:
                 # Enter long
                 position = 1
-                entry_price = current_price * (1 + self.slippage)
+                if self.cost_model is not None:
+                    entry_price = self.cost_model.fill_price(current_price, "BUY")
+                    commission_cost = self.cost_model.charges(entry_price, "BUY")
+                else:
+                    entry_price = current_price * (1 + self.slippage)
+                    commission_cost = entry_price * self.commission
                 entry_date = current_date
-                commission_cost = entry_price * self.commission
                 capital -= commission_cost
 
             elif signal == "SELL" and position == 1:
                 # Exit long
-                exit_price = current_price * (1 - self.slippage)
-                commission_cost = exit_price * self.commission
+                if self.cost_model is not None:
+                    exit_price = self.cost_model.fill_price(current_price, "SELL")
+                    commission_cost = self.cost_model.charges(exit_price, "SELL")
+                else:
+                    exit_price = current_price * (1 - self.slippage)
+                    commission_cost = exit_price * self.commission
 
                 trade = Trade(
                     entry_date=entry_date,
