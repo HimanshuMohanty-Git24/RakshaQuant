@@ -451,7 +451,21 @@ uv run python scripts/run_live_trading.py
 
 # Run a backtest
 uv run python src/backtesting/engine.py
+
+# Validate the edge OUT-OF-SAMPLE before risking capital (walk-forward, net of real costs)
+uv run python scripts/validate_strategy.py
 ```
+
+### ⚠️ Validate before you trade real money
+
+A single in-sample backtest proves nothing. **`scripts/validate_strategy.py`** runs the live
+signal logic on rolling **out-of-sample** windows, **net of realistic NSE costs** (slippage +
+brokerage + STT/stamp/GST via the `CostModel`), and prints a blunt **VALIDATED / NOT VALIDATED**
+verdict (it requires positive net-of-cost expectancy *and* consistency across folds, not one
+lucky window). It also prints a **survivorship caveat**: the universe is current-listed names
+only, so a true production go/no-go needs a point-in-time, survivorship-free dataset (NSE
+Bhavcopy / a vendor) that YFinance cannot provide. Treat a green verdict as *necessary, not
+sufficient* — historical bars also can't capture circuit limits, gaps, or thin-name liquidity.
 
 ### The Dashboard
 
@@ -499,7 +513,8 @@ RakshaQuant/
 │   ├── finops/              # 💰 🆕 Cost tracking, budgets, alerts
 │   ├── profit/              # 🎯 🆕 Profit-target goal engine
 │   ├── backtesting/         # 📈 Strategy Testing
-│   │   ├── engine.py        # Backtest runner + compare_results scorecard
+│   │   ├── engine.py        # Backtest runner (+ CostModel) + compare_results scorecard
+│   │   ├── walk_forward.py  # 🆕 OOS / walk-forward validation + edge verdict
 │   │   └── strategies.py    # RealSignalStrategy (uses the live engine) + others
 │   ├── utils/               # 🔧 Utilities
 │   │   ├── rate_limiter.py  # API rate limiting
@@ -514,6 +529,7 @@ RakshaQuant/
 ├── scripts/                 # 🏃‍♂️ Entry Points
 │   ├── setup.py             # 🆕 Guided one-command setup
 │   ├── run_live_trading.py  # Main application (dashboard)
+│   ├── validate_strategy.py # 🆕 OOS / walk-forward edge validation (run before live)
 │   └── check_config.py      # Config validator
 ├── tests/                   # 🧪 Unit Tests
 └── README.md
