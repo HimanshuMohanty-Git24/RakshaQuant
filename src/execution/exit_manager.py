@@ -190,6 +190,11 @@ class ExitManager:
         self._save()
         return pos
 
+    def clear(self) -> None:
+        """Drop all tracked positions (e.g. after a kill-switch flatten)."""
+        self._positions.clear()
+        self._save()
+
     def check_exits(
         self,
         market_prices: dict[str, float],
