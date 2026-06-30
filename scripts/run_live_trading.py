@@ -48,6 +48,10 @@ from src.risk.guards import DrawdownTracker, is_circuit_locked
 console = Console()
 logger = logging.getLogger(__name__)
 
+# Safety cap on the kill-switch flatten loop: each pass closes at least the FIFO-first
+# position of every open symbol, so this far exceeds the passes any realistic book needs.
+MAX_FLATTEN_PASSES = 20
+
 
 def calculate_real_indicators(history_manager: HistoryManager, symbol: str):
     """
@@ -195,9 +199,13 @@ async def run_live_trading():
 
     # Intraday drawdown tracker (includes unrealized P&L) — feeds the kill switch's drawdown
     # limb, which was previously dead because the loop fed a hardcoded max_drawdown of 0.
+    # Seed from the engine's actual equity (it may have RESTORED a persisted wallet/positions
+    # on startup), not the static configured balance — otherwise peak/current are wrong on a
+    # restart and the drawdown halt mis-fires (or never fires).
+    starting_equity = paper_engine.get_total_value()
     drawdown_tracker = DrawdownTracker(
-        peak_equity=settings.paper_wallet_balance,
-        current_equity=settings.paper_wallet_balance,
+        peak_equity=starting_equity,
+        current_equity=starting_equity,
     )
 
     # Signal engine
@@ -584,33 +592,58 @@ async def run_live_trading():
                     approved = []
 
                 # Stop the bleed: flatten all open positions (not just block new entries).
+                # place_order() closes by (symbol, side) FIFO, not by position id, so a single
+                # snapshot pass may not fully flatten multiple/odd-sized same-symbol positions.
+                # Loop until the engine reports flat (capped to avoid spinning), and clear the
+                # exit-manager / open-trade tracking ONLY once it actually is — otherwise we'd
+                # lose sight of still-open risk.
                 if settings.kill_switch_flatten and paper_engine.get_positions():
-                    for pos in list(paper_engine.get_positions()):
-                        px = market_prices.get(pos.symbol, pos.current_price or pos.entry_price)
-                        exit_order = paper_engine.place_order(
-                            symbol=pos.symbol,
-                            side="SELL" if pos.side == "BUY" else "BUY",
-                            quantity=pos.quantity,
-                            current_price=px,
-                        )
-                        if exit_order.status == "FILLED":
-                            fpnl = (px - pos.entry_price) * pos.quantity
-                            if pos.side != "BUY":
-                                fpnl = -fpnl
-                            dashboard.close_trade(fpnl)
-                            dashboard.stats.log_activity(
-                                f"FLATTEN {pos.symbol} @ Rs.{px:,.2f} | P&L Rs.{fpnl:+,.2f}",
-                                "WARNING",
+                    for _ in range(MAX_FLATTEN_PASSES):
+                        positions = list(paper_engine.get_positions())
+                        if not positions:
+                            break
+                        for pos in positions:
+                            px = market_prices.get(pos.symbol, pos.current_price or pos.entry_price)
+                            exit_order = paper_engine.place_order(
+                                symbol=pos.symbol,
+                                side="SELL" if pos.side == "BUY" else "BUY",
+                                quantity=pos.quantity,
+                                current_price=px,
                             )
-                    exit_manager.clear()
-                    open_trades.clear()
+                            if exit_order.status == "FILLED":
+                                fpnl = (px - pos.entry_price) * pos.quantity
+                                if pos.side != "BUY":
+                                    fpnl = -fpnl
+                                dashboard.close_trade(fpnl)
+                                dashboard.stats.log_activity(
+                                    f"FLATTEN {pos.symbol} @ Rs.{px:,.2f} | P&L Rs.{fpnl:+,.2f}",
+                                    "WARNING",
+                                )
                     dashboard.stats.current_balance = paper_engine.get_balance()
-                    await get_alert_manager().alert(
-                        "kill_switch_flatten",
-                        f"Kill switch fired (drawdown {drawdown_tracker.drawdown_pct:.1f}%) — "
-                        "flattened all open positions.",
-                        level="CRITICAL",
-                    )
+                    if paper_engine.get_positions():
+                        # Could not fully flatten — keep risk tracking intact and escalate
+                        # rather than clearing (which would hide the residual exposure).
+                        remaining = len(paper_engine.get_positions())
+                        dashboard.stats.log_activity(
+                            f"FLATTEN INCOMPLETE — {remaining} position(s) still open; "
+                            "keeping risk tracking.",
+                            "ERROR",
+                        )
+                        await get_alert_manager().alert(
+                            "kill_switch_flatten_incomplete",
+                            f"Kill switch fired but {remaining} position(s) could not be "
+                            "flattened — risk tracking retained.",
+                            level="CRITICAL",
+                        )
+                    else:
+                        exit_manager.clear()
+                        open_trades.clear()
+                        await get_alert_manager().alert(
+                            "kill_switch_flatten",
+                            f"Kill switch fired (drawdown {drawdown_tracker.drawdown_pct:.1f}%) — "
+                            "flattened all open positions.",
+                            level="CRITICAL",
+                        )
 
             for trade in approved:
                 symbol = trade.get("symbol", "N/A")
