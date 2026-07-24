@@ -212,6 +212,23 @@ class Settings(BaseSettings):
         default=0.10,
         description="Maximum total portfolio risk (0.10 = 10%)",
     )
+
+    # ===========================================
+    # Tail-risk guards (deterministic; independent of the LLM stack)
+    # ===========================================
+    kill_switch_flatten: bool = Field(
+        default=True,
+        description="When the kill switch fires, also flatten open positions (not just block "
+        "new entries) to stop the bleed",
+    )
+    circuit_guard_enabled: bool = Field(
+        default=True,
+        description="Skip new entries in scrips at/through their NSE circuit band",
+    )
+    default_circuit_band_pct: float = Field(
+        default=10.0,
+        description="Assumed NSE circuit band % when per-scrip data is unavailable (2/5/10/20)",
+    )
     max_sector_exposure: float = Field(
         default=0.30,
         description="Maximum exposure to single sector (0.30 = 30%)",
