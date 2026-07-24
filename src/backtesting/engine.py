@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.execution.costs import CostModel
 from src.market.yfinance_feed import YFinanceFeed
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,20 @@ class Trade:
             self.pnl = (self.entry_price - exit_price) * self.quantity
 
         self.pnl_pct = (self.pnl / (self.entry_price * self.quantity)) * 100
+
+
+def _book_net_pnl(trade: Trade, entry_commission: float, exit_commission: float) -> None:
+    """Restate a closed trade's P&L net of both legs' charges.
+
+    ``Trade.close`` computes gross P&L from fill prices only. The backtest deducts
+    brokerage/STT/slippage charges from running ``capital`` separately, but downstream
+    consumers (walk-forward OOS expectancy/return, the verdict gate) read ``trade.pnl``
+    directly — so it must be net, or a strategy that is gross-positive but net-negative
+    after costs would wrongly pass validation.
+    """
+    trade.pnl -= entry_commission + exit_commission
+    denom = trade.entry_price * trade.quantity
+    trade.pnl_pct = (trade.pnl / denom * 100) if denom else 0.0
 
 
 @dataclass
@@ -154,8 +169,9 @@ class BacktestEngine:
     def __init__(
         self,
         initial_capital: float = 100000.0,
-        commission: float = 0.0003,  # 0.03% per trade
-        slippage: float = 0.0001,  # 0.01% slippage
+        commission: float = 0.0003,  # 0.03% per trade (used only when cost_model is None)
+        slippage: float = 0.0001,  # 0.01% slippage (used only when cost_model is None)
+        cost_model: "CostModel | None" = None,
     ):
         """
         Initialize backtest engine.
@@ -168,6 +184,9 @@ class BacktestEngine:
         self.initial_capital = initial_capital
         self.commission = commission
         self.slippage = slippage
+        # When provided, the audited CostModel (realistic NSE slippage + fees) is used for
+        # fills and charges instead of the flat commission/slippage above.
+        self.cost_model = cost_model
 
     def fetch_data(
         self,
@@ -208,6 +227,7 @@ class BacktestEngine:
         position = 0
         entry_price = 0.0
         entry_date = None
+        entry_commission = 0.0  # charge paid on the open leg; carried to the close for net P&L
 
         trades: list[Trade] = []
         equity_curve = [capital]
@@ -229,15 +249,23 @@ class BacktestEngine:
             if signal == "BUY" and position == 0:
                 # Enter long
                 position = 1
-                entry_price = current_price * (1 + self.slippage)
+                if self.cost_model is not None:
+                    entry_price = self.cost_model.fill_price(current_price, "BUY")
+                    entry_commission = self.cost_model.charges(entry_price, "BUY")
+                else:
+                    entry_price = current_price * (1 + self.slippage)
+                    entry_commission = entry_price * self.commission
                 entry_date = current_date
-                commission_cost = entry_price * self.commission
-                capital -= commission_cost
+                capital -= entry_commission
 
             elif signal == "SELL" and position == 1:
                 # Exit long
-                exit_price = current_price * (1 - self.slippage)
-                commission_cost = exit_price * self.commission
+                if self.cost_model is not None:
+                    exit_price = self.cost_model.fill_price(current_price, "SELL")
+                    exit_commission = self.cost_model.charges(exit_price, "SELL")
+                else:
+                    exit_price = current_price * (1 - self.slippage)
+                    exit_commission = exit_price * self.commission
 
                 trade = Trade(
                     entry_date=entry_date,
@@ -248,9 +276,13 @@ class BacktestEngine:
                     exit_price=exit_price,
                 )
                 trade.close(current_date, exit_price)
+                # Cash effect of the close leg: realize gross P&L minus the exit charge
+                # (the entry charge was already deducted when the position was opened).
+                capital += trade.pnl - exit_commission
+                # Report Trade.pnl NET of both legs' charges so downstream consumers
+                # (walk-forward OOS metrics, expectancy) reflect post-cost edge, not gross.
+                _book_net_pnl(trade, entry_commission, exit_commission)
                 trades.append(trade)
-
-                capital += trade.pnl - commission_cost
                 position = 0
 
             # Update equity curve
@@ -260,9 +292,15 @@ class BacktestEngine:
             else:
                 equity_curve.append(capital)
 
-        # Close any open position at end
+        # Close any open position at end (same cost treatment as a signalled exit)
         if position == 1:
-            exit_price = data.iloc[-1]["Close"]
+            raw_close = data.iloc[-1]["Close"]
+            if self.cost_model is not None:
+                exit_price = self.cost_model.fill_price(raw_close, "SELL")
+                exit_commission = self.cost_model.charges(exit_price, "SELL")
+            else:
+                exit_price = raw_close * (1 - self.slippage)
+                exit_commission = exit_price * self.commission
             trade = Trade(
                 entry_date=entry_date,
                 exit_date=data.index[-1],
@@ -272,8 +310,9 @@ class BacktestEngine:
                 exit_price=exit_price,
             )
             trade.close(data.index[-1], exit_price)
+            capital += trade.pnl - exit_commission
+            _book_net_pnl(trade, entry_commission, exit_commission)
             trades.append(trade)
-            capital += trade.pnl
 
         # Calculate metrics
         return self._calculate_metrics(
