@@ -49,11 +49,14 @@ class PredictionSignal:
     timestamp: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict[str, Any]:
+        # confidence / predicted_change_pct are derived from numpy/pandas ops (model.predict,
+        # pct_change), so they are numpy.float64 unless coerced. Cast to native float here so
+        # this dict is msgpack-serializable when it lands in TradingState (see #18).
         return {
             "symbol": self.symbol,
             "direction": self.direction,
-            "confidence": self.confidence,
-            "predicted_change_pct": self.predicted_change_pct,
+            "confidence": float(self.confidence),
+            "predicted_change_pct": float(self.predicted_change_pct),
             "reasoning": self.reasoning,
             "timestamp": self.timestamp.isoformat(),
         }
