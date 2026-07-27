@@ -44,6 +44,7 @@ from src.notifications.telegram import get_notifier
 from src.observability.tracing import setup_tracing
 from src.profit import ProfitGoalEngine
 from src.risk.guards import DrawdownTracker, is_circuit_locked
+from src.utils.formatting import fmt_optional
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -470,10 +471,14 @@ async def run_live_trading():
                     sig.confidence,
                 )
                 direction = "bullish" if top_candidate.is_bullish else "bearish"
+                # RSI/ADX can be None during the indicator warm-up window (a signal may come
+                # from a strategy that doesn't need them), so format defensively — a bare
+                # f"{None:.1f}" raises TypeError and kills the cycle (#17).
                 reason = (
                     f"{direction.title()} momentum ({top_candidate.change_percent:+.2f}%) "
                     f"with {sig.strategy.value} strategy "
-                    f"(RSI: {indicators.rsi:.1f}, ADX: {indicators.adx:.1f})"
+                    f"(RSI: {fmt_optional(indicators.rsi, '.1f')}, "
+                    f"ADX: {fmt_optional(indicators.adx, '.1f')})"
                 )
                 dashboard.set_decision_reason(reason)
 
@@ -581,6 +586,18 @@ async def run_live_trading():
             risk_rejected = final_state.get("risk_rejected", [])
             dashboard.stats.trades_approved += len(approved)
             dashboard.stats.trades_risk_rejected += len(risk_rejected)
+
+            # Surface WHY entries were blocked so a run with signals-but-no-trades is not a
+            # mystery (#19). The most common off-hours cause is the deterministic
+            # trading-hours guard (09:15–15:15 IST) — every entry is blocked when the NSE is
+            # closed, which is intentional, not a bug.
+            for sig in risk_rejected:
+                failures = sig.get("risk_result", {}).get("failures", [])
+                reason = failures[0].get("message") if failures else "risk rules"
+                dashboard.stats.log_activity(
+                    f"RISK BLOCKED: {sig.get('signal_type')} {sig.get('symbol')} — {reason}",
+                    "WARNING",
+                )
 
             # Kill-switch gate: a daily-loss / drawdown breach must halt NEW entries
             # at the point of execution (exits in Step 0 still run, to flatten risk).

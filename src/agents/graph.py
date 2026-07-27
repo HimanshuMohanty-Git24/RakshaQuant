@@ -9,10 +9,12 @@ into the pipeline as a parallel pre-processing step before regime detection.
 """
 
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+
+from src.utils.serialization import to_native
 
 from .market_regime import market_regime_node
 from .news_analyst import NewsAnalyst
@@ -88,7 +90,10 @@ def support_agents_node(state: TradingState) -> TradingState:
         except Exception as e:
             logger.warning(f"Support agent '{name}' failed (non-fatal): {e}")
 
-    return merged_state
+    # The support agents (esp. the ML prediction agent) enrich the state with numpy scalars
+    # via pandas/scikit-learn. Coerce to native Python types before the state is checkpointed
+    # by MemorySaver — a stray numpy.float64 at the msgpack boundary crashes the cycle (#18).
+    return cast(TradingState, to_native(merged_state))
 
 
 def should_continue_after_regime(state: TradingState) -> Literal["strategy_selection", "end"]:
@@ -234,14 +239,20 @@ async def run_trading_cycle(
         Final trading state with decisions
     """
 
-    # Create initial state with inputs
+    # Create initial state with inputs. Coerce every input to native Python types: quotes,
+    # indicators and P&L-derived stats can carry numpy scalars, which crash the msgpack
+    # checkpoint boundary (see to_native / #18).
     state = create_initial_state()
-    state["market_data"] = market_data
-    state["indicators"] = indicators
-    state["signals"] = [s.to_dict() if hasattr(s, "to_dict") else s for s in signals]
-    state["memory_lessons"] = memory_lessons or []
-    state["portfolio"] = portfolio or {"capital": 1000000, "positions": []}
-    state["daily_stats"] = daily_stats or {"trades_count": 0, "profit_loss": 0, "max_drawdown": 0}
+    state["market_data"] = to_native(market_data)
+    state["indicators"] = to_native(indicators)
+    state["signals"] = to_native(
+        [s.to_dict() if hasattr(s, "to_dict") else s for s in signals]
+    )
+    state["memory_lessons"] = to_native(memory_lessons or [])
+    state["portfolio"] = to_native(portfolio or {"capital": 1000000, "positions": []})
+    state["daily_stats"] = to_native(
+        daily_stats or {"trades_count": 0, "profit_loss": 0, "max_drawdown": 0}
+    )
 
     # Configure for tracing
     config = {
