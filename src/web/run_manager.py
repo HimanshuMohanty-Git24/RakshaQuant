@@ -121,10 +121,15 @@ class RunManager:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _read_only() -> bool:
+        """Monitor-only deployment: run-control (start AND stop) is disabled from the UI."""
+        return os.getenv("RAKSHAQUANT_WEB_READONLY", "").lower() in ("1", "true", "yes")
+
     async def start(self, *, demo: bool = False, confirm_live: bool = False) -> dict[str, Any]:
         if self.is_running:
             raise RunControlError("A run is already active.")
-        if os.getenv("RAKSHAQUANT_WEB_READONLY", "").lower() in ("1", "true", "yes"):
+        if self._read_only():
             raise RunControlError("Run-control is disabled (RAKSHAQUANT_WEB_READONLY set).")
 
         settings = get_settings()
@@ -149,6 +154,10 @@ class RunManager:
         return {"running": True, "demo": demo, "env": env_badge(effective)}
 
     async def stop(self) -> dict[str, Any]:
+        # Read-only deployments disable run-control entirely — stopping a run is a control
+        # action too, so the browser cannot issue it (the operator stops the server process).
+        if self._read_only():
+            raise RunControlError("Run-control is disabled (RAKSHAQUANT_WEB_READONLY set).")
         if not self.is_running or self._task is None:
             return {"running": False}
         if self._stop_event is not None:

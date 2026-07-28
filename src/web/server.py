@@ -123,7 +123,10 @@ def create_app(*, manager: RunManager | None = None, dev: bool = False) -> FastA
 
     @app.post("/api/run/stop")
     async def run_stop() -> JSONResponse:
-        return JSONResponse(await mgr().stop())
+        try:
+            return JSONResponse(await mgr().stop())
+        except RunControlError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:

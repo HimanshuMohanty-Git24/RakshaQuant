@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -27,6 +28,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.dashboard.cli import TradingStats
 
 logger = logging.getLogger(__name__)
+
+# Strips rich console markup (e.g. "[bold green]", "[/]", "[dim]") from banner strings so it
+# never reaches the browser feed as raw text. Matches an opening/closing tag or a bare "[/]".
+_RICH_MARKUP = re.compile(r"\[/?[a-zA-Z#][^\]]*\]|\[/\]")
 
 
 @runtime_checkable
@@ -167,9 +172,10 @@ class StreamSessionView(SessionView):
         await asyncio.sleep(max(0, int(seconds)))
 
     def note(self, message: str) -> None:
-        # Surface banner lines in the live activity feed rather than a console.
+        # Surface banner lines in the live activity feed. Strip rich console markup first so
+        # tags like "[bold green]...[/]" don't render as raw text in the browser.
         try:
-            self.stats.log_activity(message, "INFO")
+            self.stats.log_activity(_RICH_MARKUP.sub("", message).strip(), "INFO")
         except Exception:  # pragma: no cover - defensive
             pass
 

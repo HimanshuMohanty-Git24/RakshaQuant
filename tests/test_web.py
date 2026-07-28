@@ -16,8 +16,23 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from src.dashboard.cli import TradingStats  # noqa: E402
 from src.live.recorder import CycleRecorder, env_badge, snapshot_from_stats  # noqa: E402
+from src.live.views import StreamSessionView  # noqa: E402
 from src.web.run_manager import RunControlError, RunManager, resolve_effective_mode  # noqa: E402
 from src.web.server import create_app  # noqa: E402
+
+
+class _CollectSink:
+    """Minimal SnapshotSink for exercising StreamSessionView without a server."""
+
+    def __init__(self) -> None:
+        self.snapshots: list[dict] = []
+        self.cycles: list[dict] = []
+
+    def set_snapshot(self, snapshot: dict) -> None:
+        self.snapshots.append(snapshot)
+
+    def add_cycle(self, cycle: dict) -> None:
+        self.cycles.append(cycle)
 
 # ── Serialisation contract ──────────────────────────────────────────────────────
 
@@ -103,6 +118,24 @@ async def test_run_manager_readonly_guard(monkeypatch):
         await RunManager().start(demo=True)
 
 
+async def test_run_manager_readonly_blocks_stop(monkeypatch):
+    # Read-only disables run-control ENTIRELY — stopping is a control action too.
+    monkeypatch.setenv("RAKSHAQUANT_WEB_READONLY", "1")
+    with pytest.raises(RunControlError):
+        await RunManager().stop()
+
+
+def test_stream_view_note_strips_rich_markup():
+    view = StreamSessionView(TradingStats(), _CollectSink(), effective_mode="local_paper")
+    view.note("[bold green]RakshaQuant Live Trading System Starting...[/]")
+    view.note("[dim]Mode: SIMULATED | Press Ctrl+C to stop[/]")
+    messages = [e["message"] for e in view.stats.activity_log]
+    assert "RakshaQuant Live Trading System Starting..." in messages
+    assert "Mode: SIMULATED | Press Ctrl+C to stop" in messages
+    # No leftover markup brackets reached the feed.
+    assert not any("[" in m or "]" in m for m in messages)
+
+
 async def test_run_manager_subscribe_sends_init_frame():
     m = RunManager()
     gen = m.subscribe()
@@ -138,3 +171,12 @@ def test_websocket_init_contract():
         assert msg["type"] == "init"
         assert msg["running"] is False
         assert msg["snapshot"] is None
+
+
+def test_run_stop_readonly_returns_409(monkeypatch):
+    # The stop endpoint must translate RunControlError to 409, not surface a 500.
+    monkeypatch.setenv("RAKSHAQUANT_WEB_READONLY", "1")
+    client = TestClient(create_app())
+    res = client.post("/api/run/stop")
+    assert res.status_code == 409
+    assert "error" in res.json()
