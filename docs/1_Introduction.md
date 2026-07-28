@@ -68,6 +68,11 @@ graph LR
         Rich["Rich (CLI Dashboard)"]
     end
 
+    subgraph "Web UI (optional)"
+        FA["FastAPI + Uvicorn (WebSocket)"]
+        RV["React + Vite + TypeScript + Tailwind"]
+    end
+
     LG --> LC --> LGroq --> Groq
     Groq --> Llama70B
     Groq --> Llama8B
@@ -216,8 +221,15 @@ TradingAgent/
 │   │   └── scheduler.py          # Memory maintenance scheduler
 │   ├── config/                   # Configuration management
 │   │   └── settings.py           # Pydantic settings (env vars)
+│   ├── live/                     # Shared live-session driver (one loop, two front ends)
+│   │   ├── session.py            # run_trading_session — the single trading loop
+│   │   ├── views.py              # SessionView: RichSessionView (CLI) / StreamSessionView (web)
+│   │   └── recorder.py           # TradingStats → JSON snapshot + per-cycle trace serialisation
 │   ├── dashboard/                # Terminal UI
-│   │   └── cli.py                # Rich-powered CLI dashboard
+│   │   └── cli.py                # Rich-powered CLI dashboard (rendered by RichSessionView)
+│   ├── web/                      # Web console backend (optional `web` extra)
+│   │   ├── server.py             # FastAPI app: REST + WebSocket + serves the built SPA
+│   │   └── run_manager.py        # Runs the session as a background task; WS fan-out; run-control
 │   ├── notifications/            # Alert system
 │   │   └── telegram.py           # Telegram bot notifications
 │   ├── observability/            # Tracing & monitoring
@@ -231,15 +243,24 @@ TradingAgent/
 │       ├── events.py             # Event bus system
 │       └── rate_limiter.py       # API rate limiting
 ├── scripts/                      # Entry point scripts
-│   ├── run_live_trading.py       # Full live trading runner
+│   ├── run_live_trading.py       # MAIN entry point — `--mode {cli,web}` (cli default)
 │   ├── run_trading.py            # Basic trading runner
 │   ├── run_with_dashboard.py     # Trading with CLI dashboard
 │   ├── check_config.py           # Configuration validator
 │   ├── diagnose_risk.py          # Risk diagnostics
 │   └── test_dhan_connection.py   # DhanHQ connection tester
+├── frontend/                     # Web console SPA (React + Vite + TS + Tailwind)
+│   ├── src/                      # Components, hooks, design tokens ("Neo-Terminal" UI)
+│   └── dist/                     # Built assets, served by src/web (git-ignored; `npm run build`)
 ├── tests/                        # Test suite
 ├── docs/                         # Documentation (you are here)
 ├── AgentContext/                  # Agent context files
 ├── pyproject.toml                # Project metadata & dependencies
 └── .env                          # Environment variables
 ```
+
+> **Two ways to run it.** `scripts/run_live_trading.py` drives the **one** trading loop
+> (`src/live/session.py`) through either front end, selected with `--mode`: `cli` (default —
+> the `rich` terminal dashboard, unchanged) or `web` (a FastAPI + WebSocket server that streams
+> the same state to the browser SPA in `frontend/`). There is no second trading loop — both
+> modes share the same engine, so they never diverge. The web layer is an optional `web` extra.

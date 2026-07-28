@@ -11,6 +11,12 @@
 
 The TradingAgent follows a **decoupled, layered micro-architecture** pattern orchestrating AI via LangGraph state machines. The system is organized into **six primary layers**, each with distinct responsibilities and well-defined interfaces.
 
+> **Presentation seam.** The live loop (`src/live/session.py`) sits above these layers and renders
+> through a `SessionView` (`src/live/views.py`) — a Strategy-pattern seam that lets one loop drive
+> either the **CLI** (`RichSessionView`) or the **web console** (`StreamSessionView` + `src/web`
+> FastAPI/WebSocket), selected via `--mode {cli,web}`. Both front ends read the *same* state, so
+> they can't diverge. See "Dashboard / View Architecture" in `4_System_Design.md`.
+
 ```mermaid
 graph TB
     subgraph Layer1["Layer 1: Data Ingestion & Market Layer"]
@@ -71,7 +77,8 @@ graph TB
         direction LR
         LS["LangSmith Tracing<br/><code>tracing.py</code>"]
         TG["Telegram Alerts<br/><code>telegram.py</code>"]
-        DASH["CLI Dashboard<br/><code>cli.py</code>"]
+        DASH["CLI Dashboard<br/><code>cli.py</code> (RichSessionView)"]
+        WEB["Web Console<br/><code>web/server.py</code> (StreamSessionView)"]
         HE["Health API<br/><code>health.py</code>"]
         CB["Circuit Breaker"]
         RL["Rate Limiter"]
@@ -327,6 +334,7 @@ flowchart LR
         LS["LangSmith<br/>Full decision tracing<br/>Input → LLM → Output"]
         TG["Telegram Bot<br/>Real-time alerts<br/>Trade notifications"]
         CLI["Rich Dashboard<br/>Live terminal UI<br/>Portfolio status"]
+        WEBUI["Web Console<br/>Browser UI (WebSocket)<br/>Trace explorer + KPIs"]
         HA["Health API<br/>System health checks<br/>Component status"]
     end
 
@@ -424,6 +432,12 @@ graph TB
         PW["paper_wallet.json<br/>(Persistent state)"]
     end
 
+    subgraph "Web Console (optional `web` extra)"
+        UVI["FastAPI + Uvicorn<br/>web/server.py (WebSocket)"]
+        SPA["Browser SPA<br/>frontend/dist (React/Vite)"]
+        BROWSER["Browser client"]
+    end
+
     subgraph "External Services (Free Tier)"
         GROQ["Groq Cloud<br/>(LLM API)"]
         YFN["Yahoo Finance<br/>(Market Data)"]
@@ -448,4 +462,13 @@ graph TB
     PY --> TGBOT
     ENV --> PY
     PW --> PY
+
+    PY -. "--mode web" .-> UVI
+    UVI --> SPA
+    BROWSER -->|"HTTP + WebSocket"| UVI
 ```
+
+> **Two front ends, one process.** In `--mode web`, `run_trading_session` runs *inside* the
+> FastAPI/uvicorn process and streams state to the browser over a WebSocket; `--mode cli` (default)
+> runs the same loop against the Rich terminal renderer with no web server. The web layer is an
+> optional `web` extra, so a CLI-only install never pulls in FastAPI/uvicorn.

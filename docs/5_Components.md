@@ -23,8 +23,28 @@ This section details every code component.
 - **`config/`**
   - **`settings.py`**: Uses Pydantic to read and validate ENV variables (DB credentials, API keys, Model preferences).
 
+- **`live/`** — the shared live-session driver (one trading loop behind two front ends):
+  - **`session.py`**: `run_trading_session(view, ...)` — the single trading loop, extracted
+    verbatim from `scripts/run_live_trading.py` and parameterised by a `SessionView`. There is
+    no second, divergent loop for the browser.
+  - **`views.py`**: the `SessionView` seam — `RichSessionView` drives the `rich` CLI dashboard
+    (unchanged legacy behaviour); `StreamSessionView` serialises the same state and streams it
+    (non-blocking) to the web console.
+  - **`recorder.py`**: `snapshot_from_stats` (shared `TradingStats` → JSON) and `CycleRecorder`
+    (reconstructs each cycle as an observability trace whose spans are the 5 pipeline nodes;
+    per-span tokens/cost from the FinOps `by_agent` delta, so the deterministic risk span shows
+    zero tokens).
+
 - **`dashboard/`**
-  - **`cli.py`**: Utilizes the `rich` library to render a terminal based dashboard providing live updates of the Agent Graph processing.
+  - **`cli.py`**: Utilizes the `rich` library to render a terminal based dashboard providing live updates of the Agent Graph processing. Rendered by `live/views.py:RichSessionView`.
+
+- **`web/`** — web console backend (optional `web` extra: FastAPI + uvicorn; only imported in
+  `--mode web`):
+  - **`server.py`**: FastAPI app — REST (`/api/state|cycles|config`), a WebSocket (`/ws`), guarded
+    run-control (`/api/run/start|stop`), and serves the built SPA from `frontend/dist`.
+  - **`run_manager.py`**: owns the session as a background task, fans snapshots/cycles out to WS
+    subscribers, and enforces run-control safety (LIVE needs explicit confirmation;
+    `RAKSHAQUANT_WEB_READONLY=1` disables run-control). Includes a demo generator for off-market use.
 
 - **`execution/`**
   - **`service.py`**: `ExecutionService` — the single mode-switched entry point for order
@@ -71,6 +91,18 @@ This section details every code component.
 ### Scripts (`scripts/`)
 These act as the `main` entrypoints for users.
 - `setup.py`: **Guided one-command setup** — creates `.env`, checks keys, prints a readiness checklist.
-- `run_live_trading.py`: The main app — connects live/simulated data to the compiled LangGraph
-  and drives the `rich` dashboard, execution, exits, journaling, FinOps and the learning loop.
+- `run_live_trading.py`: The main app — a thin **`--mode {cli,web}`** dispatcher over the shared
+  `src/live/session.py` loop (connects live/simulated data to the compiled LangGraph and drives
+  execution, exits, journaling, FinOps and the learning loop). `--mode cli` (default) renders the
+  `rich` dashboard; `--mode web` launches the FastAPI console (add `--demo` for synthetic data,
+  no keys). See `src/web` and `frontend/`.
 - `diagnose_risk.py`, `check_config.py`, `test_dhan_connection.py`: Utility scripts validating components without firing LLMs.
+
+### Web frontend (`frontend/`)
+A React + Vite + TypeScript + Tailwind single-page app — the **"Neo-Terminal Trading Console"**
+(dark, monospace-first, WCAG-AA, keyboard-first). It subscribes to the `/ws` WebSocket and renders
+the command/status bar, run-selector (cycles = traces), positions & P&L, the trade-cycle **trace
+explorer** (agent spans with inline tokens·latency·cost), a streaming live agent feed, KPI meters
+with sparklines, and a span detail drawer. Design tokens are centralised (CSS variables →
+`tailwind.config.ts`). Build with `npm install && npm run build` (emits `frontend/dist`, which
+`src/web` serves). See `frontend/README.md`.
