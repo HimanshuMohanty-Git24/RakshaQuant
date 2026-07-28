@@ -446,8 +446,13 @@ TELEGRAM_CHAT_ID=your_chat_id
 # Validate config (guided setup also does this)
 uv run python scripts/setup.py        # or: scripts/check_config.py
 
-# Launch the live/paper dashboard (main entry point)
+# Launch the main entry point in the CLI (rich terminal dashboard) — the default
 uv run python scripts/run_live_trading.py
+uv run python scripts/run_live_trading.py --mode cli   # (explicit)
+
+# ...or launch the same system as a web console (browser UI) — see "Web mode" below
+uv run python scripts/run_live_trading.py --mode web         # http://127.0.0.1:8000
+uv run python scripts/run_live_trading.py --mode web --demo  # synthetic data, no keys needed
 
 # Run a backtest
 uv run python src/backtesting/engine.py
@@ -455,6 +460,31 @@ uv run python src/backtesting/engine.py
 # Validate the edge OUT-OF-SAMPLE before risking capital (walk-forward, net of real costs)
 uv run python scripts/validate_strategy.py
 ```
+
+### 🖥️ Two ways to run it: CLI or Web
+
+RakshaQuant runs the **one** trading loop (`src/live/session.py`) behind either front end —
+pick with `--mode`; the CLI stays the default and is unchanged. The web layer is a thin
+presentation/control shell (FastAPI + WebSocket) that streams the *same* dashboard state the
+CLI builds, so the two never diverge.
+
+| Mode | Command | What you get |
+| ---- | ------- | ------------ |
+| **CLI** (default) | `run_live_trading.py` | The `rich` terminal dashboard |
+| **Web** | `run_live_trading.py --mode web` | A browser "Neo-Terminal" console — live positions/P&L, a trade-cycle **trace explorer** (agent spans with tokens·latency·cost), a streaming agent feed, and KPI meters |
+
+**Web mode setup** (optional `web` extra + a one-time frontend build):
+
+```bash
+uv sync --extra web            # installs FastAPI + uvicorn
+cd frontend && npm install && npm run build && cd ..   # builds the SPA into frontend/dist
+uv run python scripts/run_live_trading.py --mode web   # then open http://127.0.0.1:8000
+```
+
+Try it with **no market data or API keys** using `--demo`. Run-control from the browser is
+guarded: a run resolving to the **LIVE** environment needs an explicit confirmation, and setting
+`RAKSHAQUANT_WEB_READONLY=1` disables run-control entirely (monitor-only). See
+[`frontend/README.md`](frontend/README.md) for the UI, and [`src/web`](src/web) for the server.
 
 ### ⚠️ Validate before you trade real money
 

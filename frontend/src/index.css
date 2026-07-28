@@ -1,0 +1,107 @@
+/* Self-hosted fonts (no external CDN — matches the offline / free-tier ethos). */
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — "Neo-Terminal Trading Console".
+ * Dark canvas, hairline borders, monospace-first, amber as the terminal accent, and
+ * semantic finance colors (green=long/profit, red=short/loss) always paired with a sign.
+ * Every value passes WCAG 2.2 AA at the size it is used (see components).
+ */
+:root {
+  --canvas: #0b0c0e; /* near-black base */
+  --panel: #131519; /* elevated panels */
+  --elevated: #191c21; /* hover / nested rows */
+  --line: #23262c; /* hairline borders */
+  --ink: #e7e9ec; /* primary text (15:1 on canvas) */
+  --muted: #8a9099; /* secondary text (5.9:1 on canvas — AA) */
+  --amber: #f5a623; /* terminal accent: active/headers/focus/running */
+  --up: #2ecc71; /* long / profit */
+  --down: #e5484d; /* short / loss */
+  --cost: #5b8def; /* token / spend meters (distinct from P&L) */
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  font-feature-settings: "tnum" 1, "cv01" 1; /* tabular figures everywhere */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tabular, lining numerals wherever numbers appear. */
+.tnum {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Visible keyboard focus (required). */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Thin, unobtrusive scrollbars that fit the terminal aesthetic. */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b2f36;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3f47;
+}
+
+/* Respect reduced-motion: kill the running-dot pulse and any transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Loading skeleton shimmer. */
+@keyframes skeleton {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, #16191e 25%, #1e2228 37%, #16191e 63%);
+  background-size: 200% 100%;
+  animation: skeleton 1.4s ease infinite;
+}
