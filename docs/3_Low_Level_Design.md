@@ -1,6 +1,12 @@
 # 3. Low-Level Design (LLD)
 
 > **📌 v2.1 hardening note.** Newer modules not yet detailed below: `src/finops/` (cost tracking + budgets + alerts), `src/profit/goal_engine.py` (risk-bounded profit plan), `src/execution/service.py` (`ExecutionService`: idempotency + shadow mode), `src/execution/live_executor.py` (live fill-lifecycle + reconciliation), `src/execution/costs.py` (`CostModel`), `src/memory/feedback.py` (closes the learning loop), and `src/utils/market_time.py` (IST helpers). See README "What's New (v2.1)" + `CLAUDE.md`.
+>
+> **📌 Web-UI note.** The live loop was extracted from `scripts/run_live_trading.py` into
+> `src/live/session.py` (`run_trading_session`), parameterised by a `SessionView`
+> (`src/live/views.py`); `src/live/recorder.py` serialises state/traces; `src/web/` is the
+> FastAPI + WebSocket backend (optional `web` extra). See §9 "Live Session & Front-End Views" and
+> `4_System_Design.md`.
 
 
 This document provides a deep-dive into the code-level architecture, class relationships, interface contracts, data structures, and module interactions of the TradingAgent system.
@@ -17,6 +23,7 @@ This document provides a deep-dive into the code-level architecture, class relat
 6. [Execution Layer](#execution-layer)
 7. [Memory & Learning Pipeline](#memory--learning-pipeline)
 8. [Infrastructure Utilities](#infrastructure-utilities)
+9. [Live Session & Front-End Views](#live-session--front-end-views)
 
 ---
 
@@ -1208,3 +1215,64 @@ classDiagram
     TradingAgentError <|-- InsufficientFundsError
     TradingAgentError <|-- RiskViolationError
 ```
+
+---
+
+## Live Session & Front-End Views
+
+The outer live loop — previously inline in `scripts/run_live_trading.py` — now lives once in
+`src/live/session.py` as `run_trading_session(view, *, stop_event=None, max_cycles=None)`. It owns
+setup (graph, market data, execution service, exit manager, drawdown tracker, memory, FinOps) and
+the per-cycle sequence (exits → refresh → candidates → indicators → signals → agent pipeline →
+kill-switch gate → sized execution → P&L/FinOps/goal update). It renders **only** through a
+`SessionView`, so the CLI and web front ends share one trading path (no divergence).
+
+```mermaid
+classDiagram
+    class SessionView {
+        <<interface>>
+        +TradingStats stats
+        +CycleRecorder recorder
+        +open() async
+        +close() async
+        +render() async
+        +wait(seconds) async
+        +emit_cycle(trace) async
+        +set_effective_mode(mode)
+        +note(message)
+    }
+    class RichSessionView {
+        +rich.Live live
+        # blocking per-second redraws (legacy CLI behaviour)
+    }
+    class StreamSessionView {
+        +SnapshotSink sink
+        # non-blocking waits; serialises + streams JSON
+    }
+    class CycleRecorder {
+        +begin(by_agent_before)
+        +finish(...) CycleTrace
+    }
+    SessionView <|-- RichSessionView
+    SessionView <|-- StreamSessionView
+    StreamSessionView --> CycleRecorder : records
+    StreamSessionView --> SnapshotSink : set_snapshot / add_cycle
+```
+
+**Key contracts**
+
+| Symbol | Signature / role |
+|---|---|
+| `run_trading_session` | `async (view: SessionView, *, stop_event, max_cycles) -> None` — the single loop; `stop_event` lets the web server stop a run cleanly; `max_cycles` bounds it for tests. |
+| `SessionView.render()` | Push the current `TradingStats` to the output (CLI: `live.update`; web: serialise + broadcast). |
+| `SessionView.wait(n)` | Keep-alive wait — CLI redraws each second (blocking); web `await asyncio.sleep(n)` (non-blocking). |
+| `snapshot_from_stats` | `recorder.py` — `TradingStats` → JSON snapshot (the web contract). |
+| `CycleRecorder.finish` | Builds a `CycleTrace` of 5 spans (pipeline nodes); per-span tokens/cost from the FinOps `by_agent` delta; deterministic `risk_compliance` span → zero tokens. |
+
+**Web backend (`src/web/`, optional `web` extra).** `run_manager.py:RunManager` implements the
+`SnapshotSink` (caches the latest snapshot + recent cycles; fans updates out to WebSocket
+subscribers via per-client `asyncio.Queue`s), owns the session as a background task, and gates
+run-control (LIVE requires explicit confirmation; `RAKSHAQUANT_WEB_READONLY=1` disables it).
+`server.py:create_app()` exposes `/api/state|cycles|config`, `/ws`, `/api/run/start|stop`, and
+serves the built SPA from `frontend/dist`. `scripts/run_live_trading.py` is now a thin
+`--mode {cli,web}` dispatcher over `run_trading_session`.

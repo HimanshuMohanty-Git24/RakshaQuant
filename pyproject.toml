@@ -62,6 +62,13 @@ dev = [
     "mypy>=1.10.0",
 ]
 
+# Web console (browser front end). Optional so the CLI-only install stays lean:
+#   uv sync --extra web   (or  pip install '.[web]')
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -105,3 +112,13 @@ module = [
     "pandas.*", "requests.*", "langchain_groq.*",
 ]
 ignore_missing_imports = true
+
+# src.live.session is a faithful extraction of the former scripts/run_live_trading.py, which
+# lived outside the mypy path (scripts/ is not type-checked). Under strict mode it surfaces the
+# loop's pre-existing dynamic interactions with the (as-yet unannotated) engine — TradingSignal
+# vs dict, TypedDict-vs-dict, untyped-call into cli/market/paper modules. Annotating the engine
+# to make it strict-clean is a separate effort; the *new* web/live abstractions (recorder,
+# views, run_manager, server) are strict-clean. Reduce this exemption when the engine is typed.
+[[tool.mypy.overrides]]
+module = ["src.live.session"]
+ignore_errors = true

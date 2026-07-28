@@ -1,915 +1,115 @@
 """
-RakshaQuant Live Trading Dashboard
+RakshaQuant — main entry point.
 
-Enhanced with:
-- Real historical indicator calculation (replaces fabricated indicators)
-- Real trade execution via paper engine (replaces random P&L)
-- Dynamic exit management (trailing stops, time exits, partial profits)
-- Performance tracking for strategy learning
+Runs the one shared trading loop (``src.live.session.run_trading_session``) in one of two
+front ends, selected with ``--mode``:
+
+* ``cli``  (default) — the ``rich`` terminal dashboard. Unchanged from before.
+* ``web``           — a FastAPI + WebSocket server driving the browser console.
+
+Both modes drive identical trading logic; the web layer is a presentation/control shell.
+
+Examples::
+
+    uv run python scripts/run_live_trading.py                 # CLI (default)
+    uv run python scripts/run_live_trading.py --mode web       # web console
+    uv run python scripts/run_live_trading.py --mode web --demo # web console, synthetic data
 """
 
+import argparse
 import asyncio
 import logging
 import sys
-import time
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
-from rich.live import Live
 
-from src.agents.graph import create_trading_graph, run_trading_cycle
-from src.agents.risk_compliance import check_kill_switch
-from src.config import get_settings
-from src.dashboard.cli import TradingDashboard, create_dashboard_layout
-from src.execution.exit_manager import ExitManager
-from src.execution.journal import TradeJournal
-from src.execution.paper_engine import LocalPaperEngine
-from src.execution.service import ExecutionService, IdempotencyStore
-from src.finops import get_alert_manager, get_cost_tracker
-from src.market.history_manager import HistoryManager
-from src.market.indicators import Timeframe, get_indicator_cache
-from src.market.manager import MarketDataManager, is_market_open
-from src.market.signals import SignalEngine
-from src.market.sizing import calculate_position_size
-from src.market.stock_discovery import StockDiscovery
-from src.memory import feedback
-from src.memory.classifier import MistakeClassifier
-from src.memory.database import AgentMemoryDB
-from src.memory.injection import MemoryInjector
-from src.memory.performance_tracker import get_performance_tracker
-from src.notifications.telegram import get_notifier
-from src.observability.tracing import setup_tracing
-from src.profit import ProfitGoalEngine
-from src.risk.guards import DrawdownTracker, is_circuit_locked
-from src.utils.formatting import fmt_optional
+from src.dashboard.cli import TradingStats
+from src.live.session import run_trading_session
+from src.live.views import RichSessionView
 
 console = Console()
 logger = logging.getLogger(__name__)
 
-# Safety cap on the kill-switch flatten loop: each pass closes at least the FIFO-first
-# position of every open symbol, so this far exceeds the passes any realistic book needs.
-MAX_FLATTEN_PASSES = 20
+
+async def _run_cli() -> None:
+    """CLI mode: drive the shared session through the rich terminal dashboard."""
+    stats = TradingStats()
+    view = RichSessionView(stats)
+    await run_trading_session(view)
 
 
-def calculate_real_indicators(history_manager: HistoryManager, symbol: str):
-    """
-    Calculate REAL indicators from historical data.
-
-    Computes on settled bars only (dropping the still-forming current-day bar) when
-    ``signals_exclude_forming_bar`` is set, to avoid intra-bar repainting / look-ahead,
-    and memoizes via the shared IndicatorCache so unchanged data is not recomputed
-    every cycle.
-    """
-    settings = get_settings()
-    include_forming = not settings.signals_exclude_forming_bar
-    df = history_manager.get_history(symbol, bars=200, include_forming=include_forming)
-    if df is None or len(df) < 26:  # Need at least MACD slow period
-        return None
-
+def _run_web(args: argparse.Namespace) -> None:
+    """Web mode: launch the FastAPI console (requires the ``web`` extra)."""
     try:
-        return get_indicator_cache().get_or_compute(df, symbol, timeframe=Timeframe.D1)
-    except Exception as e:
-        logger.warning(f"Indicator calc failed for {symbol}: {e}")
-        return None
-
-
-async def run_live_trading():
-    """Run trading with live/simulated market data and real execution."""
-
-    settings = get_settings()
-
-    # Initialize dashboard
-    data_source = "live" if is_market_open() else "simulated"
-    dashboard = TradingDashboard()
-    dashboard.start(
-        balance=settings.paper_wallet_balance, mode=settings.trading_mode, data_source=data_source
-    )
-
-    # Setup tracing
-    tracing_enabled = setup_tracing()
-    dashboard.stats.log_activity(
-        f"LangSmith: {'enabled' if tracing_enabled else 'disabled'}", "INFO"
-    )
-
-    # Create trading graph (now includes support agents)
-    graph = create_trading_graph(include_support_agents=settings.enable_news_analysis)
-    dashboard.stats.log_activity("Trading graph compiled (with support agents)", "SUCCESS")
-
-    # Initialize memory & performance tracker
-    memory_db = AgentMemoryDB()
-    perf_tracker = get_performance_tracker()
-    dashboard.stats.log_activity("Memory database + performance tracker ready", "INFO")
-
-    # Learning feedback loop: classify closed trades into lessons and measure whether the
-    # lessons that were injected actually helped. Optional (adds an LLM call per loss).
-    mistake_classifier = MistakeClassifier() if settings.enable_learning else None
-    memory_injector = MemoryInjector(memory_db=memory_db) if settings.enable_learning else None
-    # Lesson IDs that were in the agents' context when each position was opened.
-    active_lessons: dict[str, list[str]] = {}
-    dashboard.stats.log_activity(
-        f"Learning loop: {'enabled' if settings.enable_learning else 'disabled'}", "INFO"
-    )
-
-    # Initialize paper trading engine
-    paper_engine = LocalPaperEngine(initial_balance=settings.paper_wallet_balance)
-    dashboard.stats.log_activity(
-        f"Paper engine: Rs. {paper_engine.get_balance():,.0f} balance", "INFO"
-    )
-
-    # Durable trade journal (records every entry/exit). Persists to DATABASE_URL; falls back
-    # to a non-persistent in-memory DB (logged loudly) if that is unreachable.
-    journal = TradeJournal()
-    open_trades: dict[str, str] = {}  # execution order_id -> journal trade_id
-    dashboard.stats.log_activity(
-        f"Trade journal: {'persistent' if journal.is_persistent else 'in-memory (NOT durable)'}",
-        "INFO" if journal.is_persistent else "WARNING",
-    )
-
-    # Unified execution service: one mode-switched path for order submission with
-    # idempotency (no double-submit on retry/restart) and shadow-mode safety.
-    execution_service = ExecutionService.from_settings(
-        engine=paper_engine,
-        idempotency=IdempotencyStore(Path("paper_idempotency.json")),
-    )
-    effective = execution_service.effective_mode.value
-    dashboard.stats.log_activity(
-        f"Execution mode: {effective}"
-        + (" (SHADOW — mirrors live, sends no real orders)" if effective == "shadow" else ""),
-        "WARNING" if effective not in ("local_paper", "shadow") else "INFO",
-    )
-
-    # Live modes only: attach the broker executor and reconcile against the broker at
-    # startup (broker = source of truth). Dormant by default — effective mode is shadow
-    # unless allow_live_orders=True and Dhan creds are present.
-    if effective in ("live", "dhan_paper"):
-        try:
-            from src.execution.adapter import ExecutionAdapter
-            from src.execution.live_executor import LiveBrokerExecutor, reconcile_positions
-
-            broker_adapter = ExecutionAdapter()
-            execution_service.broker_executor = LiveBrokerExecutor(adapter=broker_adapter)
-            broker_positions = await broker_adapter.get_positions()
-            report = reconcile_positions(paper_engine.get_positions(), broker_positions)
-            dashboard.stats.log_activity(
-                f"Broker reconciliation: {report.summary()}",
-                "INFO" if report.in_sync else "WARNING",
-            )
-            if not report.in_sync:
-                await get_alert_manager().alert(
-                    "position_drift",
-                    f"Startup reconciliation — {report.summary()}",
-                    level="WARNING",
-                )
-        except Exception as e:
-            logger.warning("Live broker setup/reconciliation failed: %s", e)
-
-    # Initialize exit manager
-    exit_manager = ExitManager(
-        trailing_atr_multiplier=1.5,
-        breakeven_r_threshold=1.0,
-        max_hold_minutes=240,
-        partial_profit_r=1.0,
-        partial_exit_pct=0.5,
-        state_file=Path("exit_manager_state.json"),
-    )
-    dashboard.stats.log_activity("Exit manager initialized", "INFO")
-
-    # Profit-target goal engine: derive a risk-bounded plan from the configured target.
-    # Advisory only — it never changes position sizing or relaxes risk limits.
-    goal_engine = ProfitGoalEngine()
-    goal_plan = goal_engine.build_plan(paper_engine.get_balance())
-    dashboard.stats.goal_enabled = goal_plan.enabled
-    dashboard.stats.goal_feasible = goal_plan.feasible
-    dashboard.stats.goal_target_amount = goal_plan.monthly_target_amount
-    if goal_plan.enabled:
-        wr = goal_plan.required_win_rate
-        wr_str = "n/a" if wr == float("inf") else f"{wr:.0%}"
-        dashboard.stats.log_activity(
-            f"Profit goal: Rs.{goal_plan.monthly_target_amount:,.0f}/mo "
-            f"(needs ~{wr_str} win rate @ {goal_plan.expected_trades_per_day}/day; "
-            f"{'feasible' if goal_plan.feasible else 'NOT feasible within risk'})",
-            "INFO" if goal_plan.feasible else "WARNING",
+        from src.web.server import run_web
+    except ImportError as exc:  # pragma: no cover - missing optional deps
+        console.print(
+            "[red]Web mode requires the 'web' extra.[/] Install it with:\n"
+            "  [cyan]uv sync --extra web[/]  (or  pip install '.[web]')\n"
+            f"[dim]{exc}[/]"
         )
-        for warning in goal_plan.warnings:
-            dashboard.stats.log_activity(f"Goal: {warning}", "WARNING")
-    else:
-        dashboard.stats.log_activity("Profit goal: disabled (no target configured)", "INFO")
+        sys.exit(1)
 
-    # Intraday drawdown tracker (includes unrealized P&L) — feeds the kill switch's drawdown
-    # limb, which was previously dead because the loop fed a hardcoded max_drawdown of 0.
-    # Seed from the engine's actual equity (it may have RESTORED a persisted wallet/positions
-    # on startup), not the static configured balance — otherwise peak/current are wrong on a
-    # restart and the drawdown halt mis-fires (or never fires).
-    starting_equity = paper_engine.get_total_value()
-    drawdown_tracker = DrawdownTracker(
-        peak_equity=starting_equity,
-        current_equity=starting_equity,
+    run_web(
+        host=args.host,
+        port=args.port,
+        demo=args.demo,
+        dev=args.dev,
+        auto_start=not args.no_auto_start,
     )
 
-    # Signal engine
-    signal_engine = SignalEngine()
 
-    # Dynamic Stock Discovery
-    dashboard.stats.log_activity("Running dynamic stock discovery...", "INFO")
-    discovery = StockDiscovery(max_stocks=15)
-    trading_symbols = await discovery.discover()
-
-    report = discovery.get_discovery_report()
-    for item in report[:5]:
-        dashboard.stats.log_activity(
-            f"Discovered: {item['symbol']} ({item['source']}: {item['reason'][:30]}...)", "INFO"
-        )
-
-    # Initialize history manager and pre-fetch data
-    dashboard.stats.log_activity("Pre-fetching historical data for real indicators...", "INFO")
-    history_manager = HistoryManager(symbols=trading_symbols, lookback_period="3mo")
-    fetch_results = history_manager.prefetch_all()
-    loaded = sum(1 for v in fetch_results.values() if v)
-    dashboard.stats.log_activity(
-        f"Historical data loaded: {loaded}/{len(trading_symbols)} symbols", "SUCCESS"
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="RakshaQuant — agentic NSE paper-trading (CLI or web)."
     )
-
-    # Market data manager
-    market_manager = MarketDataManager(symbols=trading_symbols)
-
-    console.print("\n[bold green]RakshaQuant Live Trading System Starting...[/]")
-    market_mode = "LIVE" if is_market_open() else "SIMULATED"
-    console.print(
-        f"[dim]Mode: {market_mode} | Stocks: {len(trading_symbols)} | Press Ctrl+C to stop[/]\n"
+    parser.add_argument(
+        "--mode",
+        choices=["cli", "web"],
+        default="cli",
+        help="Front end to run (default: cli).",
     )
-    time.sleep(1)
-
-    # Start market data
-    is_live = await market_manager.start()
-    dashboard.stats.data_source = market_manager.data_source
-    dashboard.stats.log_activity(
-        f"Data source: {market_manager.data_source}"
-        + ("" if is_live else " (polled/simulated — refreshed each cycle)"),
-        "SUCCESS",
+    parser.add_argument("--host", default="127.0.0.1", help="Web mode: bind host.")
+    parser.add_argument("--port", type=int, default=8000, help="Web mode: bind port.")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Web mode: run a synthetic demo session (no market data / API keys).",
     )
-
-    # Telegram startup notification (best-effort; no-op if unconfigured)
-    notifier = get_notifier()
-    if notifier.enabled:
-        try:
-            await notifier.send_startup_message()
-            dashboard.stats.log_activity("Telegram notifications active", "INFO")
-        except Exception as e:
-            logger.warning("Telegram startup notification failed: %s", e)
-
-    # screen=True uses the alternate screen buffer for a stable, full-screen render with no
-    # scroll/flicker (the previous default redrew in the scrollback and flickered).
-    with Live(
-        create_dashboard_layout(dashboard.stats),
-        console=console,
-        refresh_per_second=4,
-        screen=True,
-    ) as live:
-
-        async def _run_cycle(cycle: int) -> None:
-            """
-            Run a single trading cycle.
-
-            Raises on any unexpected failure; the caller catches it so one bad
-            cycle never tears down the whole loop. Early ``return`` is used for
-            benign "nothing to do" outcomes (no candidates / signals / history).
-            """
-            # ── Step 0: Check exits on existing positions ───────────
-            quotes = market_manager.get_all_quotes()
-            market_prices = {s: q.last_price for s, q in quotes.items()}
-
-            # Calculate ATR for exit manager
-            atr_values = {}
-            for symbol in market_prices:
-                ind = calculate_real_indicators(history_manager, symbol)
-                if ind and ind.atr:
-                    atr_values[symbol] = ind.atr
-
-            # Check all managed positions for exits
-            current_regime = (
-                dashboard.stats.current_regime if hasattr(dashboard.stats, "current_regime") else ""
-            )
-            exit_signals = exit_manager.check_exits(market_prices, current_regime, atr_values)
-
-            for pos, exit_rule in exit_signals:
-                exit_price = market_prices.get(pos.symbol, pos.entry_price)
-                # Execute exit via paper engine
-                order = paper_engine.place_order(
-                    symbol=pos.symbol,
-                    side="SELL" if pos.side == "BUY" else "BUY",
-                    quantity=int(pos.quantity * exit_rule.partial_pct),
-                    current_price=exit_price,
-                )
-                if order.status == "FILLED":
-                    pnl = (exit_price - pos.entry_price) * pos.quantity * exit_rule.partial_pct
-                    if pos.side != "BUY":
-                        pnl = -pnl
-                    dashboard.close_trade(pnl)
-                    dashboard.stats.log_activity(
-                        f"EXIT [{exit_rule.exit_type}]: {pos.symbol} @ Rs.{exit_price:,.2f} "
-                        f"P&L: Rs.{pnl:+,.2f} — {exit_rule.reason}",
-                        "TRADE",
-                    )
-                    # Record in performance tracker
-                    perf_tracker.record_trade(
-                        strategy=pos.strategy,
-                        regime=pos.regime_at_entry,
-                        pnl=pnl,
-                        pnl_pct=(pnl / (pos.entry_price * pos.quantity)) * 100,
-                        symbol=pos.symbol,
-                    )
-                    if exit_rule.partial_pct >= 1.0:
-                        exit_manager.unregister_position(pos.position_id)
-                        # ── Learning feedback (resilient; never disrupts trading) ──
-                        # Turn the closed trade into a lesson, and mark the lessons that were
-                        # active when this position was opened as successful/unsuccessful.
-                        if settings.enable_learning and mistake_classifier and memory_injector:
-                            pnl_pct = (
-                                (pnl / (pos.entry_price * pos.quantity)) * 100
-                                if pos.entry_price
-                                else 0.0
-                            )
-                            hold_minutes = int(
-                                (datetime.now() - pos.entry_time).total_seconds() / 60
-                            )
-                            outcome = feedback.build_outcome(
-                                trade_id=pos.position_id,
-                                symbol=pos.symbol,
-                                strategy=pos.strategy,
-                                regime=pos.regime_at_entry,
-                                side=pos.side,
-                                entry_price=pos.entry_price,
-                                exit_price=exit_price,
-                                stop_loss=pos.stop_loss,
-                                target_price=pos.target_price,
-                                pnl=pnl,
-                                pnl_pct=pnl_pct,
-                                mae=pos.mae,
-                                mfe=pos.mfe,
-                                hold_minutes=hold_minutes,
-                            )
-                            mistake = feedback.learn_from_outcome(
-                                memory_injector, mistake_classifier, outcome
-                            )
-                            if mistake:
-                                dashboard.stats.log_activity(
-                                    f"Lesson learned: [{mistake.severity}] {mistake.category}",
-                                    "INFO",
-                                )
-                            feedback.mark_lessons_outcome(
-                                memory_db,
-                                active_lessons.pop(pos.position_id, []),
-                                was_successful=pnl > 0,
-                            )
-
-                        # Close the trade in the durable journal with the net realized P&L.
-                        journal_trade_id = open_trades.pop(pos.position_id, None)
-                        if journal_trade_id:
-                            try:
-                                journal.close_trade(
-                                    journal_trade_id,
-                                    exit_price,
-                                    exit_rule.exit_type,
-                                    mae=pos.mae,
-                                    mfe=pos.mfe,
-                                    pnl=pnl,
-                                    exit_quantity=int(pos.quantity * exit_rule.partial_pct),
-                                )
-                            except Exception as e:
-                                logger.warning("Journal close_trade failed: %s", e)
-                    else:
-                        pos.partial_taken = True
-
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            # ── Step 1: Refresh market data ────────────────────────
-            # Pull fresh quotes for the active source every cycle. (Previously yfinance was
-            # fetched once at startup and frozen; only the websocket push updated live.)
-            if not is_live:
-                market_manager.refresh()
-
-            quotes = market_manager.get_all_quotes()
-            dashboard.update_market_data({s: q.to_dict() for s, q in quotes.items()})
-
-            # Append new quotes to history for rolling indicator updates
-            for symbol, quote in quotes.items():
-                history_manager.append_quote(
-                    symbol=symbol,
-                    open_price=quote.open,
-                    high=quote.high,
-                    low=quote.low,
-                    close=quote.last_price,
-                    volume=quote.volume,
-                )
-
-            # ── Data freshness gate ────────────────────────────────
-            # If the feed has stalled (even the freshest quote is too old), skip NEW
-            # entries this cycle — trading on stale prices is unsafe. Exits in Step 0
-            # already ran on the last known price.
-            max_stale = settings.max_quote_staleness_seconds
-            if max_stale > 0 and quotes:
-                freshest_age = min(q.age_seconds for q in quotes.values())
-                if freshest_age > max_stale:
-                    await get_alert_manager().alert(
-                        "data_staleness",
-                        f"Market data stale: freshest quote is {freshest_age:.0f}s old "
-                        f"(limit {max_stale}s). Skipping new entries this cycle.",
-                        level="WARNING",
-                    )
-                    dashboard.stats.log_activity(
-                        f"Stale data ({freshest_age:.0f}s old) — skipping trading this cycle",
-                        "WARNING",
-                    )
-                    for _ in range(15):
-                        time.sleep(1)
-                        live.update(create_dashboard_layout(dashboard.stats))
-                    return
-
-            # ── Step 2: Find trading candidates ────────────────────
-            candidates = market_manager.get_trading_candidates(min_change=0.3)
-
-            if not candidates:
-                dashboard.stats.log_activity("No trading candidates found", "INFO")
-                live.update(create_dashboard_layout(dashboard.stats))
-                for _ in range(15):
-                    time.sleep(1)
-                    live.update(create_dashboard_layout(dashboard.stats))
-                return
-
-            for c in candidates[:3]:
-                direction = "UP" if c.is_bullish else "DOWN"
-                dashboard.stats.log_activity(
-                    f"Mover: {c.symbol} {c.change_percent:+.2f}% [{direction}]", "INFO"
-                )
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            # ── Step 3: Calculate REAL indicators ──────────────────
-            top_candidate = candidates[0]
-            indicators = calculate_real_indicators(history_manager, top_candidate.symbol)
-
-            if indicators is None:
-                dashboard.stats.log_activity(
-                    f"Insufficient history for {top_candidate.symbol}", "WARNING"
-                )
-                for _ in range(10):
-                    time.sleep(1)
-                    live.update(create_dashboard_layout(dashboard.stats))
-                return
-
-            # ── Step 4: Generate signals from REAL indicators ──────
-            signals = signal_engine.generate_signals(indicators)
-
-            if signals:
-                sig = signals[0]
-                dashboard.set_current_signal(
-                    sig.signal_type.value,
-                    sig.symbol,
-                    sig.strategy.value,
-                    sig.confidence,
-                )
-                direction = "bullish" if top_candidate.is_bullish else "bearish"
-                # RSI/ADX can be None during the indicator warm-up window (a signal may come
-                # from a strategy that doesn't need them), so format defensively — a bare
-                # f"{None:.1f}" raises TypeError and kills the cycle (#17).
-                reason = (
-                    f"{direction.title()} momentum ({top_candidate.change_percent:+.2f}%) "
-                    f"with {sig.strategy.value} strategy "
-                    f"(RSI: {fmt_optional(indicators.rsi, '.1f')}, "
-                    f"ADX: {fmt_optional(indicators.adx, '.1f')})"
-                )
-                dashboard.set_decision_reason(reason)
-
-            dashboard.stats.signals_generated += len(signals)
-            for signal in signals:
-                dashboard.stats.log_activity(
-                    f"Signal: {signal.signal_type.value} {signal.symbol} "
-                    f"[{signal.strategy.value}] conf={signal.confidence:.0%}",
-                    "INFO",
-                )
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            if not signals:
-                dashboard.stats.log_activity("No signals generated", "INFO")
-                for _ in range(15):
-                    time.sleep(1)
-                    live.update(create_dashboard_layout(dashboard.stats))
-                return
-
-            # ── FinOps spend gate ──────────────────────────────────
-            # The agent pipeline below is the only LLM spend. If the daily token/cost
-            # budget is exhausted, skip it (and any new entries) to conserve spend —
-            # exits in Step 0 already ran, so risk is still managed.
-            cost_tracker = get_cost_tracker()
-            if cost_tracker.is_over_hard_budget():
-                status = cost_tracker.budget_status()
-                await get_alert_manager().alert(
-                    "finops_hard_budget",
-                    f"Daily LLM budget exhausted ({status['tokens_used']:,} tokens / "
-                    f"${status['cost_used_usd']:.4f} used) — pausing new agent cycles.",
-                    level="CRITICAL",
-                )
-                dashboard.stats.log_activity(
-                    "FinOps HARD budget reached — skipping agent pipeline this cycle", "WARNING"
-                )
-                for _ in range(15):
-                    time.sleep(1)
-                    live.update(create_dashboard_layout(dashboard.stats))
-                return
-
-            # ── Step 5: Run agent pipeline ─────────────────────────
-            market_data = {s: q.to_dict() for s, q in quotes.items()}
-            indicators_dict = {top_candidate.symbol: indicators.to_dict()}
-
-            memory_lessons = memory_db.get_top_lessons_for_context(
-                regime="trending_up" if top_candidate.is_bullish else "trending_down",
-                strategies=["momentum", "trend_following"],
-                n=5,
-            )
-
-            workflow_id = f"LIVE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{cycle}"
-
-            # Mark positions to market and update intraday drawdown (incl. unrealized) BEFORE
-            # the kill-switch check, so a deep unrealized drawdown actually halts trading.
-            paper_engine.update_positions_pnl(market_prices)
-            drawdown_tracker.update(paper_engine.get_total_value())
-
-            daily_stats = {
-                "trades_count": dashboard.stats.total_trades,
-                "profit_loss": dashboard.stats.realized_pnl,
-                "max_drawdown": drawdown_tracker.max_drawdown,
-            }
-            portfolio = {
-                "capital": paper_engine.get_balance(),
-                "positions": [p.to_dict() for p in paper_engine.get_positions()],
-            }
-
-            final_state = await run_trading_cycle(
-                graph=graph,
-                market_data=market_data,
-                indicators=indicators_dict,
-                signals=[s.to_dict() for s in signals],
-                memory_lessons=memory_lessons,
-                portfolio=portfolio,
-                daily_stats=daily_stats,
-                thread_id=workflow_id,
-            )
-
-            # ── Step 6: Process results ────────────────────────────
-            regime = final_state.get("regime", "unknown")
-            confidence = final_state.get("regime_confidence", 0)
-            strategies = final_state.get("active_strategies", [])
-            dashboard.update_regime(regime, confidence, strategies)
-            if hasattr(dashboard.stats, "current_regime"):
-                dashboard.stats.current_regime = regime
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            validated = final_state.get("validated_signals", [])
-            rejected = final_state.get("rejected_signals", [])
-            dashboard.stats.signals_validated += len(validated)
-            dashboard.stats.signals_rejected += len(rejected)
-
-            for sig in validated:
-                dashboard.stats.log_activity(
-                    f"VALIDATED: {sig.get('signal_type')} {sig.get('symbol')}", "SUCCESS"
-                )
-            for sig in rejected:
-                dashboard.stats.log_activity(
-                    f"REJECTED: {sig.get('signal_type')} {sig.get('symbol')}", "WARNING"
-                )
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            # ── Step 7: Execute approved trades via paper engine ───
-            approved = final_state.get("approved_trades", [])
-            risk_rejected = final_state.get("risk_rejected", [])
-            dashboard.stats.trades_approved += len(approved)
-            dashboard.stats.trades_risk_rejected += len(risk_rejected)
-
-            # Surface WHY entries were blocked so a run with signals-but-no-trades is not a
-            # mystery (#19). The most common off-hours cause is the deterministic
-            # trading-hours guard (09:15–15:15 IST) — every entry is blocked when the NSE is
-            # closed, which is intentional, not a bug.
-            for sig in risk_rejected:
-                failures = sig.get("risk_result", {}).get("failures", [])
-                reason = failures[0].get("message") if failures else "risk rules"
-                dashboard.stats.log_activity(
-                    f"RISK BLOCKED: {sig.get('signal_type')} {sig.get('symbol')} — {reason}",
-                    "WARNING",
-                )
-
-            # Kill-switch gate: a daily-loss / drawdown breach must halt NEW entries
-            # at the point of execution (exits in Step 0 still run, to flatten risk).
-            # Previously the kill switch only ended the agent graph at the regime edge
-            # and never re-checked here, so a mid-cycle breach still placed orders.
-            # Use peak equity as the capital base so the drawdown % is true (the graph's
-            # `portfolio.capital` is cash-only and would distort it).
-            kill_state = {
-                "daily_stats": daily_stats,
-                "portfolio": {"capital": max(drawdown_tracker.peak_equity, 1.0)},
-            }
-            if check_kill_switch(kill_state):
-                if approved:
-                    dashboard.stats.log_activity(
-                        f"KILL SWITCH ACTIVE — blocking {len(approved)} approved "
-                        f"{'entry' if len(approved) == 1 else 'entries'} "
-                        f"(loss/drawdown {drawdown_tracker.drawdown_pct:.1f}%)",
-                        "WARNING",
-                    )
-                    approved = []
-
-                # Stop the bleed: flatten all open positions (not just block new entries).
-                # place_order() closes by (symbol, side) FIFO, not by position id, so a single
-                # snapshot pass may not fully flatten multiple/odd-sized same-symbol positions.
-                # Loop until the engine reports flat (capped to avoid spinning), and clear the
-                # exit-manager / open-trade tracking ONLY once it actually is — otherwise we'd
-                # lose sight of still-open risk.
-                if settings.kill_switch_flatten and paper_engine.get_positions():
-                    for _ in range(MAX_FLATTEN_PASSES):
-                        positions = list(paper_engine.get_positions())
-                        if not positions:
-                            break
-                        for pos in positions:
-                            px = market_prices.get(pos.symbol, pos.current_price or pos.entry_price)
-                            exit_order = paper_engine.place_order(
-                                symbol=pos.symbol,
-                                side="SELL" if pos.side == "BUY" else "BUY",
-                                quantity=pos.quantity,
-                                current_price=px,
-                            )
-                            if exit_order.status == "FILLED":
-                                fpnl = (px - pos.entry_price) * pos.quantity
-                                if pos.side != "BUY":
-                                    fpnl = -fpnl
-                                dashboard.close_trade(fpnl)
-                                dashboard.stats.log_activity(
-                                    f"FLATTEN {pos.symbol} @ Rs.{px:,.2f} | P&L Rs.{fpnl:+,.2f}",
-                                    "WARNING",
-                                )
-                    dashboard.stats.current_balance = paper_engine.get_balance()
-                    if paper_engine.get_positions():
-                        # Could not fully flatten — keep risk tracking intact and escalate
-                        # rather than clearing (which would hide the residual exposure).
-                        remaining = len(paper_engine.get_positions())
-                        dashboard.stats.log_activity(
-                            f"FLATTEN INCOMPLETE — {remaining} position(s) still open; "
-                            "keeping risk tracking.",
-                            "ERROR",
-                        )
-                        await get_alert_manager().alert(
-                            "kill_switch_flatten_incomplete",
-                            f"Kill switch fired but {remaining} position(s) could not be "
-                            "flattened — risk tracking retained.",
-                            level="CRITICAL",
-                        )
-                    else:
-                        exit_manager.clear()
-                        open_trades.clear()
-                        await get_alert_manager().alert(
-                            "kill_switch_flatten",
-                            f"Kill switch fired (drawdown {drawdown_tracker.drawdown_pct:.1f}%) — "
-                            "flattened all open positions.",
-                            level="CRITICAL",
-                        )
-
-            for trade in approved:
-                symbol = trade.get("symbol", "N/A")
-                side = trade.get("signal_type", "BUY")
-
-                # Circuit guard: don't open into a scrip at/through its NSE price band — near a
-                # circuit you can't get a sane fill (limit-up: no sellers; limit-down: no buyers).
-                if settings.circuit_guard_enabled:
-                    q = quotes.get(symbol)
-                    if q is not None and is_circuit_locked(
-                        q.change_percent, settings.default_circuit_band_pct
-                    ):
-                        dashboard.stats.log_activity(
-                            f"CIRCUIT LOCKED: skipping {symbol} ({q.change_percent:+.1f}%)",
-                            "WARNING",
-                        )
-                        continue
-
-                entry_price = market_prices.get(symbol, trade.get("entry_price", 0))
-                stop_loss = trade.get("stop_loss", entry_price * 0.98)
-                target_price = trade.get("target_price", entry_price * 1.04)
-                strategy = trade.get("strategy", "unknown")
-
-                # Risk-based position sizing: size from the risk budget (risk-per-trade and the
-                # stop distance) using the real PositionSizer — and the strategy's actual
-                # win-rate (Kelly) when enough history exists — instead of a flat 5% of cash.
-                if entry_price > 0 and abs(entry_price - stop_loss) > 0:
-                    win_rate = perf_tracker.get_strategy_performance(strategy, regime).win_rate
-                    sizing = calculate_position_size(
-                        capital=paper_engine.get_balance(),
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        target_price=target_price,
-                        risk_per_trade=settings.risk_per_trade,
-                        max_position_pct=settings.max_position_pct,
-                        win_rate=win_rate,
-                    )
-                    quantity = max(1, sizing.shares)
-                else:
-                    quantity = 1
-
-                # Execute via the unified execution service (idempotent; shadow-aware;
-                # awaits the broker for live modes).
-                result = await execution_service.submit_async(
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    price=entry_price,
-                    idempotency_key=f"{workflow_id}:{symbol}:{side}",
-                )
-
-                if result.is_duplicate:
-                    dashboard.stats.log_activity(f"DUPLICATE suppressed: {side} {symbol}", "INFO")
-                    continue
-
-                if result.filled:
-                    tag = " [SHADOW]" if result.is_shadow else ""
-                    dashboard.stats.log_activity(
-                        f"TRADE{tag}: {side} {quantity} {symbol} @ Rs.{entry_price:,.2f}", "TRADE"
-                    )
-                    dashboard.add_position(symbol, side, quantity, entry_price)
-                    dashboard.stats.current_balance = paper_engine.get_balance()
-
-                    # Register with exit manager for tracking
-                    exit_manager.register_position(
-                        position_id=result.order_id,
-                        symbol=symbol,
-                        side=side,
-                        quantity=quantity,
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        target_price=target_price,
-                        strategy=strategy,
-                        regime=regime,
-                    )
-                    # Remember which lessons were in the agents' context at entry, so we can
-                    # mark them successful/unsuccessful when this position closes.
-                    if settings.enable_learning:
-                        active_lessons[result.order_id] = feedback.lesson_ids(memory_lessons)
-
-                    # Record the entry in the durable trade journal (resilient).
-                    try:
-                        trade_record = {**trade, "quantity": quantity, "entry_price": entry_price}
-                        open_trades[result.order_id] = journal.record_trade(
-                            trade_record, workflow_id, final_state
-                        )
-                    except Exception as e:
-                        logger.warning("Journal record_trade failed: %s", e)
-                else:
-                    dashboard.stats.log_activity(
-                        f"ORDER {result.status}: {symbol} — {result.message}", "WARNING"
-                    )
-
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            # Update paper engine P&L with current prices
-            paper_engine.update_positions_pnl(market_prices)
-
-            # Update dashboard balance from paper engine
-            dashboard.stats.current_balance = paper_engine.get_balance()
-
-            # ── FinOps: surface today's LLM spend + soft-budget alert ──
-            cost_summary = cost_tracker.daily_summary()
-            dashboard.stats.llm_calls = cost_summary["calls"]
-            dashboard.stats.llm_tokens = cost_summary["total_tokens"]
-            dashboard.stats.llm_cost_usd = cost_summary["total_cost_usd"]
-            budget = cost_tracker.budget_status()
-            if budget["soft_breached"] and not budget["hard_breached"]:
-                await get_alert_manager().alert(
-                    "finops_soft_budget",
-                    f"Approaching daily LLM budget: {budget['tokens_used']:,} tokens / "
-                    f"${budget['cost_used_usd']:.4f} used "
-                    f"(soft limit {budget['soft_pct']:.0%}).",
-                    level="WARNING",
-                )
-
-            # ── Profit goal: pace tracking (advisory only — never changes sizing) ──
-            goal_report = goal_engine.evaluate(
-                capital=paper_engine.get_balance(),
-                realized_pnl=dashboard.stats.realized_pnl,
-            )
-            if goal_report.get("enabled"):
-                dashboard.stats.goal_mtd_pnl = goal_report["month_to_date_pnl"]
-                dashboard.stats.goal_expected_to_date = goal_report["expected_to_date"]
-                dashboard.stats.goal_on_pace = goal_report["on_pace"]
-                dashboard.stats.goal_status = goal_report["status"]
-                if not goal_report["feasible"]:
-                    await get_alert_manager().alert(
-                        "goal_infeasible",
-                        "Profit target not feasible within risk budget. "
-                        f"{goal_report['plan']['recommended_action']}",
-                        level="WARNING",
-                    )
-                elif not goal_report["on_pace"]:
-                    await get_alert_manager().alert(
-                        "goal_off_pace",
-                        f"Behind profit pace: month-to-date Rs.{goal_report['month_to_date_pnl']:,.0f} "
-                        f"vs pace Rs.{goal_report['expected_to_date']:,.0f}. "
-                        "Risk limits are fixed — do NOT increase position size to catch up.",
-                        level="WARNING",
-                    )
-
-            # Increment cycle
-            dashboard.increment_cycle()
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            # Wait before next cycle
-            wait_time = 20
-            dashboard.stats.log_activity(f"Next cycle in {wait_time}s...", "INFO")
-            live.update(create_dashboard_layout(dashboard.stats))
-
-            for _ in range(wait_time):
-                time.sleep(1)
-                live.update(create_dashboard_layout(dashboard.stats))
-
-        consecutive_errors = 0
-
-        try:
-            cycle = 0
-
-            while True:
-                cycle += 1
-                dashboard.stats.log_activity(f"=== Trading Cycle #{cycle} ===", "INFO")
-                live.update(create_dashboard_layout(dashboard.stats))
-
-                try:
-                    await _run_cycle(cycle)
-                    consecutive_errors = 0
-                except KeyboardInterrupt:
-                    raise
-                except Exception as e:
-                    # Per-cycle isolation: log, back off, and keep the loop alive.
-                    consecutive_errors += 1
-                    backoff = min(60, 5 * consecutive_errors)
-                    logger.exception("Trading cycle #%d failed", cycle)
-                    dashboard.stats.log_activity(
-                        f"Cycle #{cycle} ERROR (failure #{consecutive_errors}): {e} "
-                        f"— recovering in {backoff}s",
-                        "ERROR",
-                    )
-                    if consecutive_errors >= 5:
-                        dashboard.stats.log_activity(
-                            "5+ consecutive cycle failures — check data source and logs",
-                            "WARNING",
-                        )
-                    for _ in range(backoff):
-                        time.sleep(1)
-                        live.update(create_dashboard_layout(dashboard.stats))
-
-        except KeyboardInterrupt:
-            dashboard.stats.log_activity("Shutdown requested", "WARNING")
-            live.update(create_dashboard_layout(dashboard.stats))
-
-        finally:
-            await market_manager.stop()
-            # Show final stats
-            stats = paper_engine.get_stats()
-            cost_summary = get_cost_tracker().daily_summary()
-            console.print("\n[yellow]Trading stopped[/]")
-            console.print(
-                f"[dim]Final balance: Rs.{stats['balance']:,.2f} | "
-                f"P&L: Rs.{stats['total_pnl']:+,.2f} | "
-                f"Win rate: {stats['win_rate']:.1f}%[/]"
-            )
-            console.print(
-                f"[dim]LLM spend today: {cost_summary['calls']} calls | "
-                f"{cost_summary['total_tokens']:,} tokens | "
-                f"${cost_summary['total_cost_usd']:.4f} (paid-tier equiv)[/]"
-            )
-
-            # Telegram shutdown + P&L summary (best-effort)
-            if notifier.enabled:
-                try:
-                    await notifier.send_pnl_summary(
-                        balance=stats["balance"],
-                        realized_pnl=stats["total_pnl"],
-                        unrealized_pnl=0.0,
-                        total_trades=stats.get("total_trades", 0),
-                        win_rate=stats["win_rate"],
-                    )
-                    await notifier.send_shutdown_message(reason="Session ended")
-                except Exception as e:
-                    logger.warning("Telegram shutdown notification failed: %s", e)
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Web mode: enable CORS for the Vite dev server (localhost:5173).",
+    )
+    parser.add_argument(
+        "--no-auto-start",
+        action="store_true",
+        help="Web mode: start the server without auto-starting a trading run.",
+    )
+    return parser.parse_args(argv)
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     import atexit
+    import warnings
 
-    def suppress_threading_errors():
-        import warnings
+    args = _parse_args()
 
+    def suppress_threading_errors() -> None:
         warnings.filterwarnings("ignore", category=RuntimeWarning)
 
     atexit.register(suppress_threading_errors)
 
+    if args.mode == "web":
+        _run_web(args)
+        return
+
     try:
-        asyncio.run(run_live_trading())
+        asyncio.run(_run_cli())
     except KeyboardInterrupt:
         pass
     except Exception as e:

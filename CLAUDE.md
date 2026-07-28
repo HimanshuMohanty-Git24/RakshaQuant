@@ -20,8 +20,14 @@ uv sync                         # install runtime deps
 uv sync --extra dev             # install dev deps (pytest, ruff, mypy)
 
 uv run python scripts/check_config.py       # validate .env / settings (run this first)
-uv run python scripts/run_live_trading.py   # MAIN entry point: live/sim dashboard + paper execution
+uv run python scripts/run_live_trading.py            # MAIN entry point: CLI dashboard (default)
+uv run python scripts/run_live_trading.py --mode web # same loop, browser console (needs `web` extra)
+uv run python scripts/run_live_trading.py --mode web --demo  # web console, synthetic data (no keys)
 uv run python src/backtesting/engine.py     # run a backtest
+
+# Web mode uses the optional `web` extra (FastAPI + uvicorn) and a built frontend:
+uv sync --extra web                            # install web deps
+(cd frontend && npm install && npm run build)  # build the SPA into frontend/dist (Node 18+)
 
 # pytest/ruff/mypy live in the `dev` optional group — pass --extra dev (or `uv sync --extra dev` once).
 uv run --extra dev pytest                     # full test suite (210 tests)
@@ -213,12 +219,46 @@ production go/no-go needs a point-in-time, survivorship-free dataset (Bhavcopy/v
 YFinance can't supply. A green verdict is *necessary, not sufficient* (no circuit/gap/liquidity
 modelling).
 
+### Front ends: one loop, two renderers (CLI & web)
+
+The live trading loop lives **once** in [src/live/session.py](src/live/session.py)
+(`run_trading_session`) — it was extracted verbatim from the old monolithic
+`scripts/run_live_trading.py` and parameterised by a **`SessionView`**
+([src/live/views.py](src/live/views.py)). There is deliberately **no second trading loop** for
+the browser; both front ends drive this one, so they can never diverge (a duplicated web loop
+would drift, exactly the footgun CLAUDE warns about elsewhere).
+
+- **CLI** — `RichSessionView` wraps the `rich` `Live` dashboard ([dashboard/cli.py](src/dashboard/cli.py)),
+  reproducing the legacy behaviour (alternate-screen render, per-second redraws during waits).
+  `scripts/run_live_trading.py` is now a thin `--mode {cli,web}` dispatcher; `cli` is the default
+  and unchanged.
+- **Web** — `StreamSessionView` serialises the shared `TradingStats` into JSON snapshots
+  ([src/live/recorder.py](src/live/recorder.py) `snapshot_from_stats`) and streams them, plus
+  per-cycle **traces**, to the browser. Its waits are non-blocking (`await asyncio.sleep`) so the
+  server keeps serving sockets. **Keep the transform mechanical when editing the loop** — the
+  same call order is the invariant that keeps trading behaviour identical across modes.
+
+**Web layer** ([src/web/](src/web/), optional `web` extra). `server.py` is a FastAPI app: REST
+(`/api/state|cycles|config`), a WebSocket (`/ws`), guarded run-control (`/api/run/start|stop`),
+and it serves the built SPA from `frontend/dist`. `run_manager.py` owns the session as a
+background task, fans snapshots/cycles out to WS subscribers (the `SnapshotSink`), and enforces
+run-control safety: **LIVE runs need explicit confirmation**, and `RAKSHAQUANT_WEB_READONLY=1`
+disables run-control entirely. `CycleRecorder` reconstructs each cycle as an observability
+**trace** whose spans are the 5 pipeline nodes; per-span tokens/cost come from the FinOps
+`by_agent` delta, so the deterministic `risk_compliance` span honestly shows zero tokens. The
+**frontend** ([frontend/](frontend/)) is a React + Vite + TS + Tailwind "Neo-Terminal" console;
+all design tokens are centralised (CSS vars in `src/index.css` → Tailwind names). `src/web` is
+only imported in `--mode web`, so the CLI-only install never needs FastAPI. `src.live.session`
+carries a documented mypy override (it's moved script code full of pre-existing engine-interaction
+debt); the *new* `src/live` + `src/web` abstractions are strict-clean.
+
 ### Cross-cutting
 
 `utils/` holds the shared `rate_limiter`, `circuit_breaker`, `cache` (TTL), `errors`
 (custom exceptions like `RateLimitError`, `LLMResponseError`), `events`, and `market_time`
 (IST helpers — see below). `observability/tracing.py` wires LangSmith. `dashboard/cli.py` is
-the `rich` terminal UI. `notifications/telegram.py` sends trade alerts.
+the `rich` terminal UI, rendered by `RichSessionView`. `notifications/telegram.py` sends trade
+alerts.
 
 ## Conventions & gotchas
 

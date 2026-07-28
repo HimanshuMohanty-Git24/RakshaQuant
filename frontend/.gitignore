@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.local
+.vite/
+
+# TypeScript incremental build artifacts (machine-specific; churn in diffs).
+*.tsbuildinfo
+
+# The repo-ROOT .gitignore carries Python patterns — `lib/` and `*.json` — that would
+# otherwise silently drop these committed frontend files. Re-include them explicitly so
+# `git add frontend/` never skips them again.
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.*.json
+!src/lib/

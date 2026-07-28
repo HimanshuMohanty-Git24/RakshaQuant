@@ -242,7 +242,8 @@ flowchart LR
     end
 
     subgraph Subscribers
-        DASH["Dashboard"]
+        DASH["Dashboard (CLI / Web view)"]
+        WS["Web Console<br/>(WebSocket stream)"]
         TG["Telegram"]
         LOG["Logging"]
         MEM["Memory System"]
@@ -542,7 +543,24 @@ flowchart LR
 
 ---
 
-## Dashboard Architecture
+## Dashboard / View Architecture
+
+The trading loop (`src/live/session.py:run_trading_session`) renders through a **`SessionView`**
+abstraction (`src/live/views.py`) — a Strategy-pattern seam so the *same* loop drives either front
+end without a second, divergent implementation:
+
+- **`RichSessionView`** → the Rich CLI terminal dashboard below (the default, unchanged).
+- **`StreamSessionView`** → serialises the shared `TradingStats` to JSON (`recorder.py`
+  `snapshot_from_stats`) and streams snapshots + per-cycle traces over a WebSocket to the web
+  console. Its waits are non-blocking so the FastAPI server keeps serving sockets.
+
+```mermaid
+graph LR
+    LOOP["run_trading_session<br/>(one loop)"] --> V{{"SessionView"}}
+    V -->|"--mode cli"| RV["RichSessionView<br/>rich terminal dashboard"]
+    V -->|"--mode web"| SV["StreamSessionView<br/>JSON snapshots + traces"]
+    SV -->|WebSocket| SPA["Browser SPA<br/>(React/Vite, frontend/)"]
+```
 
 ### Rich CLI Terminal Dashboard
 
@@ -584,3 +602,37 @@ graph TD
 | `ranging` | Yellow | ↔️ |
 | `volatile` | Magenta | ⚡ |
 | `unknown` | Grey | ❓ |
+
+### Web Console ("Neo-Terminal Trading Console")
+
+`--mode web` serves a browser SPA (`frontend/`, React + Vite + TypeScript + Tailwind) fed by the
+FastAPI + WebSocket backend (`src/web`). It is a monitoring **+** control console — dark,
+monospace-first, WCAG 2.2 AA, keyboard-first — laid out as mission control:
+
+```mermaid
+graph TD
+    subgraph "Web Console Layout"
+        direction TB
+        BAR["Command / Status Bar<br/>env badge (PAPER/SHADOW/LIVE) · run status · IST clock · : command · New Run"]
+        subgraph "Body (3 columns)"
+            RUNS["Run Selector<br/>cycles = traces (newest first)"]
+            subgraph "Center"
+                POS["Positions & P&L (live table)"]
+                TRACE["Trade-Cycle Trace Explorer<br/>agent spans + tokens·latency·cost"]
+                FEED["Live Agent Feed<br/>streaming, level-tagged"]
+            end
+            subgraph "Right"
+                REG["Regime & Decision"]
+                KPI["KPI Meters<br/>P&L · win% · tokens/cost · latency P50/P99 · goal pace"]
+            end
+        end
+        DRAWER["Detail Drawer — full span record (prompt/response/rationale/tokens/cost)"]
+    end
+    BAR --- RUNS & POS & REG
+    TRACE -->|click span| DRAWER
+```
+
+**Environment badge (read-only truth from the resolved execution mode):** `PAPER` (green) /
+`SHADOW` (amber) / `LIVE` (red). Run-control is guarded — a LIVE run needs explicit confirmation,
+and `RAKSHAQUANT_WEB_READONLY=1` disables run-control entirely (monitor-only). The UI never flips
+`allow_live_orders` or relaxes a risk limit; the kill switch and shadow default-off are unchanged.
