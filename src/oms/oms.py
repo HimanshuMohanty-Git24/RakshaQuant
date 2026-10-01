@@ -33,6 +33,7 @@ from src.brokers.base import (
     OrderRejectedError,
     Subscription,
 )
+from src.domain.base import EventPayload
 from src.domain.clock import Clock
 from src.domain.events import (
     Alert,
@@ -119,6 +120,7 @@ class SubmitResult:
 
 
 FillListener = Callable[[Fill, Order], None]
+EventListener = Callable[[EventPayload], None]
 
 
 class OMS:
@@ -145,6 +147,7 @@ class OMS:
         self.orders: dict[str, Order] = {}  # by client_order_id
         self._unknown_checks: dict[str, int] = {}
         self._fill_listeners: list[FillListener] = []
+        self._event_listeners: list[EventListener] = []
         self._subscription: Subscription | None = None
 
     async def start(self) -> None:
@@ -162,6 +165,10 @@ class OMS:
     def add_fill_listener(self, listener: FillListener) -> None:
         """Called after each new fill is applied to the book (e.g. the exit manager)."""
         self._fill_listeners.append(listener)
+
+    def add_event_listener(self, listener: EventListener) -> None:
+        """Called with every event the OMS records, after it is recorded (e.g. the risk state)."""
+        self._event_listeners.append(listener)
 
     # -- submission --------------------------------------------------------------------------------
 
@@ -196,7 +203,7 @@ class OMS:
             submitted_at=now,
         )
         self.orders[coid] = order
-        self._sink.emit(OrderSubmitted(order=order), source="oms")  # before the broker call
+        self._emit(OrderSubmitted(order=order), source="oms")  # before the broker call
         try:
             ack = await self.broker.place_order(order)
         except BrokerError as exc:
@@ -204,7 +211,7 @@ class OMS:
                 return self._mark_unknown(order, f"{type(exc).__name__}: {exc}")
             reason = exc.reason.value if isinstance(exc, OrderRejectedError) else type(exc).__name__
             self._set(order, status=OrderStatus.REJECTED)
-            self._sink.emit(
+            self._emit(
                 OrderRejected(**self._ref(order), reason=reason, message=str(exc)), source="oms"
             )
             return SubmitResult("REJECTED", self.orders[coid], f"{reason}: {exc}")
@@ -216,7 +223,7 @@ class OMS:
         if current.status is OrderStatus.SUBMITTED:  # no update callback beat the response
             self._set(current, broker_order_id=ack.broker_order_id)
             self._advance(current, ack.status)
-            self._sink.emit(
+            self._emit(
                 OrderAcked(
                     **self._ref(current),
                     broker_order_id=ack.broker_order_id,
@@ -244,7 +251,7 @@ class OMS:
     def _mark_unknown(self, order: Order, error: str) -> SubmitResult:
         self._set(order, status=OrderStatus.UNKNOWN)
         self._unknown_checks[order.client_order_id] = 0
-        self._sink.emit(OrderUnknown(**self._ref(order), error=error), source="oms")
+        self._emit(OrderUnknown(**self._ref(order), error=error), source="oms")
         logger.warning("order %s outcome UNKNOWN: %s", order.client_order_id, error)
         return SubmitResult("UNKNOWN", self.orders[order.client_order_id], error)
 
@@ -272,17 +279,17 @@ class OMS:
         order = self.orders[snap.client_order_id]
         ref = self._ref(order)
         if snap.status is OrderStatus.CANCELLED:
-            self._sink.emit(
+            self._emit(
                 OrderCancelled(**ref, filled_qty=snap.filled_qty, reason=snap.message), source="oms"
             )
         elif snap.status is OrderStatus.EXPIRED:
-            self._sink.emit(OrderExpired(**ref, filled_qty=snap.filled_qty), source="oms")
+            self._emit(OrderExpired(**ref, filled_qty=snap.filled_qty), source="oms")
         elif snap.status is OrderStatus.REJECTED:
-            self._sink.emit(
+            self._emit(
                 OrderRejected(**ref, reason="BROKER_REJECTED", message=snap.message), source="oms"
             )
         else:  # acknowledged (it may arrive before place_order returns), or a stop triggering
-            self._sink.emit(
+            self._emit(
                 OrderAcked(**ref, broker_order_id=snap.broker_order_id, status=snap.status),
                 source="oms",
             )
@@ -295,7 +302,7 @@ class OMS:
             self._alert("oms_unknown_fill", f"fill {fill.fill_id} for unknown order; applied")
             # The broker is the source of truth: book it (as CNC, the month-1 product) and alert.
             outcome = self.book.apply(fill, product=Product.CNC, strategy="unknown")
-            self._sink.emit(
+            self._emit(
                 PositionChanged(position=outcome.position, fill_id=fill.fill_id), source="oms"
             )
             return
@@ -318,17 +325,15 @@ class OMS:
         outcome = self.book.apply(
             fill, product=intent.product, strategy=intent.strategy, exit_reason=intent.reason.value
         )
-        self._sink.emit(
+        self._emit(
             FillReceived(
                 fill=fill, order_status=order.status, order_filled_qty=filled, order_avg_price=avg
             ),
             source="oms",
         )
-        self._sink.emit(
-            PositionChanged(position=outcome.position, fill_id=fill.fill_id), source="oms"
-        )
+        self._emit(PositionChanged(position=outcome.position, fill_id=fill.fill_id), source="oms")
         for piece in outcome.closed:
-            self._sink.emit(
+            self._emit(
                 TradeClosed(
                     trade_id=piece.trade_id,
                     book_id=self.book_id,
@@ -368,7 +373,7 @@ class OMS:
                     OrderStatus.PARTIALLY_FILLED,
                 ):
                     self._advance(self.orders[coid], snap.status)
-                self._sink.emit(
+                self._emit(
                     OrderAcked(**self._ref(order), broker_order_id=snap.broker_order_id,
                                status=self.orders[coid].status),
                     source="oms",
@@ -379,7 +384,7 @@ class OMS:
             waited = (now - (order.submitted_at or now)).total_seconds()
             if self._unknown_checks[coid] >= 2 and waited >= self._unknown_timeout_s:
                 self._set(order, status=OrderStatus.REJECTED)
-                self._sink.emit(
+                self._emit(
                     OrderRejected(**self._ref(order), reason="NOT_FOUND_AT_BROKER",
                                   message=f"absent after {self._unknown_checks[coid]} checks"),
                     source="oms",
@@ -431,7 +436,7 @@ class OMS:
         result = ReconciliationResult(
             book_id=self.book_id, scope="oms_broker", in_sync=in_sync, diffs=tuple(diffs)
         )
-        self._sink.emit(result, source="oms")
+        self._emit(result, source="oms")
         if not in_sync:
             self._alert("SYS_RECON_DRIFT", "; ".join(diffs), level="CRITICAL")
         return result
@@ -464,6 +469,19 @@ class OMS:
             "instrument_key": order.intent.instrument.key,
         }
 
+    def _emit(self, payload: EventPayload, *, source: str = "oms") -> None:
+        self._sink.emit(payload, source=source)
+        for listener in list(self._event_listeners):
+            try:
+                listener(payload)
+            except Exception:  # a listener never breaks order handling
+                logger.exception("event listener failed on %s", payload.event_type)
+                self._sink.emit(
+                    Alert(level="CRITICAL", key="oms_listener_failed",
+                          message=f"listener failed on {payload.event_type}"),
+                    source=source,
+                )  # fmt: skip
+
     def _alert(self, key: str, message: str, *, level: str = "WARNING") -> None:
         logger.warning("%s: %s", key, message)
-        self._sink.emit(Alert(level=level, key=key, message=message), source="oms")
+        self._emit(Alert(level=level, key=key, message=message), source="oms")
