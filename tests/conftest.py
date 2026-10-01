@@ -44,6 +44,7 @@ SECRET_ENV_KEYS = (
 # Required settings get placeholders that can never be mistaken for real keys. The in-memory
 # DATABASE_URL stops tests reaching a Postgres that happens to run at the default URL.
 PLACEHOLDER_ENV = {
+    "RAKSHAQUANT_ENV_FILE": "none",  # subprocesses spawned by tests must not read .env either
     "ENVIRONMENT": "test",
     "GROQ_API_KEY": "test-groq-key",
     "DATABASE_URL": "sqlite:///:memory:",
@@ -93,5 +94,5 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         _env_file=None,
         var_dir=tmp_path / "var",
-        **{k.lower(): v for k, v in PLACEHOLDER_ENV.items()},
+        **{k.lower(): v for k, v in PLACEHOLDER_ENV.items() if k.lower() in Settings.model_fields},
     )

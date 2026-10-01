@@ -5,6 +5,7 @@ Uses pydantic-settings for environment variable loading with validation.
 Includes cross-field validation to ensure configuration consistency.
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -21,7 +22,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Anchors for files the app owns. Never resolve these against the working directory.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = REPO_ROOT / ".env"
+ENV_FILE_OVERRIDE = "RAKSHAQUANT_ENV_FILE"  # a path, or "none" to read no .env at all
+
+
+def _env_file() -> Path | None:
+    override = os.environ.get(ENV_FILE_OVERRIDE)
+    if override is None:
+        return REPO_ROOT / ".env"
+    if override.strip().lower() in ("", "none"):
+        return None
+    path = Path(override).expanduser()
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+ENV_FILE = _env_file()
 
 Environment = Literal["dev", "paper", "demo", "test"]
 
@@ -59,6 +73,10 @@ class Settings(BaseSettings):
         default="dev",
         description="Runtime environment; selects the state directory. The month run uses "
         "'paper'; 'demo' is for simulated/replayed data; 'test' is for the test suite.",
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
+        default="INFO",
+        description="Level for the JSON log file under var/logs/",
     )
     var_dir: Path = Field(
         default=None,

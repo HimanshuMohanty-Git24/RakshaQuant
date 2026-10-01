@@ -22,6 +22,7 @@ from src.market.indicators import IndicatorResult, Timeframe
 from src.market.signals import SignalEngine
 from src.memory.database import AgentMemoryDB
 from src.observability.tracing import setup_tracing
+from src.ops.process import run_entry_point
 
 console = Console()
 
@@ -215,14 +216,8 @@ async def run_trading_with_dashboard():
 
 def main():
     """Main entry point."""
-    try:
-        asyncio.run(run_trading_with_dashboard())
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/]")
-        raise
+    asyncio.run(run_trading_with_dashboard())
 
 
 if __name__ == "__main__":
-    main()
+    run_entry_point("run_with_dashboard", main, console_log_level=None)

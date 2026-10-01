@@ -97,4 +97,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from src.ops.process import run_entry_point
+
+    run_entry_point("setup", main)

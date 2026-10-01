@@ -105,11 +105,17 @@ def test_dhan_connection():
         return False
 
 
-if __name__ == "__main__":
+def main() -> int:
     print("\n[INFO] If using SANDBOX token (from developer.dhan.co):")
     print("       Set DHAN_BASE_URL=https://sandbox.dhan.co/v2 in .env")
     print("\n[INFO] If using PRODUCTION token (from web.dhan.co):")
     print("       Set DHAN_BASE_URL=https://api.dhan.co/v2 in .env")
     print()
 
-    test_dhan_connection()
+    return 0 if test_dhan_connection() else 1
+
+
+if __name__ == "__main__":
+    from src.ops.process import run_entry_point
+
+    run_entry_point("test_dhan_connection", main)

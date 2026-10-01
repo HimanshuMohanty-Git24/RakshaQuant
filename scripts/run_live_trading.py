@@ -26,12 +26,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 
-from src.config import get_settings
 from src.dashboard.cli import TradingStats
 from src.live.session import run_trading_session
 from src.live.views import RichSessionView
 from src.ops.exit_codes import ExitCode
-from src.ops.instance_lock import InstanceLockHeldError, single_instance
+from src.ops.process import run_entry_point
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -44,7 +43,7 @@ async def _run_cli() -> None:
     await run_trading_session(view)
 
 
-def _run_web(args: argparse.Namespace) -> None:
+def _run_web(args: argparse.Namespace) -> int:
     """Web mode: launch the FastAPI console (requires the ``web`` extra)."""
     try:
         from src.web.server import run_web
@@ -54,7 +53,7 @@ def _run_web(args: argparse.Namespace) -> None:
             "  [cyan]uv sync --extra web[/]  (or  pip install '.[web]')\n"
             f"[dim]{exc}[/]"
         )
-        sys.exit(1)
+        return ExitCode.CONFIG_ERROR
 
     run_web(
         host=args.host,
@@ -63,6 +62,7 @@ def _run_web(args: argparse.Namespace) -> None:
         dev=args.dev,
         auto_start=not args.no_auto_start,
     )
+    return ExitCode.OK
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -96,17 +96,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> None:
-    """Main entry point. Refuses to start (exit 3) if another instance holds the state dir."""
+    """Main entry point.
+
+    Exit codes: 0 normal (incl. Ctrl-C), 1 crash, 2 configuration error, 3 another instance
+    holds this environment's state directory. Logs go to ``var/logs/``; in CLI mode nothing is
+    logged to the console, which belongs to the dashboard.
+    """
     args = _parse_args()
-    try:
-        with single_instance(get_settings().state_dir):
-            _run(args)
-    except InstanceLockHeldError as exc:
-        console.print(f"[red]{exc}[/]")
-        sys.exit(ExitCode.LOCK_HELD)
+    run_entry_point(
+        "run_live_trading",
+        lambda: _run(args),
+        lock=True,
+        record_events=True,
+        console_log_level="INFO" if args.mode == "web" else None,
+    )
 
 
-def _run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace) -> int:
     import atexit
     import warnings
 
@@ -116,18 +122,10 @@ def _run(args: argparse.Namespace) -> None:
     atexit.register(suppress_threading_errors)
 
     if args.mode == "web":
-        _run_web(args)
-        return
+        return _run_web(args)
 
-    try:
-        asyncio.run(_run_cli())
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/]")
-        raise
-    finally:
-        sys.exit(0)
+    asyncio.run(_run_cli())
+    return ExitCode.OK
 
 
 if __name__ == "__main__":

@@ -21,16 +21,7 @@ from src.market.signals import SignalEngine
 from src.memory.database import AgentMemoryDB
 from src.memory.injection import MemoryInjector
 from src.observability.tracing import setup_tracing, trading_trace
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(f"logs/trading_{datetime.now().strftime('%Y%m%d')}.log"),
-    ],
-)
+from src.ops.process import run_entry_point
 
 logger = logging.getLogger(__name__)
 
@@ -180,14 +171,8 @@ def _create_sample_indicators() -> IndicatorResult:
 
 async def main():
     """Main entry point."""
-    try:
-        await run_demo_cycle()
-    except KeyboardInterrupt:
-        logger.info("Shutdown requested")
-    except Exception as e:
-        logger.exception(f"Fatal error: {e}")
-        sys.exit(1)
+    await run_demo_cycle()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_entry_point("run_trading", lambda: asyncio.run(main()), console_log_level="INFO")
