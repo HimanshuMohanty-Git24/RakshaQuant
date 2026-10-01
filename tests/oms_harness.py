@@ -52,6 +52,7 @@ class Harness:
     oms: OMS
     volume: int = 0
     last_received: datetime | None = None
+    last_quote: Quote | None = None
 
     def quote(self, ltp: float, *, minutes: float = 1, volume: int = 1_000_000) -> list[Fill]:
         """Advance the received time by ``minutes`` and feed a quote with ample liquidity."""
@@ -59,18 +60,17 @@ class Harness:
         base = max(self.clock.now(), self.last_received or self.clock.now())
         received = base + timedelta(minutes=minutes)
         self.last_received = received
-        return self.broker.on_quote(
-            Quote(
-                instrument_key=INFY.key,
-                ltp=ltp,
-                prev_close=1000.0,
-                volume_cum=self.volume,
-                exchange_ts=received - timedelta(minutes=15),
-                receipt_ts=received,
-                source=MarketDataSource.YFINANCE,
-                is_delayed=True,
-            )
+        self.last_quote = Quote(
+            instrument_key=INFY.key,
+            ltp=ltp,
+            prev_close=1000.0,
+            volume_cum=self.volume,
+            exchange_ts=received - timedelta(minutes=15),
+            receipt_ts=received,
+            source=MarketDataSource.YFINANCE,
+            is_delayed=True,
         )
+        return self.broker.on_quote(self.last_quote)
 
     async def at_minute(self, delta_minutes: float) -> None:
         await self.clock.advance(delta_minutes * 60)

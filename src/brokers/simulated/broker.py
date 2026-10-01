@@ -26,7 +26,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Literal, Protocol
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -69,7 +69,7 @@ from src.domain.types import (
     Side,
     Validity,
 )
-from src.store.event_store import EventStore
+from src.store.kv import MemoryStateStore, StateStore
 from src.utils.market_time import IST
 
 logger = logging.getLogger(__name__)
@@ -88,41 +88,6 @@ SIM_CAPABILITIES = BrokerCapabilities(
     order_stream=True,
     mis_square_off=time(15, 15),
 )
-
-
-# ---------------------------------------------------------------------------
-# Persistence
-# ---------------------------------------------------------------------------
-
-
-class StateStore(Protocol):
-    def load(self) -> str | None: ...
-
-    def save(self, value: str, ts: datetime) -> None: ...
-
-
-class MemoryStateStore:
-    def __init__(self) -> None:
-        self.value: str | None = None
-
-    def load(self) -> str | None:
-        return self.value
-
-    def save(self, value: str, ts: datetime) -> None:
-        self.value = value
-
-
-class KVStateStore:
-    """Keeps the broker's book in the event store's key/value table."""
-
-    def __init__(self, store: EventStore, key: str, namespace: str = "sim_broker") -> None:
-        self._store, self._namespace, self._key = store, namespace, key
-
-    def load(self) -> str | None:
-        return self._store.kv_get(self._namespace, self._key)
-
-    def save(self, value: str, ts: datetime) -> None:
-        self._store.kv_put(self._namespace, self._key, value, ts)
 
 
 class _SimOrder(BaseModel):

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from src.brokers.base import InvalidRequestError, OrderRejectedError, RejectReason
-from src.brokers.simulated.broker import KVStateStore, SimulatedBroker
+from src.brokers.simulated.broker import SimulatedBroker
 from src.brokers.simulated.costs import NSECostSchedule
 from src.brokers.simulated.fill_model import (
     FillModelConfig,
@@ -36,6 +36,7 @@ from src.domain.types import (
     Side,
 )
 from src.store.event_store import EventStore
+from src.store.kv import KVStateStore
 from src.utils.market_time import IST
 
 DAY = date(2026, 10, 5)
@@ -377,9 +378,11 @@ async def test_order_updates_and_fills_are_pushed_to_subscribers():
 async def test_state_survives_a_restart_through_the_store(tmp_path):
     with EventStore(tmp_path / "rq.db") as store:
         clock = ReplayClock(at(9, 30))
-        broker, _ = make_broker(clock=clock, state_store=KVStateStore(store, "A"))
+        broker, _ = make_broker(clock=clock, state_store=KVStateStore(store, "A", "sim_broker"))
         await buy_and_fill(broker, clock, 100)
-        reborn, _ = make_broker(clock=clock, state_store=KVStateStore(store, "A"), cash="1")
+        reborn, _ = make_broker(
+            clock=clock, state_store=KVStateStore(store, "A", "sim_broker"), cash="1"
+        )
         assert (await reborn.get_funds()) == (await broker.get_funds())
         assert (await reborn.get_positions()) == (await broker.get_positions())
         assert (await reborn.get_orders()) == (await broker.get_orders())
