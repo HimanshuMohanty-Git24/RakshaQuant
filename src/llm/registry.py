@@ -52,7 +52,7 @@ PROVIDERS: Mapping[str, ProviderSpec] = {
                      "openai_api_key", supports_json_schema=True),
         ProviderSpec("openrouter", ProviderKind.OPENAI_COMPAT, "https://openrouter.ai/api/v1",
                      "OPENROUTER_API_KEY", "openrouter_api_key",
-                     default_headers={"X-Title": "RakshaQuant"}),
+                     default_headers={"X-OpenRouter-Title": "RakshaQuant"}),
         ProviderSpec("groq", ProviderKind.OPENAI_COMPAT, "https://api.groq.com/openai/v1",
                      "GROQ_API_KEY", "groq_api_key"),
         ProviderSpec("anthropic", ProviderKind.ANTHROPIC, None, "ANTHROPIC_API_KEY",
