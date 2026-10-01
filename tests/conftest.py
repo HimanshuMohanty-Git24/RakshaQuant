@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.config.limits import RiskLimits
 from src.config.settings import Settings, get_settings
 
 # Secrets and connection strings. Prefix entries end with "_".
@@ -39,6 +40,7 @@ SECRET_ENV_KEYS = (
     "DHAN_",
     "LANGSMITH_",
     "TELEGRAM_",
+    "RISK_",
 )
 
 # Required settings get placeholders that can never be mistaken for real keys. The in-memory
@@ -73,6 +75,7 @@ def _scrub_environ(var_dir: Path) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     """Session-wide guard, active before test modules are imported."""
     Settings.model_config["env_file"] = None
+    RiskLimits.model_config["env_file"] = None
     _scrub_environ(Path(tempfile.mkdtemp(prefix="rq-test-var-")))
     get_settings.cache_clear()
 
@@ -80,6 +83,7 @@ def pytest_configure(config: pytest.Config) -> None:
 @pytest.fixture(autouse=True)
 def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    monkeypatch.setitem(RiskLimits.model_config, "env_file", None)
     monkeypatch.chdir(tmp_path)
     with patch.dict(os.environ):
         _scrub_environ(tmp_path / "var")

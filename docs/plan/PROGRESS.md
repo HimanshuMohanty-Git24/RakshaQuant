@@ -79,10 +79,10 @@ Source of truth: [2026-10-01-platform-v2-plan.md](2026-10-01-platform-v2-plan.md
 | Task | Status | Commit | Notes / deviations |
 |---|---|---|---|
 | 4.1 | todo | | |
-| 4.2 | todo | | |
+| 4.2 | todo | | Will be done last in M4 (needs 4.1/4.3/4.4). The graph `risk_compliance` node deletion moves to M5.5 (the legacy loop still sizes entries from it and does not use the OMS; M5.5 removes the legacy graph from the live path). |
 | 4.3 | todo | | |
 | 4.4 | todo | | |
-| 4.5 | todo | | |
+| 4.5 | done | (this commit) | Done **first** in M4 (deviation: the engine, state and kill switches depend on it; order 4.5 → 4.1 → 4.3 → 4.4 → 4.2). `src/config/limits.py` `RiskLimits` (pydantic-settings, `RISK_*` env, frozen): sizing (`risk_per_trade` ≤ 5%, `max_position_pct` ≤ 25%, `max_position_inr`, `adv_pct`, Kelly off until ≥30 real trades), stops (`min_rr`, `stop_atr_min/max`, `max_stop_pct`, `price_collar_pct`, `allow_short=False`), portfolio (positions 5, gross 50%, sector 30%, heat 6%, daily loss 1% MTM, drawdown 5%, entries/day), strategies (`enabled_strategies` = momentum + mean_reversion, capital/daily-loss/streak/order-rate), system (quote age 1,200 s, open orders, order rate, reject storm), kill actions (`FLATTEN` on daily loss/drawdown, `rearm_on_new_day=False`); cross-field checks; `limits_hash()`; `load_risk_limits()` raises `ConfigError` (now in `src/config/errors.py`, re-exported by `src.ops.process`) → exit 2. The legacy hardcoded limits are absorbed as defaults. Tests isolate `RISK_*` and the limits' env file. **Acceptance:** the audit F-15 probe values each raise ✓. 19 tests. |
 
 ## M5: Strategies, TradePolicy, deterministic decision engine
 

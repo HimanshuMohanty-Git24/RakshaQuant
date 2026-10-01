@@ -23,6 +23,7 @@ from typing import NoReturn
 from pydantic import ValidationError
 
 import src
+from src.config.errors import ConfigError
 from src.config.settings import Settings, get_settings
 from src.domain.clock import WallClock
 from src.domain.events import ProcessStarted, ProcessStopped, make_event
@@ -32,9 +33,7 @@ from src.ops.logging_config import configure_logging, redact
 
 logger = logging.getLogger(__name__)
 
-
-class ConfigError(Exception):
-    """Invalid configuration detected after settings loaded (exit code 2)."""
+__all__ = ["ConfigError", "run", "run_entry_point"]
 
 
 EntryMain = Callable[[], int | None]
