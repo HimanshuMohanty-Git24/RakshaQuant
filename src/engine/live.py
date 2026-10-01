@@ -1,0 +1,161 @@
+"""
+Running the v2 engine behind a front end (plan M5.6): the CLI dashboard or the web console, both
+through the existing :class:`~src.live.views.SessionView`, fed from the store's projections.
+
+* :func:`run_paper` - today's session on the wall clock with YFinance data (taped for replay),
+  the pinned NIFTY 50 universe and the simulated broker. **Paper only**: the v2 engine has no
+  live broker path; a live ``EXECUTION_MODE`` is ignored with a warning.
+* :func:`run_demo` - the same engine on a synthetic, paced day in the ``demo`` environment.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+from datetime import date, datetime, time
+from decimal import Decimal
+
+from src.config.errors import ConfigError
+from src.config.limits import load_risk_limits
+from src.config.settings import Settings
+from src.domain.calendar import get_calendar
+from src.domain.clock import Clock, ReplayClock, WallClock, now_ist
+from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
+from src.engine.runner import Engine, EngineConfig, build_engine, held_instruments
+from src.engine.view_model import StatsProjector
+from src.live.views import SessionView
+from src.marketdata.history import YFinanceHistorySource
+from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
+from src.marketdata.validation import QuoteValidator, band_lookup
+from src.marketdata.yfinance_source import YFinanceQuoteSource
+from src.reference.refresh import alert_reference, refresh_reference
+from src.store.event_store import EventStore
+from src.store.sink import StoreSink
+from src.store.tape import TapeWriter
+from src.utils.market_time import IST
+
+logger = logging.getLogger(__name__)
+
+PAPER_MODES = frozenset({"local_paper", "shadow"})
+DEMO = "demo"
+
+
+async def run_paper(
+    settings: Settings,
+    view: SessionView,
+    *,
+    stop: asyncio.Event | None = None,
+    clock: Clock | None = None,
+) -> int:
+    if settings.environment == DEMO:
+        raise ConfigError("the demo environment runs synthetic data: use --demo")
+    mode = settings.execution_mode
+    if mode not in PAPER_MODES:
+        logger.warning("EXECUTION_MODE=%s ignored: the v2 engine trades on the simulated "
+                       "broker only (paper)", mode)  # fmt: skip
+    clock = clock or WallClock()
+    calendar = get_calendar()
+    limits = load_risk_limits()
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    with EventStore(settings.db_path) as store:
+        sink = StoreSink(store, clock, "engine")
+        reference = await refresh_reference(settings.reference_dir, now_ist(clock).date())
+        alert_reference(reference, sink)
+        universe = list(reference.instruments.by_symbol.values())
+        priced = {i.key: i for i in universe} | held_instruments(store, "A")
+        tape = TapeWriter(settings.tape_dir)
+        quotes = YFinanceQuoteSource(
+            list(priced.values()), clock=clock, sink=sink, tape=tape,
+            validator=QuoteValidator(band_lookup(priced.values())),
+            market_open=calendar.is_market_open,
+        )  # fmt: skip
+        engine = build_engine(
+            config=_config(settings), clock=clock, calendar=calendar, store=store,
+            quotes=quotes, history=YFinanceHistorySource(tape=tape), universe=universe,
+            limits=limits,
+        )  # fmt: skip
+        return await _drive(engine, view, stop)
+
+
+async def run_demo(
+    settings: Settings,
+    view: SessionView,
+    *,
+    stop: asyncio.Event | None = None,
+    step_s: float = 30.0,
+    wall_s: float = 0.1,
+    today: date | None = None,
+) -> int:
+    if settings.environment != DEMO:
+        raise ConfigError("the demo runs only in ENVIRONMENT=demo (its own state directory)")
+    calendar = get_calendar()
+    today = today or datetime.now(IST).date()
+    days = calendar.trading_days(date(today.year, 1, 1), date(today.year, 12, 31))
+    day, previous = demo_day(today, days)
+    bars, quotes = synthetic_day(day, previous)
+    clock = ReplayClock(datetime.combine(day, time(9, 0), IST))
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    path = settings.state_dir / "demo.db"
+    for stale in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        stale.unlink(missing_ok=True)  # every demo starts from a clean book
+    with EventStore(path) as store:
+        engine = build_engine(
+            config=_config(settings), clock=clock, calendar=calendar, store=store,
+            quotes=TapeQuoteSource(quotes, clock=clock), history=TapeHistorySource(bars),
+            universe=demo_instruments(),
+            limits=load_risk_limits(),
+        )  # fmt: skip
+        done = asyncio.Event()
+        exit_at = datetime.combine(day, time(16, 0), IST)
+        pacer = asyncio.create_task(pace(clock, exit_at, step_s=step_s, wall_s=wall_s, done=done))
+        try:
+            return await _drive(engine, view, stop)
+        finally:
+            done.set()
+            await asyncio.gather(pacer, return_exceptions=True)
+
+
+def _config(settings: Settings) -> EngineConfig:
+    return EngineConfig(
+        environment=settings.environment,
+        starting_cash=Decimal(str(settings.paper_wallet_balance)),
+        halt_file=settings.halt_file,
+    )
+
+
+async def _drive(engine: Engine, view: SessionView, stop: asyncio.Event | None) -> int:
+    """Run the engine; refresh the view every second; stop early when ``stop`` is set."""
+    stats = getattr(view, "stats", None)
+    projector = StatsProjector(stats, engine) if stats is not None else None
+    view.set_effective_mode("local_paper")
+    run = asyncio.create_task(engine.run(), name="engine")
+
+    async def refresh() -> None:
+        while not run.done():
+            if projector is not None:
+                try:
+                    projector.refresh()
+                except Exception:  # the view never stops trading
+                    logger.exception("view refresh failed")
+            await view.render()
+            await asyncio.sleep(1.0)
+
+    painter = asyncio.create_task(refresh(), name="view")
+    stopper = asyncio.create_task(stop.wait() if stop else asyncio.Event().wait())
+    async with view:
+        await asyncio.wait({run, stopper}, return_when=asyncio.FIRST_COMPLETED)
+        if not run.done():  # asked to stop
+            run.cancel()
+        stopper.cancel()
+        results = await asyncio.gather(run, stopper, return_exceptions=True)
+        painter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await painter
+        if projector is not None:
+            projector.refresh()
+        await view.render()
+    outcome = results[0]
+    if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+        raise outcome
+    return outcome if isinstance(outcome, int) else 0

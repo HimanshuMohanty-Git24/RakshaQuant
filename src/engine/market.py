@@ -143,6 +143,9 @@ class MarketService:
         latest = self._quotes.last_quotes
         return {k: latest[k] for k in instrument_keys if k in latest}
 
+    def quotes(self) -> dict[str, Quote]:
+        return dict(self._quotes.last_quotes)
+
     def quote(self, instrument_key: str) -> Quote | None:
         return self._quotes.last_quotes.get(instrument_key)
 

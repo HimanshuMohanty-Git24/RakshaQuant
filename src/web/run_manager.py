@@ -3,8 +3,8 @@ Run manager — owns the live trading session as a background task and fans stat
 connected WebSocket clients.
 
 Responsibilities:
-* Start/stop a single trading run (the real :func:`run_trading_session`, or a self-contained
-  ``demo`` generator so the console is fully usable off-market / without API keys).
+* Start/stop a single trading run (the v2 engine, :mod:`src.engine.live`; in the ``demo``
+  environment the engine on a synthetic day, elsewhere an order-free UI demo generator).
 * Act as the :class:`~src.live.views.SnapshotSink`: cache the latest snapshot + recent cycle
   traces and broadcast every update to subscribers.
 * Enforce run-control safety: a run resolving to the **LIVE** environment is refused unless
@@ -23,7 +23,6 @@ from typing import Any
 
 from src.config import get_settings
 from src.live.recorder import env_badge, snapshot_from_stats
-from src.live.session import run_trading_session
 from src.live.views import StreamSessionView
 
 logger = logging.getLogger(__name__)
@@ -172,8 +171,10 @@ class RunManager:
 
     async def _run_real(self, view: StreamSessionView) -> None:
         assert self._stop_event is not None
+        from src.engine.live import run_paper
+
         try:
-            await run_trading_session(view, stop_event=self._stop_event)
+            await run_paper(get_settings(), view, stop=self._stop_event)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - surfaced to the UI, never crashes server
@@ -183,9 +184,17 @@ class RunManager:
     # ── Demo generator (no market data / API keys required) ─────────────────────────
 
     async def _run_demo(self, view: StreamSessionView) -> None:
-        """Fabricate a realistic-looking session so the console is demoable off-market."""
+        """In the demo environment: the real engine on a synthetic, paced day. Elsewhere: a
+        fabricated, order-free session so the console is demoable off-market."""
+        settings = get_settings()
         try:
-            await self._demo_loop(view)
+            if settings.environment == "demo":
+                from src.engine.live import run_demo
+
+                assert self._stop_event is not None
+                await run_demo(settings, view, stop=self._stop_event)
+            else:
+                await self._demo_loop(view)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - demo must never crash the server

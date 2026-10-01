@@ -1,13 +1,15 @@
 """
 RakshaQuant — main entry point.
 
-Runs the one shared trading loop (``src.live.session.run_trading_session``) in one of two
-front ends, selected with ``--mode``:
+Runs the v2 trading engine (``src.engine.live``: one paper book on the simulated broker,
+YFinance data, the RiskEngine on every order) behind one of two front ends, selected with
+``--mode``:
 
-* ``cli``  (default) — the ``rich`` terminal dashboard. Unchanged from before.
+* ``cli``  (default) — the ``rich`` terminal dashboard.
 * ``web``           — a FastAPI + WebSocket server driving the browser console.
 
-Both modes drive identical trading logic; the web layer is a presentation/control shell.
+Both modes drive the same engine; the views are fed from the event store's projections.
+``--demo`` replays a synthetic day through the same engine in the ``demo`` environment.
 
 Examples::
 
@@ -27,8 +29,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 
+from src.config.settings import get_settings
 from src.dashboard.cli import TradingStats
-from src.live.session import run_trading_session
+from src.engine.live import run_demo, run_paper
 from src.live.views import RichSessionView
 from src.ops.exit_codes import ExitCode
 from src.ops.process import run_entry_point
@@ -37,11 +40,11 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-async def _run_cli() -> None:
-    """CLI mode: drive the shared session through the rich terminal dashboard."""
-    stats = TradingStats()
-    view = RichSessionView(stats)
-    await run_trading_session(view)
+async def _run_cli(demo: bool) -> int:
+    """CLI mode: the engine behind the rich terminal dashboard."""
+    view = RichSessionView(TradingStats())
+    settings = get_settings()
+    return await (run_demo(settings, view) if demo else run_paper(settings, view))
 
 
 def _run_web(args: argparse.Namespace) -> int:
@@ -129,8 +132,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.mode == "web":
         return _run_web(args)
 
-    asyncio.run(_run_cli())
-    return ExitCode.OK
+    return asyncio.run(_run_cli(args.demo))
 
 
 if __name__ == "__main__":

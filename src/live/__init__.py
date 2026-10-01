@@ -1,19 +1,15 @@
 """
-Live trading session — the shared driver behind both the CLI and web front ends.
+Session views - the renderers (CLI dashboard, web stream) behind the trading engine.
 
-``run_trading_session`` is the single source of trading logic. It is parameterised by a
-:class:`~src.live.views.SessionView` so the exact same loop can render to a ``rich``
-terminal dashboard (``RichSessionView``) or stream JSON snapshots to the web UI
-(``StreamSessionView``). This keeps one trading path — there is deliberately no second,
-divergent loop for the browser.
+Since plan M5.6 they render the v2 engine (:mod:`src.engine.live`), fed from the event store's
+projections. The legacy ``run_trading_session`` loop is no longer on any live path; import it from
+:mod:`src.live.session` only where the legacy tests still need it (moved to ``src/legacy`` in 5.5).
 """
 
 from src.live.recorder import CycleRecorder, CycleTrace, Span, snapshot_from_stats
-from src.live.session import run_trading_session
 from src.live.views import RichSessionView, SessionView, StreamSessionView
 
 __all__ = [
-    "run_trading_session",
     "SessionView",
     "RichSessionView",
     "StreamSessionView",

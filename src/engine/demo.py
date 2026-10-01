@@ -1,0 +1,92 @@
+"""
+The demo (plan M2.6, M5.6): the real v2 engine on a **synthetic** trading day, paced so a whole
+session plays in a few minutes. Every price is ``MarketDataSource.SIMULATED``, which the
+RiskEngine allows to trade only in the ``demo`` environment (its own ``var/demo/`` state).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Sequence
+from datetime import date, datetime, time, timedelta
+
+import numpy as np
+import pandas as pd
+
+from src.domain.clock import ReplayClock
+from src.domain.types import Bar, Instrument, MarketDataSource, Quote, Timeframe
+from src.engine.market import INDEX_KEY
+from src.utils.market_time import IST
+
+SIM = MarketDataSource.SIMULATED
+# symbol, sector, last close, history seed (seed 3 makes momentum fire on the last bar)
+DEMO_SYMBOLS: tuple[tuple[str, str, float, int], ...] = (
+    ("INFY", "Information Technology", 1000.0, 3),
+    ("TCS", "Information Technology", 4000.0, 8),
+    ("RELIANCE", "Oil Gas & Consumable Fuels", 2900.0, 11),
+    ("HDFCBANK", "Financial Services", 1650.0, 12),
+    ("ICICIBANK", "Financial Services", 1250.0, 13),
+    ("SBIN", "Financial Services", 820.0, 14),
+    ("ITC", "Fast Moving Consumer Goods", 470.0, 15),
+    ("LT", "Construction", 3600.0, 16),
+)
+
+
+def demo_instruments() -> list[Instrument]:
+    return [Instrument.nse_equity(s, sector=sector) for s, sector, _, _ in DEMO_SYMBOLS]
+
+
+def _history(key: str, seed: int, last: float, end: date, n: int = 250) -> list[Bar]:
+    rng = np.random.default_rng(seed)
+    close = np.exp(np.cumsum(rng.normal(0, 0.01, n)))
+    close = close / close[-1] * last
+    days = pd.bdate_range(end=pd.Timestamp(end), periods=n)
+    return [
+        Bar(instrument_key=key, timeframe=Timeframe.D1, session_date=d.date(), open=float(c),
+            high=float(c) * 1.008, low=float(c) * 0.992, close=float(c), volume=3_000_000,
+            is_settled=True, adjusted=adjusted, source=SIM)
+        for adjusted in (False, True)
+        for d, c in zip(days, close, strict=True)
+    ]  # fmt: skip
+
+
+def synthetic_day(day: date, previous: date) -> tuple[list[Bar], list[Quote]]:
+    """Settled history up to ``previous`` and one-minute quotes for ``day`` (09:15-15:30)."""
+    bars: list[Bar] = _history(INDEX_KEY, 5, 25_000.0, previous)
+    quotes: list[Quote] = []
+    for n, (symbol, _, last, seed) in enumerate(DEMO_SYMBOLS):
+        key = f"NSE:EQ:{symbol}"
+        bars += _history(key, seed, last, previous)
+        rng = np.random.default_rng(1000 + n)
+        drift = 0.0004 if symbol == "INFY" else 0.0  # INFY trends up to its target
+        steps = np.cumsum(rng.normal(drift, 0.0012, 376))
+        minute = datetime.combine(day, time(9, 15), IST)
+        for i, step in enumerate(steps):
+            ts = minute + timedelta(minutes=i)
+            quotes.append(Quote(instrument_key=key, ltp=round(last * float(np.exp(step)), 2),
+                                prev_close=last, volume_cum=(i + 1) * 40_000,
+                                exchange_ts=ts - timedelta(minutes=15), receipt_ts=ts,
+                                source=SIM, is_delayed=True))  # fmt: skip
+    return bars, quotes
+
+
+async def pace(
+    clock: ReplayClock,
+    until: datetime,
+    *,
+    step_s: float = 30.0,
+    wall_s: float = 0.1,
+    done: asyncio.Event | None = None,
+) -> None:
+    """Advance the replay clock by ``step_s`` every ``wall_s`` of real time."""
+    while clock.now() < until and (done is None or not done.is_set()):
+        await clock.advance(step_s)
+        await asyncio.sleep(wall_s)
+
+
+def demo_day(today: date, trading_days: Sequence[date]) -> tuple[date, date]:
+    """The session to replay (the next trading day from today) and the one before it."""
+    future = [d for d in trading_days if d >= today]
+    day = future[0] if future else trading_days[-1]
+    earlier = [d for d in trading_days if d < day]
+    return day, earlier[-1] if earlier else day - timedelta(days=1)
