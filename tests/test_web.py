@@ -34,6 +34,7 @@ class _CollectSink:
     def add_cycle(self, cycle: dict) -> None:
         self.cycles.append(cycle)
 
+
 # ── Serialisation contract ──────────────────────────────────────────────────────
 
 
@@ -47,8 +48,17 @@ def test_env_badge_mapping():
 def test_snapshot_shape_and_env():
     snap = snapshot_from_stats(TradingStats(), run_status="IDLE", effective_mode="local_paper")
     for key in (
-        "run", "account", "trades", "agents", "regime",
-        "finops", "goal", "positions", "quotes", "decision", "activity",
+        "run",
+        "account",
+        "trades",
+        "agents",
+        "regime",
+        "finops",
+        "goal",
+        "positions",
+        "quotes",
+        "decision",
+        "activity",
     ):
         assert key in snap
     assert snap["run"]["env"] == "PAPER"
@@ -56,10 +66,18 @@ def test_snapshot_shape_and_env():
 
 
 def test_resolve_effective_mode_downgrades_live_without_gate():
-    assert resolve_effective_mode(SimpleNamespace(execution_mode="live", allow_live_orders=False)) == "shadow"
-    assert resolve_effective_mode(SimpleNamespace(execution_mode="live", allow_live_orders=True)) == "live"
     assert (
-        resolve_effective_mode(SimpleNamespace(execution_mode="local_paper", allow_live_orders=False))
+        resolve_effective_mode(SimpleNamespace(execution_mode="live", allow_live_orders=False))
+        == "shadow"
+    )
+    assert (
+        resolve_effective_mode(SimpleNamespace(execution_mode="live", allow_live_orders=True))
+        == "live"
+    )
+    assert (
+        resolve_effective_mode(
+            SimpleNamespace(execution_mode="local_paper", allow_live_orders=False)
+        )
         == "local_paper"
     )
 

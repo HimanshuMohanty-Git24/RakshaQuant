@@ -25,13 +25,23 @@ from src.market.yfinance_feed import YFinanceFeed
 # A fixed large-cap universe. Deliberately NOT StockDiscovery (which picks today's movers and
 # would bias the evaluation). Replace with a point-in-time, survivorship-free list for production.
 DEFAULT_UNIVERSE = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "SBIN", "ITC", "LT", "AXISBANK", "BHARTIARTL",
+    "RELIANCE",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "ICICIBANK",
+    "SBIN",
+    "ITC",
+    "LT",
+    "AXISBANK",
+    "BHARTIARTL",
 ]
 LINE = "=" * 84
 
 
-def main(symbols: list[str] | None = None, period: str = "2y", warmup: int = 120, test: int = 40) -> None:
+def main(
+    symbols: list[str] | None = None, period: str = "2y", warmup: int = 120, test: int = 40
+) -> None:
     symbols = symbols or DEFAULT_UNIVERSE
     cost_model = CostModel.from_settings()
     feed = YFinanceFeed(symbols=symbols)
@@ -65,7 +75,9 @@ def main(symbols: list[str] | None = None, period: str = "2y", warmup: int = 120
             cost_model=cost_model,
         )
         reports.append(report)
-        pf = "inf" if report.oos_profit_factor == float("inf") else f"{report.oos_profit_factor:.2f}"
+        pf = (
+            "inf" if report.oos_profit_factor == float("inf") else f"{report.oos_profit_factor:.2f}"
+        )
         print(
             f"{sym:<12}{report.oos_trades:>8}{report.oos_return_pct:>9.2f}"
             f"{report.oos_expectancy:>9.3f}{report.oos_win_rate:>7.1f}{pf:>7}"

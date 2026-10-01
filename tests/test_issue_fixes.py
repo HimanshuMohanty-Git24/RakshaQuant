@@ -76,7 +76,11 @@ def _numpy_state() -> dict:
     """A state fragment shaped like the real pipeline, seeded with numpy scalars."""
     return {
         "prediction_signals": [
-            {"symbol": "INFY", "confidence": np.float64(0.72), "predicted_change_pct": np.float64(1.3)}
+            {
+                "symbol": "INFY",
+                "confidence": np.float64(0.72),
+                "predicted_change_pct": np.float64(1.3),
+            }
         ],
         "daily_stats": {"profit_loss": np.float64(-250.0), "max_drawdown": np.float64(1200.0)},
         "portfolio": {"capital": np.float64(998750.0)},

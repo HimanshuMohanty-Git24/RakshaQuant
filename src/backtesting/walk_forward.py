@@ -88,8 +88,12 @@ def generate_test_folds(n_bars: int, warmup_bars: int, test_bars: int) -> list[t
 def _metrics_from_pnls(pnls: list[float], initial_capital: float) -> dict[str, float]:
     if not pnls:
         return {
-            "trades": 0, "return_pct": 0.0, "expectancy": 0.0,
-            "win_rate": 0.0, "profit_factor": 0.0, "max_drawdown_pct": 0.0,
+            "trades": 0,
+            "return_pct": 0.0,
+            "expectancy": 0.0,
+            "win_rate": 0.0,
+            "profit_factor": 0.0,
+            "max_drawdown_pct": 0.0,
         }
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]

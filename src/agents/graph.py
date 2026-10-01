@@ -245,9 +245,7 @@ async def run_trading_cycle(
     state = create_initial_state()
     state["market_data"] = to_native(market_data)
     state["indicators"] = to_native(indicators)
-    state["signals"] = to_native(
-        [s.to_dict() if hasattr(s, "to_dict") else s for s in signals]
-    )
+    state["signals"] = to_native([s.to_dict() if hasattr(s, "to_dict") else s for s in signals])
     state["memory_lessons"] = to_native(memory_lessons or [])
     state["portfolio"] = to_native(portfolio or {"capital": 1000000, "positions": []})
     state["daily_stats"] = to_native(

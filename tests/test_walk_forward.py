@@ -21,8 +21,13 @@ from src.execution.costs import CostModel
 def _uptrend(n=240):
     closes = np.linspace(100, 200, n)
     return pd.DataFrame(
-        {"Open": closes, "High": closes * 1.01, "Low": closes * 0.99,
-         "Close": closes, "Volume": 1000},
+        {
+            "Open": closes,
+            "High": closes * 1.01,
+            "Low": closes * 0.99,
+            "Close": closes,
+            "Volume": 1000,
+        },
         index=pd.date_range("2023-01-01", periods=n, freq="D"),
     )
 
@@ -52,6 +57,7 @@ class _OneFoldStrategy(Strategy):
 # Fold generation + metrics
 # ---------------------------------------------------------------------------
 
+
 def test_generate_test_folds():
     folds = generate_test_folds(n_bars=200, warmup_bars=120, test_bars=40)
     assert folds == [(120, 160), (160, 200)]
@@ -73,6 +79,7 @@ def test_metrics_from_pnls():
 # ---------------------------------------------------------------------------
 # run_walk_forward
 # ---------------------------------------------------------------------------
+
 
 def test_run_walk_forward_produces_oos_folds():
     data = _uptrend(240)
@@ -127,6 +134,7 @@ def test_trade_pnl_is_net_of_costs():
 # Cost integration in the engine
 # ---------------------------------------------------------------------------
 
+
 def test_costs_reduce_backtest_returns():
     data = _uptrend(240)
     free = BacktestEngine(cost_model=CostModel.zero()).run(_PingPong(), data, "X")
@@ -139,6 +147,7 @@ def test_costs_reduce_backtest_returns():
 # ---------------------------------------------------------------------------
 # Verdict logic
 # ---------------------------------------------------------------------------
+
 
 def test_edge_verdict_validated():
     v = edge_verdict(oos_trades=100, oos_expectancy=1.5, oos_return_pct=8.0, fold_consistency=0.7)

@@ -85,7 +85,9 @@ class HistoryManager:
         if synthetic:
             logger.warning(
                 "Pre-fetch: %d/%d real, %d seeded with SYNTHETIC history (YFinance unavailable)",
-                fetched - synthetic, len(self.symbols), synthetic,
+                fetched - synthetic,
+                len(self.symbols),
+                synthetic,
             )
         else:
             logger.info(f"Pre-fetch complete: {fetched}/{len(self.symbols)} symbols loaded")

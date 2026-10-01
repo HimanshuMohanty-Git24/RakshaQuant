@@ -16,6 +16,7 @@ from src.risk.guards import DrawdownTracker, is_circuit_locked
 # DrawdownTracker
 # ---------------------------------------------------------------------------
 
+
 def test_drawdown_tracker_tracks_peak_to_trough():
     t = DrawdownTracker(peak_equity=1_000_000, current_equity=1_000_000)
     t.update(1_010_000)  # new peak
@@ -39,6 +40,7 @@ def test_drawdown_includes_unrealized_loss_immediately():
 # ---------------------------------------------------------------------------
 # Kill-switch wiring (the bug: drawdown limb was dead)
 # ---------------------------------------------------------------------------
+
 
 def _kill_state(tracker: DrawdownTracker) -> dict:
     return {
@@ -65,6 +67,7 @@ def test_kill_switch_quiet_below_drawdown_limit():
 # Circuit guard
 # ---------------------------------------------------------------------------
 
+
 def test_is_circuit_locked():
     assert is_circuit_locked(10.0, 10.0) is True
     assert is_circuit_locked(-12.0, 10.0) is True
@@ -76,12 +79,18 @@ def test_is_circuit_locked():
 # ExitManager.clear (kill-switch flatten)
 # ---------------------------------------------------------------------------
 
+
 def test_exit_manager_clear_drops_and_persists(tmp_path):
     path = tmp_path / "exits.json"
     em = ExitManager(state_file=path)
     em.register_position(
-        position_id="P1", symbol="X", side="BUY", quantity=1,
-        entry_price=100.0, stop_loss=95.0, target_price=110.0,
+        position_id="P1",
+        symbol="X",
+        side="BUY",
+        quantity=1,
+        entry_price=100.0,
+        stop_loss=95.0,
+        target_price=110.0,
     )
     assert em.get_position("P1") is not None
     em.clear()
@@ -93,6 +102,7 @@ def test_exit_manager_clear_drops_and_persists(tmp_path):
 # ---------------------------------------------------------------------------
 # Kill-switch flatten: loop until truly flat
 # ---------------------------------------------------------------------------
+
 
 def test_flatten_loop_clears_multiple_same_symbol_positions(tmp_path):
     """The flatten loop must reach a flat book before tracking is cleared.

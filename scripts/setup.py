@@ -28,8 +28,10 @@ def main() -> None:
     print(LINE)
     print(" RakshaQuant - Setup")
     print(LINE)
-    print(f"[i] Python {sys.version_info.major}.{sys.version_info.minor} "
-          f"({'OK' if sys.version_info >= (3, 11) else 'needs 3.11+'})")
+    print(
+        f"[i] Python {sys.version_info.major}.{sys.version_info.minor} "
+        f"({'OK' if sys.version_info >= (3, 11) else 'needs 3.11+'})"
+    )
 
     # 1. Ensure a .env exists.
     if not ENV.exists():
@@ -70,8 +72,10 @@ def main() -> None:
     print(f"  Groq API key:     {_status(groq_ok)}")
     print(f"  LangSmith key:    {_status(langsmith_ok)}  (optional - tracing)")
     print(f"  Data source:      {settings.market_data_source}")
-    print(f"  Execution mode:   {settings.execution_mode}  "
-          f"(allow_live_orders={settings.allow_live_orders})")
+    print(
+        f"  Execution mode:   {settings.execution_mode}  "
+        f"(allow_live_orders={settings.allow_live_orders})"
+    )
     print(f"  Paper wallet:     Rs.{settings.paper_wallet_balance:,.0f}")
     print(f"  Learning loop:    {'on' if settings.enable_learning else 'off'}")
     print(f"  FinOps:           {'on' if settings.finops_enabled else 'off'}")

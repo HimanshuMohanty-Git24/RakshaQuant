@@ -141,9 +141,7 @@ def create_header(stats: TradingStats) -> Panel:
 
     # Market open/closed (IST) + clock.
     market_open = is_market_hours()
-    market_badge = (
-        "[bold green]● NSE OPEN[/]" if market_open else "[dim]○ NSE CLOSED[/]"
-    )
+    market_badge = "[bold green]● NSE OPEN[/]" if market_open else "[dim]○ NSE CLOSED[/]"
     clock = now_ist().strftime("%H:%M:%S IST")
 
     # Session time.
