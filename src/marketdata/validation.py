@@ -10,19 +10,30 @@ when:
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 
 from pydantic import JsonValue
 
-from src.domain.types import MarketDataSource, Quote
+from src.domain.types import Instrument, MarketDataSource, Quote
 from src.utils.market_time import IST
 
 # Default circuit band when an instrument has none: NIFTY 50 names are F&O stocks without a
 # fixed band (dynamic bands start at 10% and can flex), so validation uses a generous 20%.
 DEFAULT_BAND_PCT = 20.0
 BAND_TOLERANCE_PCT = 2.0
+
+
+def band_lookup(instruments: Iterable[Instrument]) -> Callable[[str], float]:
+    """Band (%) by instrument key for the validator: the scrip's band, else the default."""
+    bands = {i.key: i.band_pct for i in instruments}
+
+    def lookup(key: str) -> float:
+        band = bands.get(key)
+        return DEFAULT_BAND_PCT if band is None else band
+
+    return lookup
 
 
 @dataclass(frozen=True, slots=True)
