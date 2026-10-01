@@ -8,6 +8,13 @@ It is a thin presentation layer — it renders the live `TradingStats` snapshot 
 observability traces streamed by the FastAPI backend (`src/web`) over a WebSocket. All trading
 logic lives in the shared Python engine.
 
+## Requirements
+
+- **Node `^20.19` or `>=22.12`** (Vite 8).
+- npm installs from **`https://registry.npmjs.org/`**: `frontend/.npmrc` pins it for this
+  project, so a machine-wide plain-`http://` registry setting is not used here. Leave your
+  global npm config alone; `npm config get registry` inside `frontend/` should print the https URL.
+
 ## Develop
 
 Run the backend in dev mode (enables CORS for the Vite dev server), then Vite:

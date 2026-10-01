@@ -27,7 +27,7 @@ uv run python src/backtesting/engine.py     # run a backtest
 
 # Web mode uses the optional `web` extra (FastAPI + uvicorn) and a built frontend:
 uv sync --extra web                            # install web deps
-(cd frontend && npm install && npm run build)  # build the SPA into frontend/dist (Node 18+)
+(cd frontend && npm install && npm run build)  # build the SPA into frontend/dist (Node ^20.19 or >=22.12; frontend/.npmrc pins the https registry)
 
 # pytest/ruff/mypy live in the `dev` optional group — pass --extra dev (or `uv sync --extra dev` once).
 uv run --extra dev pytest                     # full test suite (210 tests)

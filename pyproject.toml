@@ -28,7 +28,8 @@ dependencies = [
     
     # Data Processing
     "pandas>=2.0.0",
-    "numpy>=1.24.0",
+    # <2.5: numpy 2.5 needs Python 3.12 and its stubs use 3.12 syntax; the target is 3.11.
+    "numpy>=1.24.0,<2.5",
     
     # Technical Indicators
     "ta>=0.11.0",
@@ -49,6 +50,13 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "rich>=13.0.0",  # CLI dashboard
     "filelock>=3.16",  # single-instance lock on the state directory
+
+    # Platform v2 (M1-M7): LLM providers, storage, config, HTTP
+    "openai>=3.22",  # every OpenAI-compatible provider (OpenRouter, Groq, Ollama, ...)
+    "anthropic>=1.11",  # native Claude SDK
+    "httpx2>=2.13",  # async HTTP (Jev, RSS); the same client stack the SDKs use
+    "pyarrow>=25.0",  # Parquet quote/bar tape
+    "pyyaml>=6.0.3",  # YAML config (costs, pricing, event rules, experiment)
     
     # Optional: Redis for caching
     "redis>=5.0.0",
@@ -61,13 +69,21 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
+    "pytest-benchmark>=5.3",
+    "hypothesis>=6.168",
 ]
 
 # Web console (browser front end). Optional so the CLI-only install stays lean:
 #   uv sync --extra web   (or  pip install '.[web]')
 web = [
-    "fastapi>=0.110.0",
+    "fastapi>=0.140",
     "uvicorn[standard]>=0.29.0",
+]
+
+# Local typed decision model (Laya, Convai Innovations, Apache-2.0). Pulls torch + onnxruntime,
+# so it stays out of the base install:  uv sync --extra decision-local
+decision-local = [
+    "laya[onnx]>=0.3.3",
 ]
 
 [build-system]
@@ -80,6 +96,8 @@ packages = ["src"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# Markdown docs hold illustrative snippets (and the dated audit record); keep ruff on code.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]

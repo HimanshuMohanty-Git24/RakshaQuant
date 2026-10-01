@@ -28,7 +28,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 MAX_IDEMPOTENCY_ENTRIES = 5000
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     LOCAL_PAPER = "local_paper"
     SHADOW = "shadow"
     DHAN_PAPER = "dhan_paper"
