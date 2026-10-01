@@ -146,6 +146,15 @@ class MarketDataSource(StrEnum):
         return self in (MarketDataSource.SIMULATED, MarketDataSource.SYNTHETIC)
 
 
+class Regime(StrEnum):
+    """The deterministic NIFTY market regime (plan M5.3): context, never an exit trigger."""
+
+    TRENDING_UP = "trending_up"
+    TRENDING_DOWN = "trending_down"
+    RANGING = "ranging"
+    VOLATILE = "volatile"
+
+
 class SessionState(StrEnum):
     """Session lifecycle states (plan M2.5)."""
 

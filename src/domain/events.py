@@ -47,6 +47,7 @@ from src.domain.types import (
     Position,
     Quote,
     ReasonCode,
+    Regime,
     RiskDecision,
     SessionState,
     Side,
@@ -215,6 +216,22 @@ class HolidaySkipped(EventPayload):
 # ---------------------------------------------------------------------------
 # Payloads: decision
 # ---------------------------------------------------------------------------
+
+
+class RegimeComputed(EventPayload):
+    """The day's NIFTY regime, computed pre-open from settled bars (plan M5.3)."""
+
+    event_type = "RegimeComputed"
+    session_date: date  # the trading day it applies to
+    bar_date: date  # the last settled index bar it was computed from
+    label: Regime  # after hysteresis
+    raw: Regime  # the latest bar's own classification
+    changed: bool  # the confirmed label changed on this bar
+    adx: NonNegFloat | None = None
+    plus_di: NonNegFloat | None = None
+    minus_di: NonNegFloat | None = None
+    vol_annualized: NonNegFloat | None = None
+    vol_percentile: float | None = Field(default=None, ge=0, le=1)
 
 
 class SignalGenerated(EventPayload):
@@ -551,6 +568,7 @@ _PAYLOADS: tuple[type[EventPayload], ...] = (
     SessionStateChanged,
     HolidaySkipped,
     # decision
+    RegimeComputed,
     SignalGenerated,
     AdvisorRequested,
     AdvisorVerdict,

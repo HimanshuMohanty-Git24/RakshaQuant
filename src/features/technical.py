@@ -138,7 +138,7 @@ def compute_features(frame: pd.DataFrame, instrument_key: str) -> Features:
 
     return Features(
         instrument_key=instrument_key,
-        bar_date=_as_date(df.index[-1]),
+        bar_date=as_date(df.index[-1]),
         bars=n,
         open=float(last["open"]),
         high=float(last["high"]),
@@ -178,7 +178,7 @@ def _log(value: float) -> float:
     return math.log(value) if value and value > 0 and math.isfinite(value) else math.nan
 
 
-def _as_date(value: Any) -> date:
+def as_date(value: Any) -> date:
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):

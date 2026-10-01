@@ -31,6 +31,7 @@ from src.domain.types import (
     Product,
     Quote,
     ReasonCode,
+    Regime,
     RiskCheckResult,
     RiskDecision,
     RiskOutcome,
@@ -217,6 +218,18 @@ def sample_payloads() -> list[EventPayload]:
             current=SessionState.ENTRY_WINDOW,
         ),
         ev.HolidaySkipped(session_date=date(2026, 10, 2), reason="Mahatma Gandhi Jayanti"),
+        ev.RegimeComputed(
+            session_date=date(2026, 10, 5),
+            bar_date=date(2026, 10, 1),
+            label=Regime.TRENDING_UP,
+            raw=Regime.RANGING,
+            changed=False,
+            adx=27.5,
+            plus_di=24.0,
+            minus_di=15.0,
+            vol_annualized=0.13,
+            vol_percentile=0.42,
+        ),
         ev.SignalGenerated(
             signal=Signal(
                 signal_id="s-0001",
