@@ -389,6 +389,24 @@ async def test_state_survives_a_restart_through_the_store(tmp_path):
         assert store.snapshot_projections()["orders"] == []  # broker state is not an event
 
 
+async def test_a_placed_or_modified_order_is_durable_before_it_is_acknowledged(tmp_path):
+    """Regression: a resting order was only written by a later save, so a crash right after the
+    ack lost it at the 'exchange' while the OMS had already recorded it."""
+    with EventStore(tmp_path / "rq.db") as store:
+        clock = ReplayClock(at(9, 30))
+        broker, _ = make_broker(clock=clock, state_store=KVRecordStore(store, "sim_broker/A"))
+        await buy_and_fill(broker, clock, 100)
+        ack = await broker.place_order(
+            order(Side.SELL, 100, leg="stop", order_type=OrderType.SL_M, trigger="950")
+        )
+        crashed, _ = make_broker(clock=clock, state_store=KVRecordStore(store, "sim_broker/A"))
+        assert await crashed.find_order_by_tag(ack.client_order_id) is not None
+        await broker.modify_order(ack.broker_order_id, trigger=Decimal("960"))
+        crashed, _ = make_broker(clock=clock, state_store=KVRecordStore(store, "sim_broker/A"))
+        snap = await crashed.get_order(ack.broker_order_id)
+        assert snap.trigger_price == Decimal("960")
+
+
 async def _scenario() -> list[tuple[str, int, Decimal, datetime]]:
     broker, clock = make_broker(costs=NSECostSchedule.from_yaml())
     broker.on_quote(quote(1000.0, 0, at(9, 30)))

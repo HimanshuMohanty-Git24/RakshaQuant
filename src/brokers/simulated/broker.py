@@ -492,6 +492,7 @@ class SimulatedBroker:
         self._state.blocked += reserved
         self._state.orders[sim.broker_order_id] = sim
         self._by_tag[sim.client_order_id] = sim.broker_order_id
+        self._dirty_orders.add(sim.broker_order_id)  # durable before it is acknowledged
         self._save()
         self._notify_update(sim)
         return self._ack(sim)
@@ -594,6 +595,7 @@ class SimulatedBroker:
         order.updated_at = self._clock.now()
         if order.remaining == 0:
             self._finish(order, OrderStatus.FILLED, "", order.updated_at)
+        self._dirty_orders.add(order.broker_order_id)
         self._save()
         self._notify_update(order)
         return self._ack(order, "modified")
