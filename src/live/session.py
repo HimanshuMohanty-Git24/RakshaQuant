@@ -22,6 +22,7 @@ from src.agents.graph import create_trading_graph, run_trading_cycle
 from src.agents.risk_compliance import check_kill_switch
 from src.config import get_settings
 from src.dashboard.cli import TradingDashboard
+from src.domain.types import CheckOutcome
 from src.execution.exit_manager import ExitManager
 from src.execution.journal import TradeJournal
 from src.execution.paper_engine import LocalPaperEngine
@@ -42,6 +43,7 @@ from src.memory.performance_tracker import get_performance_tracker
 from src.notifications.telegram import get_notifier
 from src.observability.tracing import setup_tracing
 from src.profit import ProfitGoalEngine
+from src.risk.checks.system import DEMO_ENVIRONMENT, check_data_source, legacy_source
 from src.risk.guards import DrawdownTracker, is_circuit_locked
 from src.utils.formatting import fmt_optional
 
@@ -95,6 +97,13 @@ async def run_trading_session(
     # the renderer share one source of truth.
     dashboard = TradingDashboard()
     dashboard.stats = view.stats
+
+    # Plan M2.6: simulated prices may only trade in the demo environment (its own state
+    # directory). Off-hours this loop would run on simulated data, so outside demo it refuses
+    # before doing any work.
+    if not is_market_open() and settings.environment != DEMO_ENVIRONMENT:
+        _refuse_simulated(view, settings.environment, "the market is closed")
+        return
 
     # Initialize dashboard
     data_source = "live" if is_market_open() else "simulated"
@@ -257,6 +266,17 @@ async def run_trading_session(
 
     # Start market data
     is_live = await market_manager.start()
+    source_check = check_data_source(
+        legacy_source(market_manager.data_source), settings.environment
+    )
+    if source_check.outcome is CheckOutcome.BLOCK:  # the feed fell back to simulated data
+        await market_manager.stop()
+        _refuse_simulated(view, settings.environment, source_check.message)
+        return
+    # Re-checked on every order as well (defence in depth): SYS_DATA_SIMULATED.
+    execution_service.data_guard = lambda: check_data_source(
+        legacy_source(market_manager.data_source), settings.environment
+    )
     dashboard.stats.data_source = market_manager.data_source
     dashboard.stats.log_activity(
         f"Data source: {market_manager.data_source}"
@@ -881,3 +901,12 @@ async def run_trading_session(
                     await notifier.send_shutdown_message(reason="Session ended")
                 except Exception as e:
                     logger.warning("Telegram shutdown notification failed: %s", e)
+
+
+def _refuse_simulated(view: SessionView, environment: str, why: str) -> None:
+    message = (
+        f"Not trading: {why}, and simulated prices may not create orders in environment "
+        f"'{environment}'. Run with --demo for a simulated session (separate demo state)."
+    )
+    logger.warning(message)
+    view.note(f"[yellow]{message}[/]")

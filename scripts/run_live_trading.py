@@ -19,6 +19,7 @@ Examples::
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -80,7 +81,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Web mode: run a synthetic demo session (no market data / API keys).",
+        help="Demo: simulated data in the separate 'demo' environment (own state, wallet and "
+        "lock). The only way simulated prices may create orders.",
     )
     parser.add_argument(
         "--dev",
@@ -103,6 +105,9 @@ def main() -> None:
     logged to the console, which belongs to the dashboard.
     """
     args = _parse_args()
+    if args.demo:
+        # Plan M2.6: simulated data only ever runs in the demo environment (var/demo/).
+        os.environ["ENVIRONMENT"] = "demo"
     run_entry_point(
         "run_live_trading",
         lambda: _run(args),

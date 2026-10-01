@@ -23,6 +23,8 @@ uv run python scripts/check_config.py       # validate .env / settings (run this
 uv run python scripts/run_live_trading.py            # MAIN entry point: CLI dashboard (default)
 uv run python scripts/run_live_trading.py --mode web # same loop, browser console (needs `web` extra)
 uv run python scripts/run_live_trading.py --mode web --demo  # web console, synthetic data (no keys)
+uv run python scripts/run_live_trading.py --demo     # simulated session, separate var/demo/ state
+# Outside --demo the loop refuses to trade on simulated prices (e.g. off-hours): plan M2.6.
 uv run python src/backtesting/engine.py     # run a backtest
 
 # Web mode uses the optional `web` extra (FastAPI + uvicorn) and a built frontend:

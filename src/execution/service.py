@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import get_settings
+from src.domain.types import CheckOutcome, RiskCheckResult
 from src.execution.adapter import OrderRequest, OrderSide, OrderStatus, OrderType
 from src.execution.live_executor import LiveBrokerExecutor
 from src.execution.paper_engine import LocalPaperEngine
@@ -144,6 +145,8 @@ class ExecutionService:
     idempotency: IdempotencyStore = field(default_factory=IdempotencyStore)
     kill_switch: Callable[[], bool] | None = None
     broker_executor: LiveBrokerExecutor | None = None
+    # SYS_DATA_SIMULATED (plan M2.6): evaluated on every submit; a BLOCK refuses the order.
+    data_guard: Callable[[], RiskCheckResult] | None = None
     _effective_mode: ExecutionMode = field(init=False)
 
     def __post_init__(self) -> None:
@@ -241,6 +244,20 @@ class ExecutionService:
                 client_order_id=client_order_id,
                 message="kill switch active",
             )
+        if self.data_guard is not None:
+            check = self.data_guard()
+            if check.outcome is CheckOutcome.BLOCK:
+                logger.warning("%s — blocking %s %s %s", check.message, side, quantity, symbol)
+                return ExecutionResult(
+                    status="BLOCKED",
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    fill_price=0.0,
+                    mode=self._effective_mode.value,
+                    client_order_id=client_order_id,
+                    message=f"{check.code.value}: {check.message}",
+                )
         return None
 
     def _fill_paper(
