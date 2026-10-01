@@ -1,0 +1,139 @@
+# Quality gates from docs/plan/2026-10-01-platform-v2-plan.md §8 (task M0.8).
+name: CI
+
+on:
+  push:
+    branches: [main, platform-v2]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  # Global strict-mypy error ceiling (ratchet). Lower it whenever the count drops; never raise it.
+  MYPY_MAX_ERRORS: "374"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv run --locked --extra dev ruff check .
+      - run: uv run --locked --extra dev ruff format --check .
+
+  pytest:
+    name: pytest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows too: the paper run is hosted on Windows.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Windows runners default to autocrlf=true; the repo mixes LF and CRLF files, so keep
+      # bytes as committed or the "must not modify the repo" check can fail spuriously.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv run --locked --extra dev --extra web pytest -q
+      - name: The test run must not modify the repo
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::the test run changed the working tree"
+            exit 1
+          fi
+
+  pytest-tz:
+    # Catches host-local-time bugs: market logic must use IST, never the host's zone.
+    name: pytest (TZ=America/New_York)
+    runs-on: ubuntu-latest
+    env:
+      TZ: America/New_York
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv run --locked --extra dev --extra web python -c "import time; print(time.tzname)"
+      - run: uv run --locked --extra dev --extra web pytest -q
+      - name: The test run must not modify the repo
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::the test run changed the working tree"
+            exit 1
+          fi
+
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Strict mypy on the v2 packages (must be clean)
+        run: |
+          pkgs=()
+          for d in src/domain src/store src/ops src/marketdata src/reference src/brokers \
+                   src/oms src/risk src/strategies src/features src/decision \
+                   src/decision_models src/llm src/evaluation src/engine src/web; do
+            if [ -d "$d" ]; then pkgs+=("$d"); fi
+          done
+          echo "strict packages: ${pkgs[*]}"
+          uv run --locked --extra dev --extra web mypy --follow-imports=silent "${pkgs[@]}"
+      - name: Global mypy error ratchet
+        run: uv run --locked --extra dev --extra web python scripts/ci/mypy_ratchet.py "$MYPY_MAX_ERRORS"
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Export every locked dependency (all extras)
+        run: >-
+          uv export --locked --all-extras --no-emit-project --no-hashes
+          --format requirements-txt -o "$RUNNER_TEMP/requirements-audit.txt"
+      - run: >-
+          uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/requirements-audit.txt"
+          --disable-pip --no-deps --progress-spinner off
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm audit --omit=dev
+      - name: The build must not modify the repo
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::the build changed the working tree"
+            exit 1
+          fi
