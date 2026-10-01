@@ -229,6 +229,7 @@ class ReasonCode(StrEnum):
     PF_CASH = "PF_CASH"
     PF_DAILY_LOSS_MTM = "PF_DAILY_LOSS_MTM"
     PF_DRAWDOWN = "PF_DRAWDOWN"
+    PF_ENTRIES_PER_DAY = "PF_ENTRIES_PER_DAY"  # the legacy max-daily-trades limit
     # System
     SYS_KILL_GLOBAL = "SYS_KILL_GLOBAL"
     SYS_KILL_BROKER = "SYS_KILL_BROKER"
