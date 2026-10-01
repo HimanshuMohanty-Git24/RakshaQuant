@@ -132,7 +132,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = [
     "ta.*", "dhanhq.*", "feedparser", "sklearn.*", "yfinance.*",
-    "pandas.*", "requests.*", "langchain_groq.*", "pyarrow.*",
+    "pandas.*", "requests.*", "langchain_groq.*", "pyarrow.*", "laya", "laya.*",
 ]
 ignore_missing_imports = true
 
