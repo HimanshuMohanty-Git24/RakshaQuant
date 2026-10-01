@@ -1,0 +1,23 @@
+# LLM prices, USD per 1M tokens, keyed by "provider:model" (plan M6).
+# The longest matching prefix wins, so "anthropic:claude-haiku-4-5" also prices the dated id
+# "claude-haiku-4-5-20251001". Models ending in ":free" cost 0. OpenRouter's reported
+# usage.cost, when present, overrides this table. An unknown model has cost null (flagged).
+# Cache multipliers apply to cache_read / cache_write tokens (fractions of the input price).
+version: 1
+providers:
+  anthropic:
+    cache_read: 0.10
+    cache_write: 1.25
+models:
+  anthropic:claude-opus-5-5: {input: 4.00, output: 20.00}
+  anthropic:claude-sonnet-5-5: {input: 2.00, output: 10.00}
+  anthropic:claude-haiku-4-5: {input: 1.00, output: 5.00}
+  # Groq: paid-tier-equivalent rates (the free tier is billed at 0 by Groq; we still
+  # account for the paid equivalent so free-tier usage shows its real value).
+  groq:llama-3.3-70b-versatile: {input: 0.59, output: 0.79}
+  groq:llama-3.1-8b-instant: {input: 0.05, output: 0.08}
+  groq:llama-3.1-70b-versatile: {input: 0.59, output: 0.79}
+  groq:llama3-70b-8192: {input: 0.59, output: 0.79}
+  groq:llama3-8b-8192: {input: 0.05, output: 0.08}
+  # Local models cost nothing.
+  "ollama:": {input: 0.0, output: 0.0}  # every ollama model
