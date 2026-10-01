@@ -11,7 +11,7 @@ projections are disposable and can be rebuilt from them at any time.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from types import TracebackType
@@ -196,6 +196,30 @@ class EventStore:
                 " VALUES (?,?,?,?)",
                 (namespace, key, value, ts.isoformat()),
             )
+
+    def kv_put_many(self, namespace: str, rows: Mapping[str, str], ts: datetime) -> None:
+        """Upsert several keys of one namespace in a single transaction."""
+        if not rows:
+            return
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.executemany(
+                    "INSERT OR REPLACE INTO kv_state (namespace, key, value, updated_ts)"
+                    " VALUES (?,?,?,?)",
+                    [(namespace, key, value, ts.isoformat()) for key, value in rows.items()],
+                )
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+
+    def kv_items(self, namespace: str) -> dict[str, str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, value FROM kv_state WHERE namespace = ?", (namespace,)
+            ).fetchall()
+        return {str(r[0]): str(r[1]) for r in rows}
 
     def kv_get(self, namespace: str, key: str) -> str | None:
         with self._lock:

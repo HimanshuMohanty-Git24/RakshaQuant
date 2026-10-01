@@ -36,7 +36,7 @@ from src.domain.types import (
     Side,
 )
 from src.store.event_store import EventStore
-from src.store.kv import KVStateStore
+from src.store.kv import KVRecordStore
 from src.utils.market_time import IST
 
 DAY = date(2026, 10, 5)
@@ -378,10 +378,10 @@ async def test_order_updates_and_fills_are_pushed_to_subscribers():
 async def test_state_survives_a_restart_through_the_store(tmp_path):
     with EventStore(tmp_path / "rq.db") as store:
         clock = ReplayClock(at(9, 30))
-        broker, _ = make_broker(clock=clock, state_store=KVStateStore(store, "A", "sim_broker"))
+        broker, _ = make_broker(clock=clock, state_store=KVRecordStore(store, "sim_broker/A"))
         await buy_and_fill(broker, clock, 100)
         reborn, _ = make_broker(
-            clock=clock, state_store=KVStateStore(store, "A", "sim_broker"), cash="1"
+            clock=clock, state_store=KVRecordStore(store, "sim_broker/A"), cash="1"
         )
         assert (await reborn.get_funds()) == (await broker.get_funds())
         assert (await reborn.get_positions()) == (await broker.get_positions())

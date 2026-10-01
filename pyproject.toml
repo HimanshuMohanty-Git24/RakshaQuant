@@ -115,6 +115,9 @@ ignore = ["E501", "N806"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Benchmarks are opt-in: `pytest -m bench` (plan §8: before closing M3, M6, M7 and M9).
+markers = ["bench: performance benchmarks (pytest-benchmark)"]
+addopts = "-m 'not bench'"
 filterwarnings = [
     "ignore:datetime.datetime.utcnow:DeprecationWarning:sqlalchemy",
 ]

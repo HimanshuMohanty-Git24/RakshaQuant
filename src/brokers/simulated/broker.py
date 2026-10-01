@@ -69,7 +69,7 @@ from src.domain.types import (
     Side,
     Validity,
 )
-from src.store.kv import MemoryStateStore, StateStore
+from src.store.kv import MemoryRecordStore, RecordStore
 from src.utils.market_time import IST
 
 logger = logging.getLogger(__name__)
@@ -194,7 +194,7 @@ class SimulatedBroker:
         calendar: NSECalendar,
         costs: NSECostSchedule,
         starting_cash: Decimal,
-        state_store: StateStore | None = None,
+        state_store: RecordStore | None = None,
         config: FillModelConfig | None = None,
         market: Mapping[str, MarketContext] | None = None,
         sell_proceeds: SellProceeds = "same_day",
@@ -210,12 +210,14 @@ class SimulatedBroker:
         self._market = dict(market or {})
         self._sell_proceeds = sell_proceeds
         self._caps = capabilities
-        self._store = state_store or MemoryStateStore()
-        saved = self._store.load()
-        self._state = (
-            _SimState.model_validate_json(saved) if saved else _SimState(cash=starting_cash)
-        )
+        # Persisted row-wise (audit §D: no O(N) rewrites): a small "core" row plus one row per
+        # order and per fill; only the rows that changed are written.
+        self._store = state_store or MemoryRecordStore()
+        self._state = _load_state(self._store.load_all(), starting_cash)
+        self._by_tag = {o.client_order_id: o.broker_order_id for o in self._state.orders.values()}
         self._dirty = False
+        self._dirty_orders: set[str] = set()
+        self._new_fills: list[Fill] = []
         self._quotes: dict[str, Quote] = {}
         self._quote_subscribers: list[QuoteCallback] = []
         self._update_subscribers: list[tuple[OrderUpdateCallback, FillCallback]] = []
@@ -405,6 +407,7 @@ class SimulatedBroker:
             charges_breakdown={k: v for k, v in charges.as_dict().items() if v > 0},
         )
         self._state.fills.append(fill)
+        self._new_fills.append(fill)
         if order.remaining == 0:
             self._finish(order, OrderStatus.FILLED, "", quote.receipt_ts, notify=False)
         else:
@@ -488,6 +491,7 @@ class SimulatedBroker:
         self._state.next_order += 1
         self._state.blocked += reserved
         self._state.orders[sim.broker_order_id] = sim
+        self._by_tag[sim.client_order_id] = sim.broker_order_id
         self._save()
         self._notify_update(sim)
         return self._ack(sim)
@@ -716,10 +720,8 @@ class SimulatedBroker:
             self._state.unsettled = [u for u in self._state.unsettled if u.available_on > today]
 
     def _find(self, client_order_id: str) -> _SimOrder | None:
-        for order in self._state.orders.values():
-            if order.client_order_id == client_order_id:
-                return order
-        return None
+        broker_order_id = self._by_tag.get(client_order_id)
+        return None if broker_order_id is None else self._state.orders[broker_order_id]
 
     def _get(self, broker_order_id: str) -> _SimOrder:
         try:
@@ -737,13 +739,41 @@ class SimulatedBroker:
         )
 
     def _notify_update(self, order: _SimOrder) -> None:
+        self._dirty_orders.add(order.broker_order_id)  # every order change passes through here
         snapshot = order.snapshot()
         for on_update, _ in list(self._update_subscribers):
             on_update(snapshot)
 
     def _save(self) -> None:
-        self._store.save(self._state.model_dump_json(), self._clock.now())
+        rows = {_CORE: self._state.model_dump_json(exclude={"orders", "fills"})}
+        for broker_order_id in self._dirty_orders:
+            rows[f"{_ORDER}{broker_order_id}"] = self._state.orders[
+                broker_order_id
+            ].model_dump_json()
+        for fill in self._new_fills:
+            rows[f"{_FILL}{fill.fill_id}"] = fill.model_dump_json()
+        self._store.put_many(rows, self._clock.now())
         self._dirty = False
+        self._dirty_orders.clear()
+        self._new_fills.clear()
+
+
+_CORE = "core"
+_ORDER = "order/"
+_FILL = "fill/"
+
+
+def _load_state(rows: dict[str, str], starting_cash: Decimal) -> _SimState:
+    core = rows.get(_CORE)
+    state = _SimState.model_validate_json(core) if core else _SimState(cash=starting_cash)
+    for key, value in rows.items():
+        if key.startswith(_ORDER):
+            order = _SimOrder.model_validate_json(value)
+            state.orders[order.broker_order_id] = order
+        elif key.startswith(_FILL):
+            state.fills.append(Fill.model_validate_json(value))
+    state.fills.sort(key=lambda f: (f.ts, f.fill_id))
+    return state
 
 
 def _conforms_to_protocol(broker: SimulatedBroker) -> BrokerAdapter:
