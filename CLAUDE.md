@@ -47,10 +47,18 @@ without an explicit `@pytest.mark.asyncio` decorator.
 
 ## Architecture
 
-### Agent pipeline (the core)
+> **Platform v2 (in progress, see [docs/plan/PROGRESS.md](docs/plan/PROGRESS.md)).** Since plan M5 the
+> live path is the deterministic v2 engine: [src/engine/](src/engine/) (runner, tasks, market service) →
+> [src/decision/](src/decision/) + [src/strategies/](src/strategies/) → `OMS.submit`
+> ([src/oms/](src/oms/)) behind the [src/risk/](src/risk/) RiskEngine gate → simulated broker
+> ([src/brokers/](src/brokers/)), recorded in the [src/store/](src/store/) event store. The LangGraph
+> pipeline described next was **retired to [src/legacy/](src/legacy/)** (deleted in M12) and runs on no
+> live path; this section documents it until then.
 
-The system is a [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` built in [src/agents/graph.py](src/agents/graph.py).
-A single `TradingState` (a `TypedDict` defined in [src/agents/state.py](src/agents/state.py))
+### Agent pipeline (legacy)
+
+The system is a [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` built in [src/legacy/agents/graph.py](src/legacy/agents/graph.py).
+A single `TradingState` (a `TypedDict` defined in [src/legacy/agents/state.py](src/legacy/agents/state.py))
 flows through every node; each node returns a **partial dict** that LangGraph merges into state.
 The pipeline:
 
@@ -69,7 +77,7 @@ lives in `should_continue_after_*` predicate functions.
 
 ### LLM agent conventions
 
-Every LLM node (see [src/agents/market_regime.py](src/agents/market_regime.py) as the
+Every LLM node (see [src/legacy/agents/market_regime.py](src/legacy/agents/market_regime.py) as the
 reference implementation) follows the same resilience pattern — **preserve it when editing or adding agents**:
 
 - Acquire the shared rate limiter (`get_groq_limiter`) and circuit breaker
@@ -82,7 +90,7 @@ reference implementation) follows the same resilience pattern — **preserve it 
 **Support-agent state contracts.** The support agents enrich `TradingState` with keys the
 regime/validation agents read; the *types must match* or the enrichment is silently dropped
 (the consumer raises `TypeError`, which the agent's broad `except` swallows → it falls back
-without the context). The canonical contracts (declared in [state.py](src/agents/state.py)):
+without the context). The canonical contracts (declared in [state.py](src/legacy/agents/state.py)):
 `news_sentiment` is a **dict** `{"avg_sentiment": float}` (not a bare float), `market_mood` is
 the full `SentimentSignal.to_dict()` dict (read `market_mood["mood_index"]`, not `market_mood`
 itself), `news_headlines` is a list of `{"title","sentiment"}`, and `prediction_signals` is a
@@ -265,7 +273,7 @@ alerts.
 ## Conventions & gotchas
 
 - **Imports are `from src...`** everywhere. Most scripts in `scripts/` prepend the repo root
-  to `sys.path` before importing (e.g. `run_live_trading.py`, `run_trading.py`); a few such as
+  to `sys.path` before importing (e.g. `run_live_trading.py`, `validate_strategy.py`); a few such as
   `check_config.py` omit it and rely on being run from the repo root. When adding a script,
   include the `sys.path` line so it works regardless of the working directory.
 - **Graph nodes return partial state dicts**, never the full state; let LangGraph merge.

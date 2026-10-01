@@ -9,11 +9,11 @@ Tests for PR-5b/5d/5c — decision quality:
 import numpy as np
 import pandas as pd
 
-from src.agents.market_regime import REGIME_SYSTEM_PROMPT
-from src.agents.signal_validation import VALIDATION_SYSTEM_PROMPT
-from src.agents.strategy_selection import STRATEGY_SYSTEM_PROMPT
 from src.backtesting.engine import BacktestResult, compare_results
 from src.backtesting.strategies import RealSignalStrategy
+from src.legacy.agents.market_regime import REGIME_SYSTEM_PROMPT
+from src.legacy.agents.signal_validation import VALIDATION_SYSTEM_PROMPT
+from src.legacy.agents.strategy_selection import STRATEGY_SYSTEM_PROMPT
 from src.market.indicators import IndicatorResult, Timeframe
 from src.market.signals import SignalEngine, SignalType
 from src.market.sizing import calculate_position_size

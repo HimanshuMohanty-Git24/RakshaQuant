@@ -10,16 +10,16 @@ with patch("src.config.get_settings") as mock_get_settings:
     mock_settings.groq_model_fallback = "llama"
     mock_get_settings.return_value = mock_settings
 
-    from src.agents.graph import (
+    from src.legacy.agents.graph import (
         create_trading_graph,
         run_trading_cycle,
         should_continue_after_regime,
         should_continue_after_validation,
     )
-    from src.agents.news_analyst import NewsAnalyst, NewsItem, NewsSentiment
-    from src.agents.prediction import PredictionAgent, PredictionSignal
-    from src.agents.sentiment import MarketSentimentAgent
-    from src.agents.state import create_initial_state
+    from src.legacy.agents.news_analyst import NewsAnalyst, NewsItem, NewsSentiment
+    from src.legacy.agents.prediction import PredictionAgent, PredictionSignal
+    from src.legacy.agents.sentiment import MarketSentimentAgent
+    from src.legacy.agents.state import create_initial_state
 
 # --- NewsAnalyst Tests ---
 
@@ -27,14 +27,14 @@ with patch("src.config.get_settings") as mock_get_settings:
 @pytest.fixture
 def news_analyst():
     # Settings mocked at import level, but we might need to mock again if instantiating calls get_settings
-    with patch("src.agents.news_analyst.get_settings") as mock_settings:
+    with patch("src.legacy.agents.news_analyst.get_settings") as mock_settings:
         mock_settings.return_value.groq_api_key.get_secret_value.return_value = "token"
         mock_settings.return_value.groq_model_fallback = "llama"
         return NewsAnalyst()
 
 
 def test_fetch_news(news_analyst):
-    with patch("src.agents.news_analyst.feedparser.parse") as mock_parse:
+    with patch("src.legacy.agents.news_analyst.feedparser.parse") as mock_parse:
         mock_parse.return_value.entries = [
             {"title": "Stock Up - Source", "published": "now", "link": "http://link"}
         ]
@@ -47,7 +47,7 @@ def test_fetch_news(news_analyst):
 
 @pytest.mark.asyncio
 async def test_analyze_sentiment(news_analyst):
-    with patch("src.agents.news_analyst.ChatGroq"):
+    with patch("src.legacy.agents.news_analyst.ChatGroq"):
         mock_llm = MagicMock()
         mock_llm.invoke.return_value.content = '{"sentiment": 0.8, "reasoning": "Good news"}'
         news_analyst._llm = mock_llm
@@ -110,7 +110,7 @@ def test_predict_sklearn(prediction_agent):
         }
     )
 
-    with patch("src.agents.prediction.SKLEARN_AVAILABLE", True):
+    with patch("src.legacy.agents.prediction.SKLEARN_AVAILABLE", True):
         # We need to ensure sklearn is actually importable or mocked if not
         try:
             signal = prediction_agent.predict(df, "AAPL")
@@ -122,14 +122,14 @@ def test_predict_sklearn(prediction_agent):
 
 def test_predict_fallback(prediction_agent):
     data = {"close": [100, 101, 102]}
-    with patch("src.agents.prediction.SKLEARN_AVAILABLE", False):
+    with patch("src.legacy.agents.prediction.SKLEARN_AVAILABLE", False):
         signal = prediction_agent.predict(data, "AAPL")
         assert signal.direction == "up"
         assert signal.confidence == 0.4
 
 
 def test_prediction_node():
-    from src.agents.prediction import prediction_node
+    from src.legacy.agents.prediction import prediction_node
 
     # prediction_node now sources from raw `signals` (available at the support-agent
     # stage), not `validated_signals` (which is still empty when this node runs).
@@ -150,7 +150,7 @@ def test_prediction_node():
         )
 
         # We also need to patch PredictionAgent.predict to avoid re-running logic
-        with patch("src.agents.prediction.PredictionAgent.predict") as mock_predict:
+        with patch("src.legacy.agents.prediction.PredictionAgent.predict") as mock_predict:
             mock_predict.return_value = PredictionSignal("AAPL", "up", 0.8, 1.0, "reason")
 
             result = prediction_node(state)
@@ -199,7 +199,7 @@ def test_analyze(sentiment_agent):
 
 
 def test_sentiment_analysis_node():
-    from src.agents.sentiment import sentiment_analysis_node
+    from src.legacy.agents.sentiment import sentiment_analysis_node
 
     state = {
         "news_sentiment": {"avg_sentiment": 0.5},
@@ -220,10 +220,10 @@ def test_should_continue_after_regime():
     state["daily_stats"]["profit_loss"] = -50000  # Big loss
 
     # We need to mock risk limits inside check_kill_switch called by should_continue_after_regime
-    with patch("src.agents.graph.check_kill_switch", return_value=True):
+    with patch("src.legacy.agents.graph.check_kill_switch", return_value=True):
         assert should_continue_after_regime(state) == "end"
 
-    with patch("src.agents.graph.check_kill_switch", return_value=False):
+    with patch("src.legacy.agents.graph.check_kill_switch", return_value=False):
         # Low confidence
         state["regime_confidence"] = 0.1
         assert should_continue_after_regime(state) == "end"
@@ -261,7 +261,7 @@ def test_get_graph_visualization():
     graph = MagicMock()
     graph.get_graph.return_value.draw_mermaid.return_value = "graph"
 
-    from src.agents.graph import get_graph_visualization
+    from src.legacy.agents.graph import get_graph_visualization
 
     vis = get_graph_visualization(graph)
     assert vis == "graph"

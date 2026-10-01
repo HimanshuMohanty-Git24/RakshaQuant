@@ -25,8 +25,8 @@ import numpy as np
 import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from src.agents.prediction import PredictionSignal
-from src.agents.risk_compliance import risk_compliance_node
+from src.legacy.agents.prediction import PredictionSignal
+from src.legacy.agents.risk_compliance import risk_compliance_node
 from src.utils.formatting import fmt_optional
 from src.utils.market_time import IST
 from src.utils.serialization import to_native
@@ -168,7 +168,7 @@ def test_risk_engine_blocks_entries_outside_trading_hours() -> None:
 
     # 20:00 IST — NSE closed (the owner's off-hours / SIMULATED scenario).
     after_hours = datetime(2026, 7, 27, 20, 0, tzinfo=IST)
-    with patch("src.agents.risk_compliance.now_ist", return_value=after_hours):
+    with patch("src.legacy.agents.risk_compliance.now_ist", return_value=after_hours):
         result = risk_compliance_node(state)
 
     assert result["approved_trades"] == []

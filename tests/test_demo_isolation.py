@@ -17,7 +17,7 @@ from src.domain.types import CheckOutcome, MarketDataSource, ReasonCode
 from src.execution.costs import CostModel
 from src.execution.paper_engine import LocalPaperEngine
 from src.execution.service import ExecutionService, IdempotencyStore
-from src.live.session import run_trading_session
+from src.legacy.session import run_trading_session
 from src.risk.checks.system import check_data_source, legacy_source
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -97,9 +97,9 @@ async def test_legacy_session_refuses_simulated_data_outside_demo(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "paper")
     view = _View()
     with (
-        patch("src.live.session.is_market_open", return_value=False),
-        patch("src.live.session.create_trading_graph", side_effect=_boom),
-        patch("src.live.session.LocalPaperEngine", side_effect=_boom),
+        patch("src.legacy.session.is_market_open", return_value=False),
+        patch("src.legacy.session.create_trading_graph", side_effect=_boom),
+        patch("src.legacy.session.LocalPaperEngine", side_effect=_boom),
     ):
         await run_trading_session(view)  # returns: nothing heavy ran, no wallet was opened
     assert any("Not trading" in n and "--demo" in n for n in view.notes)
@@ -108,8 +108,8 @@ async def test_legacy_session_refuses_simulated_data_outside_demo(monkeypatch):
 async def test_legacy_session_proceeds_in_demo(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "demo")
     with (
-        patch("src.live.session.is_market_open", return_value=False),
-        patch("src.live.session.setup_tracing", side_effect=_boom),
+        patch("src.legacy.session.is_market_open", return_value=False),
+        patch("src.legacy.session.setup_tracing", side_effect=_boom),
     ):
         with pytest.raises(_StopHereError):  # got past the refusal into the normal start-up
             await run_trading_session(_View())

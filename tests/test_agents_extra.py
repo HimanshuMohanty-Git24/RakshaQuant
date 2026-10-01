@@ -1,19 +1,19 @@
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from src.agents.market_regime import (
+from src.legacy.agents.market_regime import (
     _build_regime_context,
     _parse_regime_response,
     market_regime_node,
 )
-from src.agents.risk_compliance import RiskLimits, check_kill_switch, risk_compliance_node
-from src.agents.signal_validation import (
+from src.legacy.agents.risk_compliance import RiskLimits, check_kill_switch, risk_compliance_node
+from src.legacy.agents.signal_validation import (
     _build_validation_context,
     _parse_validation_response,
     signal_validation_node,
 )
-from src.agents.state import MarketRegime, create_initial_state
-from src.agents.strategy_selection import (
+from src.legacy.agents.state import MarketRegime, create_initial_state
+from src.legacy.agents.strategy_selection import (
     _build_strategy_context,
     _parse_strategy_response,
     strategy_selection_node,
@@ -56,8 +56,8 @@ def test_parse_regime_response():
     assert res["regime"] == MarketRegime.UNKNOWN.value
 
 
-@patch("src.agents.market_regime.ChatGroq")
-@patch("src.agents.market_regime.get_settings")
+@patch("src.legacy.agents.market_regime.ChatGroq")
+@patch("src.legacy.agents.market_regime.get_settings")
 def test_market_regime_node(mock_settings, mock_llm_cls):
     mock_settings.return_value.groq_api_key.get_secret_value.return_value = "token"
     mock_llm = MagicMock()
@@ -73,14 +73,14 @@ def test_market_regime_node(mock_settings, mock_llm_cls):
     assert result["regime_confidence"] == 0.6
 
 
-@patch("src.agents.market_regime.ChatGroq")
+@patch("src.legacy.agents.market_regime.ChatGroq")
 def test_market_regime_node_error(mock_llm_cls):
     mock_llm_cls.side_effect = Exception("API Error")
 
     state = create_initial_state()
     state["market_data"] = {"A": {"change_percent": 1.0}}  # Positive -> trending_up fallback
 
-    with patch("src.agents.market_regime.get_settings"):
+    with patch("src.legacy.agents.market_regime.get_settings"):
         result = market_regime_node(state)
 
     assert result["regime"] == "trending_up"
@@ -95,10 +95,10 @@ def test_risk_compliance_node():
     state["validated_signals"] = [{"symbol": "A", "confidence": 0.8, "risk_reward_ratio": 2.0}]
 
     # Mock IST clock to be within trading hours
-    with patch("src.agents.risk_compliance.now_ist") as mock_now:
+    with patch("src.legacy.agents.risk_compliance.now_ist") as mock_now:
         mock_now.return_value = datetime(2026, 10, 5, 12, 0, tzinfo=IST)  # Monday, in session
 
-        with patch("src.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
+        with patch("src.legacy.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
             limits = RiskLimits()  # Defaults
             mock_limits.return_value = limits
 
@@ -114,7 +114,7 @@ def test_risk_compliance_blocking():
     state["daily_stats"]["trades_count"] = 100
     state["validated_signals"] = [{"symbol": "A"}]
 
-    with patch("src.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
+    with patch("src.legacy.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
         limits = RiskLimits(max_daily_trades=50)
         mock_limits.return_value = limits
 
@@ -157,8 +157,8 @@ def test_parse_validation_response():
     assert len(res["rejected"]) == 1
 
 
-@patch("src.agents.signal_validation.ChatGroq")
-@patch("src.agents.signal_validation.get_settings")
+@patch("src.legacy.agents.signal_validation.ChatGroq")
+@patch("src.legacy.agents.signal_validation.get_settings")
 def test_signal_validation_node(mock_settings, mock_llm_cls):
     mock_settings.return_value.groq_api_key.get_secret_value.return_value = "token"
     mock_llm = MagicMock()
@@ -194,8 +194,8 @@ def test_parse_strategy_response():
     assert "trend_following" in res["active_strategies"]
 
 
-@patch("src.agents.strategy_selection.ChatGroq")
-@patch("src.agents.strategy_selection.get_settings")
+@patch("src.legacy.agents.strategy_selection.ChatGroq")
+@patch("src.legacy.agents.strategy_selection.get_settings")
 def test_strategy_selection_node(mock_settings, mock_llm_cls):
     mock_settings.return_value.groq_api_key.get_secret_value.return_value = "token"
     mock_llm = MagicMock()

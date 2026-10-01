@@ -18,8 +18,6 @@ import asyncio
 import logging
 from datetime import datetime
 
-from src.agents.graph import create_trading_graph, run_trading_cycle
-from src.agents.risk_compliance import check_kill_switch
 from src.config import get_settings
 from src.dashboard.cli import TradingDashboard
 from src.domain.types import CheckOutcome
@@ -28,6 +26,8 @@ from src.execution.journal import TradeJournal
 from src.execution.paper_engine import LocalPaperEngine
 from src.execution.service import ExecutionService, IdempotencyStore
 from src.finops import get_alert_manager, get_cost_tracker
+from src.legacy.agents.graph import create_trading_graph, run_trading_cycle
+from src.legacy.agents.risk_compliance import check_kill_switch
 from src.live.views import SessionView
 from src.market.history_manager import HistoryManager
 from src.market.indicators import Timeframe, get_indicator_cache

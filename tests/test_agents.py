@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.agents.risk_compliance import RiskLimits, check_kill_switch, risk_compliance_node
-from src.agents.state import MarketRegime, create_initial_state
+from src.legacy.agents.risk_compliance import RiskLimits, check_kill_switch, risk_compliance_node
+from src.legacy.agents.state import MarketRegime, create_initial_state
 
 
 class TestTradingState:
@@ -38,7 +38,7 @@ class TestRiskCompliance:
 
     def test_risk_limits_from_settings(self):
         """Test risk limits creation from settings."""
-        with patch("src.agents.risk_compliance.get_settings") as mock_settings:
+        with patch("src.legacy.agents.risk_compliance.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(
                 max_daily_trades=50,
                 daily_loss_limit=10000.0,
@@ -78,7 +78,7 @@ class TestRiskCompliance:
         state["daily_stats"] = {"trades_count": 100, "profit_loss": 0, "max_drawdown": 0}
         state["portfolio"] = {"capital": 1000000, "positions": []}
 
-        with patch("src.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
+        with patch("src.legacy.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
             mock_limits.return_value = RiskLimits(max_daily_trades=50)
             result = risk_compliance_node(state)
 
@@ -116,7 +116,7 @@ class TestMarketRegimeAgent:
 
     def test_regime_context_building(self):
         """Test that regime context is properly built."""
-        from src.agents.market_regime import _build_regime_context
+        from src.legacy.agents.market_regime import _build_regime_context
 
         indicators = {
             "RELIANCE": {
@@ -146,7 +146,7 @@ class TestSignalValidation:
 
     def test_validation_with_no_signals(self):
         """Test validation returns empty when no signals."""
-        from src.agents.signal_validation import signal_validation_node
+        from src.legacy.agents.signal_validation import signal_validation_node
 
         state = create_initial_state()
         state["signals"] = []

@@ -6,10 +6,10 @@ Tests for the deterministic tail-risk guards:
 - ExitManager.clear() used by the kill-switch flatten.
 """
 
-from src.agents.risk_compliance import RiskLimits, check_kill_switch
 from src.execution.costs import CostModel
 from src.execution.exit_manager import ExitManager
 from src.execution.paper_engine import LocalPaperEngine
+from src.legacy.agents.risk_compliance import RiskLimits, check_kill_switch
 from src.risk.guards import DrawdownTracker, is_circuit_locked
 
 # ---------------------------------------------------------------------------

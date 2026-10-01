@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from src.agents.risk_compliance import risk_compliance_node
 from src.domain.calendar import (
     DEFAULT_CALENDAR_PATH,
     CalendarCoverageError,
     NSECalendar,
     get_calendar,
 )
+from src.legacy.agents.risk_compliance import risk_compliance_node
 from src.utils.market_time import IST, is_market_hours
 
 CAL = get_calendar()
@@ -199,7 +199,7 @@ def test_legacy_risk_rule_blocks_entries_on_non_session_days(when):
         "portfolio": {"capital": 1_000_000.0, "positions": []},
         "daily_stats": {"trades_count": 0, "profit_loss": 0.0, "max_drawdown": 0.0},
     }
-    with patch("src.agents.risk_compliance.now_ist", return_value=when):
+    with patch("src.legacy.agents.risk_compliance.now_ist", return_value=when):
         result = risk_compliance_node(state)
     assert result["approved_trades"] == []
     failures = result["risk_rejected"][0]["risk_result"]["failures"]

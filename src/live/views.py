@@ -8,8 +8,8 @@ Session views — the two renderers behind the one shared trading loop.
   and pushes them (plus completed cycle traces) to a sink for the web UI. Its waits are
   non-blocking (``await asyncio.sleep``) so the server's event loop keeps serving sockets.
 
-The loop in :mod:`src.live.session` only ever talks to this interface, never to ``rich`` or
-to a socket directly.
+The engine driver (:mod:`src.engine.live`) only ever talks to this interface, never to ``rich``
+or to a socket directly.
 """
 
 from __future__ import annotations

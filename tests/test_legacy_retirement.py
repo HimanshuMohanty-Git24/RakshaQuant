@@ -11,7 +11,7 @@ from src.execution.adapter import execute_trades
 from src.execution.costs import CostModel
 from src.execution.exit_manager import ExitManager as LegacyExitManager
 from src.execution.paper_engine import LocalPaperEngine
-from src.live.session import _held_quantity
+from src.legacy.session import _held_quantity
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -24,6 +24,21 @@ def test_no_direct_paper_engine_orders_anywhere_in_src():
         if "paper_engine.place_order" in line
     ]
     assert offenders == []
+
+
+def test_nothing_outside_legacy_imports_the_retired_agents_or_loop():
+    """Plan M5.5: the LangGraph agents and the old loop are off every live path."""
+    assert not (SRC / "agents").exists() and not (SRC / "live" / "session.py").exists()
+    offenders = [
+        f"{path.relative_to(SRC)}:{n}"
+        for path in SRC.rglob("*.py")
+        if "legacy" not in path.relative_to(SRC).parts
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if line.lstrip().startswith(("import ", "from ")) and "src.legacy" in line
+    ]
+    assert offenders == []
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    assert not [p.name for p in scripts.rglob("*.py") if "src.legacy" in p.read_text("utf-8")]
 
 
 def test_execute_trades_is_retired():

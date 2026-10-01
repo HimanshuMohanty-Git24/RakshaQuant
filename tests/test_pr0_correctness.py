@@ -14,12 +14,12 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from src.agents.market_regime import _build_regime_context_enriched
-from src.agents.prediction import prediction_node
-from src.agents.risk_compliance import RiskLimits, check_kill_switch
-from src.agents.signal_validation import _build_validation_context_enriched
-from src.agents.state import create_initial_state
 from src.config.settings import Settings
+from src.legacy.agents.market_regime import _build_regime_context_enriched
+from src.legacy.agents.prediction import prediction_node
+from src.legacy.agents.risk_compliance import RiskLimits, check_kill_switch
+from src.legacy.agents.signal_validation import _build_validation_context_enriched
+from src.legacy.agents.state import create_initial_state
 from src.utils.market_time import IST, is_market_hours, now_ist
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_prediction_node_sources_from_signals_and_dedupes():
 
     with (
         patch("src.market.yfinance_feed.YFinanceFeed") as mock_feed_cls,
-        patch("src.agents.prediction.PredictionAgent.predict") as mock_predict,
+        patch("src.legacy.agents.prediction.PredictionAgent.predict") as mock_predict,
     ):
         mock_feed_cls.return_value.get_historical.return_value = pd.DataFrame(
             {"Close": [1.0, 2.0, 3.0]}
