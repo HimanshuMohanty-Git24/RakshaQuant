@@ -186,6 +186,24 @@ class EventStore:
             for row in batch:
                 yield _row_to_event(row)
 
+    # -- key/value state (not part of the event log) --------------------------------------------
+
+    def kv_put(self, namespace: str, key: str, value: str, ts: datetime) -> None:
+        """Durably store a component's own state (e.g. the simulated broker's book)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO kv_state (namespace, key, value, updated_ts)"
+                " VALUES (?,?,?,?)",
+                (namespace, key, value, ts.isoformat()),
+            )
+
+    def kv_get(self, namespace: str, key: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM kv_state WHERE namespace = ? AND key = ?", (namespace, key)
+            ).fetchone()
+        return None if row is None else str(row[0])
+
     def query(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Run a read-only ``SELECT`` (e.g. against a projection) and return dict rows."""
         if not sql.lstrip().upper().startswith(("SELECT", "WITH")):
