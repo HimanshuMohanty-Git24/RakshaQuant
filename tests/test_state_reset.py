@@ -7,24 +7,17 @@ legacy ``LocalPaperEngine`` must also start a fresh wallet at Rs.10,00,000.
 
 from unittest.mock import patch
 
-from src.config.settings import Settings
 from src.execution.costs import CostModel
 from src.execution.paper_engine import LocalPaperEngine
 
 TEN_LAKH = 1_000_000.0
 
 
-def _settings(monkeypatch) -> Settings:
-    monkeypatch.delenv("PAPER_WALLET_BALANCE", raising=False)
-    return Settings(_env_file=None, groq_api_key="x", langsmith_api_key="y")
+def test_default_paper_wallet_balance_is_ten_lakh(settings):
+    assert settings.paper_wallet_balance == TEN_LAKH
 
 
-def test_default_paper_wallet_balance_is_ten_lakh(monkeypatch):
-    assert _settings(monkeypatch).paper_wallet_balance == TEN_LAKH
-
-
-def test_fresh_legacy_engine_starts_at_ten_lakh(tmp_path, monkeypatch):
-    settings = _settings(monkeypatch)
+def test_fresh_legacy_engine_starts_at_ten_lakh(tmp_path, settings):
     with patch("src.execution.paper_engine.get_settings", return_value=settings):
         engine = LocalPaperEngine(state_file=tmp_path / "wallet.json", cost_model=CostModel.zero())
 

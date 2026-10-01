@@ -59,7 +59,10 @@ def test_dhan_paper_without_opt_in_runs_shadow(engine):
 
 def test_live_with_opt_in_but_no_creds_runs_shadow_not_local(engine):
     # allow_live_orders=True but no Dhan creds -> SHADOW (NOT a silent local-paper downgrade).
-    svc = _service(engine, mode=ExecutionMode.LIVE, allow_live_orders=True)
+    # Pin "no creds" explicitly: this test used to read the real .env, which has Dhan creds.
+    no_creds = MagicMock(dhan_client_id=None, dhan_access_token=None)
+    with patch("src.execution.service.get_settings", return_value=no_creds):
+        svc = _service(engine, mode=ExecutionMode.LIVE, allow_live_orders=True)
     assert svc.effective_mode == ExecutionMode.SHADOW
 
 

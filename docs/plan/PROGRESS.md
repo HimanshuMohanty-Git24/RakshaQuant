@@ -8,8 +8,8 @@ Source of truth: [2026-10-01-platform-v2-plan.md](2026-10-01-platform-v2-plan.md
 | Task | Status (todo/doing/done/blocked) | Commit | Notes / deviations |
 |---|---|---|---|
 | 0.1 | done | 6519073 | Branch `platform-v2` created; audit + plan committed. **Extra:** b4e8175 applies `ruff format` to 12 pre-existing unformatted files so the §8 format gate is green (AST-preserving; mypy count unchanged at 374). |
-| 0.2 | done | (this commit) | Moved (not deleted) `paper_wallet.json` (sha256 91f86c5d…), `exit_manager_state.json` (44136fa3…), `dummy_journal.db` (4e5972e7…) to `var/archive/2026-10-01/`; `paper_idempotency.json` and `performance_history.json` were absent. Code default and `.env` both already give ₹10,00,000 (checked by match, value not printed); pinned by `tests/test_state_reset.py`. |
-| 0.3 | todo | | |
+| 0.2 | done | 6b7df23 | Moved (not deleted) `paper_wallet.json` (sha256 91f86c5d…), `exit_manager_state.json` (44136fa3…), `dummy_journal.db` (4e5972e7…) to `var/archive/2026-10-01/`; `paper_idempotency.json` and `performance_history.json` were absent. Code default and `.env` both already give ₹10,00,000 (checked by match, value not printed); pinned by `tests/test_state_reset.py`. |
+| 0.3 | done | (this commit) | `tests/conftest.py`: session-wide `pytest_configure` guard (env_file disabled, secrets + every Settings-field env var scrubbed, placeholders for required keys) so collection-time imports are hermetic too; autouse fixture adds `chdir(tmp_path)`, cache clears, and a full `os.environ` restore per test. `settings` fixture. Fixed the 3 named tests (explicit tmp engine / tmp journal / explicit no-creds settings). Proof: `tests/test_hermetic.py`; full suite **383 passed**; repo-root file sha256 and `git status` identical before/after the run. |
 | 0.4 | todo | | |
 | 0.5 | todo | | |
 | 0.6 | todo | | |

@@ -6,8 +6,6 @@ Tests for the durability/consistency cleanup:
 - #1 TradeJournal close_trade net-PnL / partial / zero-guard + persistence flag
 """
 
-from pathlib import Path
-
 from src.execution.exit_manager import ExitManager
 from src.execution.journal import TradeJournal
 from src.memory.database import decayed_score
@@ -118,7 +116,7 @@ def test_close_trade_zero_entry_price_does_not_crash():
     assert j.get_trade(tid)["profit_loss_pct"] == 0.0
 
 
-def test_journal_persistence_flag():
+def test_journal_persistence_flag(tmp_path):
     assert _journal().is_persistent is False  # in-memory
-    file_journal = TradeJournal(database_url="sqlite:///" + str(Path("dummy_journal.db")))
+    file_journal = TradeJournal(database_url=f"sqlite:///{(tmp_path / 'journal.db').as_posix()}")
     assert file_journal.is_persistent is True

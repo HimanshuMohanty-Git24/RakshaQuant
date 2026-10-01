@@ -410,17 +410,20 @@ def test_local_adapter_methods(tmp_path):
     assert adapter.get_balance() > 0
 
 
-def test_execute_trades_helper():
+def test_execute_trades_helper(paper_engine):
+    # Pass an explicit adapter on a tmp wallet: the default adapter builds a LocalPaperEngine
+    # on the CWD-relative paper_wallet.json (this is how AAPL test fills reached the real one).
     with patch("src.execution.adapter.get_settings") as mock_settings:
         mock_settings.return_value.max_position_size = 10000
         mock_settings.return_value.execution_mode = "local_paper"
 
         trades = [{"symbol": "AAPL", "entry_price": 100, "signal_type": "BUY"}]
         market_prices = {"AAPL": 100.0}
+        adapter = LocalExecutionAdapter(_engine=paper_engine)
 
         import asyncio
 
-        results = asyncio.run(execute_trades(trades, market_prices=market_prices))
+        results = asyncio.run(execute_trades(trades, adapter=adapter, market_prices=market_prices))
 
         assert len(results) == 1
         assert results[0].status == OrderStatus.FILLED
