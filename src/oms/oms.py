@@ -21,7 +21,7 @@ anything it closed). Status updates move forward only, along the §H.5 state mac
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -38,6 +38,7 @@ from src.domain.base import EventPayload
 from src.domain.clock import Clock
 from src.domain.events import (
     Alert,
+    Event,
     FillReceived,
     OrderAcked,
     OrderCancelled,
@@ -309,6 +310,11 @@ class OMS:
             # The broker is the source of truth: book it (as CNC, the month-1 product) and alert.
             outcome = self.book.apply(fill, product=Product.CNC, strategy="unknown")
             self._emit(
+                FillReceived(fill=fill, order_status=OrderStatus.FILLED,
+                             order_filled_qty=fill.quantity, order_avg_price=fill.price),
+                source="oms",
+            )  # fmt: skip
+            self._emit(
                 PositionChanged(position=outcome.position, fill_id=fill.fill_id), source="oms"
             )
             return
@@ -362,6 +368,70 @@ class OMS:
             )
         for listener in list(self._fill_listeners):
             listener(fill, order)
+
+    # -- restart -----------------------------------------------------------------------------------------
+
+    def restore(self, events: Iterable[Event]) -> int:
+        """Rebuild the orders and the book from this book's recorded OMS events, in ``seq`` order
+        (at startup, before :meth:`start`). Nothing is emitted: the events already exist.
+        Returns how many events were applied."""
+        if self.orders or self.book.positions(self._clock.now()):
+            raise RuntimeError("restore() needs a fresh OMS and book")
+        applied = 0
+        for event in events:
+            p = event.payload
+            if isinstance(p, OrderSubmitted):
+                if p.order.intent.book_id != self.book_id:
+                    continue
+                self.orders[p.order.client_order_id] = p.order
+            elif isinstance(p, FillReceived):
+                if p.fill.book_id != self.book_id:
+                    continue
+                self._restore_fill(p)
+            elif isinstance(p, OrderAcked | OrderRejected | OrderUnknown | OrderCancelled
+                            | OrderExpired):  # fmt: skip
+                order = self.orders.get(p.client_order_id)
+                if order is None or p.book_id != self.book_id:
+                    continue
+                self._restore_status(order, p)
+            else:
+                continue
+            applied += 1
+        return applied
+
+    def _restore_fill(self, p: FillReceived) -> None:
+        fill = p.fill
+        order = self.orders.get(fill.client_order_id)
+        if order is None:
+            self.book.apply(fill, product=Product.CNC, strategy="unknown")
+            return
+        intent = order.intent
+        self.book.apply(fill, product=intent.product, strategy=intent.strategy,
+                        exit_reason=intent.reason.value)  # fmt: skip
+        self._set(order, filled_qty=p.order_filled_qty, avg_fill_price=p.order_avg_price,
+                  status=p.order_status,
+                  broker_order_id=fill.broker_order_id or order.broker_order_id)  # fmt: skip
+
+    def _restore_status(
+        self,
+        order: Order,
+        p: OrderAcked | OrderRejected | OrderUnknown | OrderCancelled | OrderExpired,
+    ) -> None:
+        coid = order.client_order_id
+        if isinstance(p, OrderAcked):
+            if not order.status.is_terminal:
+                self._set(order, broker_order_id=p.broker_order_id, status=p.status)
+            elif order.broker_order_id is None:
+                self._set(order, broker_order_id=p.broker_order_id)
+            self._unknown_checks.pop(coid, None)
+        elif isinstance(p, OrderUnknown):
+            self._set(order, status=OrderStatus.UNKNOWN)
+            self._unknown_checks[coid] = 0
+        else:
+            status = {OrderRejected: OrderStatus.REJECTED, OrderCancelled: OrderStatus.CANCELLED,
+                      OrderExpired: OrderStatus.EXPIRED}[type(p)]  # fmt: skip
+            self._set(order, status=status)
+            self._unknown_checks.pop(coid, None)
 
     # -- UNKNOWN resolution and reconciliation ----------------------------------------------------------
 

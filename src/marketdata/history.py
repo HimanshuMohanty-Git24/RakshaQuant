@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -33,7 +33,8 @@ import pandas as pd
 
 from src.domain.events import Alert
 from src.domain.sink import EventSink
-from src.domain.types import Bar, MarketDataSource, Timeframe
+from src.domain.types import Bar, Instrument, MarketDataSource, Timeframe
+from src.marketdata.symbols import yahoo_ticker
 from src.store.tape import TapeWriter
 
 DEFAULT_MIN_BARS = 60
@@ -227,6 +228,90 @@ def parse_daily_frame(
         if expected_last is not None and s.last_date < expected_last
     }
     return HistoryResult(series=series, failed=failed, repaired=repaired, lagging=lagging)
+
+
+class YFinanceHistorySource:
+    """Daily history from Yahoo for the engine, taped for replay as it is fetched."""
+
+    def __init__(
+        self,
+        *,
+        tape: TapeWriter | None = None,
+        download: Downloader | None = None,
+        timeout_s: float = 60.0,
+        period: str = "1y",
+    ) -> None:
+        self._tape = tape
+        self._download = download
+        self._timeout_s = timeout_s
+        self._period = period
+
+    async def fetch(
+        self,
+        instruments: Sequence[Instrument],
+        *,
+        settled_before: date,
+        expected_last: date | None,
+        extra: Mapping[str, str] | None = None,
+    ) -> HistoryResult:
+        tickers = {i.key: yahoo_ticker(i.symbol) for i in instruments} | dict(extra or {})
+        result = await fetch_daily_history(
+            tickers,
+            settled_before=settled_before,
+            download=self._download,
+            timeout_s=self._timeout_s,
+            period=self._period,
+            expected_last=expected_last,
+        )
+        if self._tape is not None:
+            record_history(result, tape=self._tape, recorded_on=settled_before)
+        return result
+
+
+def series_from_bars(
+    bars: Iterable[Bar],
+    *,
+    settled_before: date,
+    min_bars: int = DEFAULT_MIN_BARS,
+    expected_last: date | None = None,
+) -> HistoryResult:
+    """Rebuild the day's history from taped bars (see :func:`record_history`): the raw bars,
+    with each date's adjustment factor recovered as adjusted close / raw close."""
+    raw: dict[str, dict[date, Bar]] = {}
+    adjusted: dict[str, dict[date, Bar]] = {}
+    for bar in bars:
+        if bar.session_date < settled_before and bar.is_settled:
+            (adjusted if bar.adjusted else raw).setdefault(bar.instrument_key, {})[
+                bar.session_date
+            ] = bar
+    series: dict[str, DailySeries] = {}
+    failed: dict[str, str] = {}
+    for key, by_day in sorted(raw.items()):
+        days = sorted(by_day)
+        if len(days) < min_bars:
+            failed[key] = f"only {len(days)} settled bars (need {min_bars})"
+            continue
+        adj = adjusted.get(key, {})
+        frame = pd.DataFrame(
+            {
+                "open": [by_day[d].open for d in days],
+                "high": [by_day[d].high for d in days],
+                "low": [by_day[d].low for d in days],
+                "close": [by_day[d].close for d in days],
+                "volume": [by_day[d].volume for d in days],
+                "dividend": 0.0,
+                "split": 0.0,
+                "factor": [adj[d].close / by_day[d].close if d in adj else 1.0 for d in days],
+            },
+            index=pd.DatetimeIndex([pd.Timestamp(d) for d in days], name="date"),
+        )
+        series[key] = DailySeries(key, frame)
+    lagging = {
+        key: s.last_date
+        for key, s in series.items()
+        if expected_last is not None and s.last_date < expected_last
+    }
+    return HistoryResult(series=series, failed=failed, lagging=lagging)
 
 
 def record_history(result: HistoryResult, *, tape: TapeWriter, recorded_on: date) -> None:
