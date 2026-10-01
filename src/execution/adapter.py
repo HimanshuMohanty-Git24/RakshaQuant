@@ -307,59 +307,10 @@ async def execute_trades(
     adapter: "ExecutionAdapter | LocalExecutionAdapter | None" = None,
     market_prices: dict[str, float] | None = None,
 ) -> list[OrderResult]:
-    """
-    Execute a list of approved trades.
-
-    Args:
-        trades: List of trade dictionaries from risk agent
-        adapter: Execution adapter (creates new based on config if None)
-        market_prices: Current market prices (required for local paper trading)
-
-    Returns:
-        List of order results
-    """
-    settings = get_settings()
-
-    # Select adapter based on execution mode
-    if adapter is None:
-        if settings.execution_mode == "local_paper":
-            adapter = LocalExecutionAdapter()
-        elif settings.execution_mode in ["dhan_paper", "live"]:
-            if DHANHQ_AVAILABLE and settings.dhan_client_id:
-                adapter = ExecutionAdapter()
-            else:
-                logger.warning("DhanHQ not available, falling back to local paper")
-                adapter = LocalExecutionAdapter()
-        else:
-            adapter = LocalExecutionAdapter()
-
-    results = []
-
-    for trade in trades:
-        entry_price = trade.get("entry_price", 0)
-
-        # For local paper trading, use market prices
-        if isinstance(adapter, LocalExecutionAdapter) and market_prices:
-            symbol = trade.get("symbol", "")
-            if symbol in market_prices:
-                entry_price = market_prices[symbol]
-
-        # Create order request from trade
-        request = OrderRequest(
-            symbol=trade.get("symbol", ""),
-            exchange=trade.get("exchange", "NSE"),
-            side=OrderSide.BUY if trade.get("signal_type") == "BUY" else OrderSide.SELL,
-            quantity=_calculate_quantity(trade),
-            order_type=OrderType.MARKET,
-            price=entry_price,
-            signal_id=trade.get("signal_id", ""),
-            strategy=trade.get("strategy", ""),
-        )
-
-        result = await adapter.place_order(request)
-        results.append(result)
-
-    return results
+    """Retired (plan M3.6): it bypassed risk and the OMS. Orders go through ``OMS.submit``."""
+    raise NotImplementedError(
+        "execute_trades is retired: every order goes through OMS.submit (src/oms/oms.py)"
+    )
 
 
 def _calculate_quantity(trade: dict[str, Any]) -> int:

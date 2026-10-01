@@ -322,17 +322,31 @@ async def run_trading_session(
 
             for pos, exit_rule in exit_signals:
                 exit_price = market_prices.get(pos.symbol, pos.entry_price)
-                # Execute exit via paper engine
-                order = paper_engine.place_order(
+                # Reduce-only (audit F-01): never more than the engine still holds on this side,
+                # and never a zero-quantity order.
+                held = _held_quantity(paper_engine, pos.symbol, pos.side)
+                wanted = (
+                    pos.quantity
+                    if exit_rule.partial_pct >= 1.0
+                    else int(pos.quantity * exit_rule.partial_pct)
+                )
+                exit_qty = min(wanted, held)
+                if exit_qty <= 0:
+                    if held <= 0:  # the engine holds nothing: stop managing a ghost
+                        exit_manager.unregister_position(pos.position_id)
+                    continue
+                realized_before = paper_engine.realized_pnl
+                exit_result = execution_service.submit(
                     symbol=pos.symbol,
                     side="SELL" if pos.side == "BUY" else "BUY",
-                    quantity=int(pos.quantity * exit_rule.partial_pct),
-                    current_price=exit_price,
+                    quantity=exit_qty,
+                    price=exit_price,
+                    idempotency_key=f"exit:{pos.position_id}:{exit_rule.exit_type}:{pos.quantity}",
                 )
-                if order.status == "FILLED":
-                    pnl = (exit_price - pos.entry_price) * pos.quantity * exit_rule.partial_pct
-                    if pos.side != "BUY":
-                        pnl = -pnl
+                if exit_result.filled:
+                    # Net of both legs' charges, from the engine itself (audit F-02).
+                    pnl = paper_engine.realized_pnl - realized_before
+                    closed = _held_quantity(paper_engine, pos.symbol, pos.side) == 0
                     dashboard.close_trade(pnl)
                     dashboard.stats.log_activity(
                         f"EXIT [{exit_rule.exit_type}]: {pos.symbol} @ Rs.{exit_price:,.2f} "
@@ -344,15 +358,15 @@ async def run_trading_session(
                         strategy=pos.strategy,
                         regime=pos.regime_at_entry,
                         pnl=pnl,
-                        pnl_pct=(pnl / (pos.entry_price * pos.quantity)) * 100,
+                        pnl_pct=(pnl / (pos.entry_price * exit_qty)) * 100,
                         symbol=pos.symbol,
                     )
-                    if exit_rule.partial_pct >= 1.0:
+                    if closed:
                         exit_manager.unregister_position(pos.position_id)
                         # ── Learning feedback (resilient; never disrupts trading) ──
                         if settings.enable_learning and mistake_classifier and memory_injector:
                             pnl_pct = (
-                                (pnl / (pos.entry_price * pos.quantity)) * 100
+                                (pnl / (pos.entry_price * exit_qty)) * 100
                                 if pos.entry_price
                                 else 0.0
                             )
@@ -400,12 +414,12 @@ async def run_trading_session(
                                     mae=pos.mae,
                                     mfe=pos.mfe,
                                     pnl=pnl,
-                                    exit_quantity=int(pos.quantity * exit_rule.partial_pct),
+                                    exit_quantity=exit_qty,
                                 )
                             except Exception as e:
                                 logger.warning("Journal close_trade failed: %s", e)
-                    else:
-                        pos.partial_taken = True
+                    else:  # partial: shrink what is managed (audit F-01)
+                        exit_manager.record_partial(pos.position_id, exit_qty)
 
             await view.render()
 
@@ -643,16 +657,16 @@ async def run_trading_session(
                             break
                         for pos in positions:
                             px = market_prices.get(pos.symbol, pos.current_price or pos.entry_price)
-                            exit_order = paper_engine.place_order(
+                            realized_before = paper_engine.realized_pnl
+                            flatten_result = execution_service.submit(
                                 symbol=pos.symbol,
                                 side="SELL" if pos.side == "BUY" else "BUY",
                                 quantity=pos.quantity,
-                                current_price=px,
+                                price=px,
+                                idempotency_key=f"flatten:{pos.position_id}:{pos.quantity}",
                             )
-                            if exit_order.status == "FILLED":
-                                fpnl = (px - pos.entry_price) * pos.quantity
-                                if pos.side != "BUY":
-                                    fpnl = -fpnl
+                            if flatten_result.filled:
+                                fpnl = paper_engine.realized_pnl - realized_before  # net
                                 dashboard.close_trade(fpnl)
                                 dashboard.stats.log_activity(
                                     f"FLATTEN {pos.symbol} @ Rs.{px:,.2f} | P&L Rs.{fpnl:+,.2f}",
@@ -910,3 +924,8 @@ def _refuse_simulated(view: SessionView, environment: str, why: str) -> None:
     )
     logger.warning(message)
     view.note(f"[yellow]{message}[/]")
+
+
+def _held_quantity(engine: LocalPaperEngine, symbol: str, side: str) -> int:
+    """How much the paper engine holds of ``symbol`` on ``side`` (what an exit may reduce)."""
+    return sum(p.quantity for p in engine.get_positions() if p.symbol == symbol and p.side == side)

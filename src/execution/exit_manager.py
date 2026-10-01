@@ -191,6 +191,17 @@ class ExitManager:
         self._save()
         return pos
 
+    def record_partial(self, position_id: str, quantity: int) -> None:
+        """A partial exit filled: shrink the managed quantity (audit F-01), no second partial."""
+        pos = self._positions.get(position_id)
+        if pos is None:
+            return
+        pos.quantity = max(0, pos.quantity - quantity)
+        pos.partial_taken = True
+        if pos.quantity == 0:
+            del self._positions[position_id]
+        self._save()
+
     def clear(self) -> None:
         """Drop all tracked positions (e.g. after a kill-switch flatten)."""
         self._positions.clear()
