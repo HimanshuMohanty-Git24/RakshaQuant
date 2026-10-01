@@ -112,6 +112,11 @@ class Settings(BaseSettings):
         return self.state_dir / "rakshaquant.db"
 
     @property
+    def halt_file(self) -> Path:
+        """Create this file to trip the global kill switch (content ``FLATTEN`` to flatten)."""
+        return self.state_dir / "HALT"
+
+    @property
     def tape_dir(self) -> Path:
         return self.var_dir / "tape"
 

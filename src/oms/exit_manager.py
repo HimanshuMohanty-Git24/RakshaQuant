@@ -319,6 +319,20 @@ class ExitManager:
             await self._exit_all(pos, IntentReason.FLATTEN, reason, None)
         self._save()
 
+    async def stand_down(self, instrument_key: str, product: Product) -> None:
+        """The kill switch is flattening this position: cancel its stop and stop managing it
+        (no stop, target or partial is placed for it again until ``reconcile`` finds no exit
+        working and takes it back).
+        """
+        key = f"{instrument_key}|{product.value}"
+        pos = self._state.positions.get(key)
+        if pos is None:
+            return
+        await self._cancel_stop(pos)
+        pos.closing = True
+        self._stale_stops.discard(key)
+        self._save()
+
     # -- actions --------------------------------------------------------------------------------------
 
     async def _exit_all(
@@ -428,6 +442,10 @@ class ExitManager:
                     notes.append(f"{key}: managed {pos.quantity} -> book {position.quantity}")
                     pos.quantity = position.quantity
                     self._stale_stops.add(key)
+                if pos.closing and not self._exit_working(pos):  # e.g. a flatten was abandoned
+                    pos.closing = False
+                    self._stale_stops.add(key)
+                    notes.append(f"{key}: no exit working - managing it again")
                 continue
             if position.quantity < 0:
                 notes.append(f"{key}: SHORT {position.quantity} in a long-only book - flatten it")
@@ -466,6 +484,15 @@ class ExitManager:
         await self.refresh_stops()
         self._save()
         return notes
+
+    def _exit_working(self, pos: ManagedPosition) -> bool:
+        return any(
+            o.intent.reduce_only
+            and o.intent.instrument.key == pos.instrument.key
+            and o.intent.product is pos.product
+            and not o.status.is_terminal
+            for o in self._oms.orders.values()
+        )
 
     def _live_stop(self, pos: ManagedPosition) -> Order | None:
         for order in self._oms.orders.values():
