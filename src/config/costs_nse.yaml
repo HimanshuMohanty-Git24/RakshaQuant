@@ -1,0 +1,28 @@
+# NSE cash-equity charges at the target broker (Dhan). Percentages are % of turnover.
+# Verified 2026-10-02 from https://dhan.co/pricing/ (plan M3.2, audit M.3). Re-verify before
+# trusting results: exchange and regulatory rates change by circular.
+schema_version: 1
+broker: dhan
+verified: "2026-10-02"
+source: "https://dhan.co/pricing/"
+
+exchange_txn_pct: 0.0030699  # NSE transaction charge, both legs
+sebi_pct: 0.0001             # SEBI turnover fee (Rs 10 per crore), both legs
+ipft_pct: 0.0000001          # NSE investor protection fund contribution, both legs
+gst_pct: 18                  # on brokerage + exchange + SEBI + IPFT (and on DP charges)
+
+products:
+  CNC:                       # delivery
+    brokerage_pct: 0
+    brokerage_cap_inr: 0     # 0 = no cap
+    stt_buy_pct: 0.1
+    stt_sell_pct: 0.1
+    stamp_buy_pct: 0.015
+    dp_per_sell_inr: 12.50   # per ISIN per sell day, plus GST
+  MIS:                       # intraday
+    brokerage_pct: 0.03
+    brokerage_cap_inr: 20    # Rs 20 or 0.03% per executed order, whichever is lower
+    stt_buy_pct: 0
+    stt_sell_pct: 0.025
+    stamp_buy_pct: 0.003
+    dp_per_sell_inr: 0
