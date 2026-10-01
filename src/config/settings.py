@@ -26,6 +26,12 @@ ENV_FILE = REPO_ROOT / ".env"
 Environment = Literal["dev", "paper", "demo", "test"]
 
 
+def _repo_path(value: Any) -> Path:
+    """An absolute path; relative values are anchored at the repo root, never the CWD."""
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -54,20 +60,66 @@ class Settings(BaseSettings):
         description="Runtime environment; selects the state directory. The month run uses "
         "'paper'; 'demo' is for simulated/replayed data; 'test' is for the test suite.",
     )
+    var_dir: Path = Field(
+        default=None,
+        validate_default=True,
+        description="Root of all runtime files (default <repo>/var): per-environment state plus "
+        "the shared tape/, logs/, reports/, reference/, models/, datasets/ and archive/.",
+    )
     state_dir: Path = Field(
         default=None,
         validate_default=True,
-        description="Absolute directory for runtime state (default <repo>/var/<environment>). "
-        "A relative value is resolved against the repo root, never the working directory.",
+        description="Absolute directory for this environment's state (default "
+        "<var_dir>/<environment>). Relative values resolve against the repo root, never the CWD.",
     )
+
+    @field_validator("var_dir", mode="before")
+    @classmethod
+    def _resolve_var_dir(cls, value: Any) -> Path:
+        if value is None or value == "":
+            return REPO_ROOT / "var"
+        return _repo_path(value)
 
     @field_validator("state_dir", mode="before")
     @classmethod
     def _resolve_state_dir(cls, value: Any, info: ValidationInfo) -> Path:
         if value is None or value == "":
-            return REPO_ROOT / "var" / str(info.data.get("environment", "dev"))
-        path = Path(value).expanduser()
-        return path if path.is_absolute() else REPO_ROOT / path
+            var_dir = info.data.get("var_dir", REPO_ROOT / "var")
+            return Path(var_dir) / str(info.data.get("environment", "dev"))
+        return _repo_path(value)
+
+    @property
+    def db_path(self) -> Path:
+        """The environment's SQLite event store."""
+        return self.state_dir / "rakshaquant.db"
+
+    @property
+    def tape_dir(self) -> Path:
+        return self.var_dir / "tape"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.var_dir / "logs"
+
+    @property
+    def reports_dir(self) -> Path:
+        return self.var_dir / "reports"
+
+    @property
+    def reference_dir(self) -> Path:
+        return self.var_dir / "reference"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.var_dir / "models"
+
+    @property
+    def datasets_dir(self) -> Path:
+        return self.var_dir / "datasets"
+
+    @property
+    def archive_dir(self) -> Path:
+        return self.var_dir / "archive"
 
     # ===========================================
     # LLM Provider - Groq

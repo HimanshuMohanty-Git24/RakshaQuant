@@ -4,8 +4,8 @@ Hermetic test harness (plan M0.3, audit RQ-01).
 The suite must never touch real state or real credentials:
 
 * every test runs with the working directory set to its own ``tmp_path``, and with
-  ``ENVIRONMENT=test`` and ``STATE_DIR`` under that ``tmp_path``, so runtime state
-  (``paper_wallet.json``, ``exit_manager_state.json``, ...) never lands in the repo;
+  ``ENVIRONMENT=test`` and ``VAR_DIR`` under that ``tmp_path``, so runtime state (the event
+  store, tape, logs, ``paper_wallet.json``, ...) never lands in the repo;
 * ``.env`` is never read: ``Settings.model_config["env_file"]`` is disabled for the whole
   session (including collection-time imports), and the cached ``get_settings()`` is cleared
   around every test;
@@ -62,17 +62,17 @@ def _is_scrubbed(name: str) -> bool:
     )
 
 
-def _scrub_environ(state_dir: Path) -> None:
+def _scrub_environ(var_dir: Path) -> None:
     for name in [n for n in os.environ if _is_scrubbed(n)]:
         del os.environ[name]
     os.environ.update(PLACEHOLDER_ENV)
-    os.environ["STATE_DIR"] = str(state_dir)
+    os.environ["VAR_DIR"] = str(var_dir)
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Session-wide guard, active before test modules are imported."""
     Settings.model_config["env_file"] = None
-    _scrub_environ(Path(tempfile.mkdtemp(prefix="rq-test-state-")))
+    _scrub_environ(Path(tempfile.mkdtemp(prefix="rq-test-var-")))
     get_settings.cache_clear()
 
 
@@ -81,7 +81,7 @@ def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.chdir(tmp_path)
     with patch.dict(os.environ):
-        _scrub_environ(tmp_path / "var" / "test")
+        _scrub_environ(tmp_path / "var")
         get_settings.cache_clear()
         yield
     get_settings.cache_clear()
@@ -92,6 +92,6 @@ def settings(tmp_path: Path) -> Settings:
     """A fresh ``Settings`` built from code defaults only (no ``.env``, no real keys)."""
     return Settings(
         _env_file=None,
-        state_dir=tmp_path / "var" / "test",
+        var_dir=tmp_path / "var",
         **{k.lower(): v for k, v in PLACEHOLDER_ENV.items()},
     )
