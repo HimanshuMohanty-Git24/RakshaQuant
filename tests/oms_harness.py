@@ -28,7 +28,7 @@ from src.domain.types import (
     Quote,
     Side,
 )
-from src.oms.oms import OMS
+from src.oms.oms import OMS, GateResult, OrderGate
 from src.oms.position_book import PositionBook
 from src.store.event_store import EventStore
 from src.store.sink import StoreSink
@@ -37,6 +37,11 @@ from src.utils.market_time import IST
 DAY = date(2026, 10, 5)
 INFY = Instrument.nse_equity("INFY", tick_size=Decimal("0.05"))
 DEEP = MarketContext(adv_inr=1e13, adv_shares=1e12, sigma_daily=0.0)  # ~zero spread/impact
+
+
+async def unchecked(intent: OrderIntent, quantity: int | None) -> GateResult:
+    """A pass-through gate for tests of the OMS mechanics (production uses the RiskGate)."""
+    return GateResult(quantity or 0, "unchecked")
 
 
 def at(hh: int, mm: int, ss: int = 0, day: date = DAY) -> datetime:
@@ -88,6 +93,7 @@ def harness(
     market: MarketContext = DEEP,
     config: FillModelConfig | None = None,
     start: datetime | None = None,
+    gate: OrderGate | None = unchecked,
 ) -> Iterator[Harness]:
     clock = ReplayClock(start or at(9, 30))
     with EventStore(tmp / "rq.db") as store:
@@ -103,7 +109,12 @@ def harness(
         )
         book = PositionBook("A", Decimal(cash))
         oms = OMS(
-            book_id="A", broker=broker, book=book, sink=StoreSink(store, clock, "oms"), clock=clock
+            book_id="A",
+            broker=broker,
+            book=book,
+            sink=StoreSink(store, clock, "oms"),
+            clock=clock,
+            gate=gate,
         )
         yield Harness(clock, store, broker, book, oms)
 

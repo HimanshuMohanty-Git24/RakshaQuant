@@ -107,7 +107,10 @@ def _data_stale(ctx: RiskContext) -> RiskCheckResult | None:
 
 
 def _data_simulated(ctx: RiskContext) -> RiskCheckResult | None:
-    result = check_data_source(ctx.facts.data_source, ctx.snapshot.environment)
+    source = ctx.facts.data_source
+    if source is None and not ctx.opening:
+        return None  # an exit may go without our quote; only fabricated prices block it
+    result = check_data_source(source, ctx.snapshot.environment)
     return result if result.outcome is CheckOutcome.BLOCK else None
 
 

@@ -6,7 +6,8 @@ flattens and operator orders - and the only writer of the book.
 
 1. Reduce-only intents are clipped to what the position still has to give (net of other live
    reduce orders), so an exit can never open or flip a position. Nothing left -> BLOCKED.
-2. The pre-trade ``gate`` decides (M4 plugs the RiskEngine in here; it may resize or reject).
+2. The pre-trade ``gate`` decides - the :class:`~src.risk.gate.RiskGate` in production; it may
+   resize or reject, and an OMS without a gate routes nothing.
 3. ``client_order_id = sha256(intent_id)[:16]``: a repeated intent returns the existing order.
 4. ``OrderSubmitted`` is persisted **before** the broker call, and the write is **never retried**.
    A ``NOT_PLACED`` error -> REJECTED. An ``UNKNOWN`` outcome (timeout, 5xx, anything unexpected)
@@ -162,6 +163,10 @@ class OMS:
             await self._subscription.close()
             self._subscription = None
 
+    def use_gate(self, gate: OrderGate) -> None:
+        """Install the pre-trade gate (the RiskGate is built after the OMS it reads from)."""
+        self._gate = gate
+
     def add_fill_listener(self, listener: FillListener) -> None:
         """Called after each new fill is applied to the book (e.g. the exit manager)."""
         self._fill_listeners.append(listener)
@@ -175,6 +180,8 @@ class OMS:
     async def submit(self, intent: OrderIntent, quantity: int | None = None) -> SubmitResult:
         if intent.book_id != self.book_id:
             return SubmitResult("BLOCKED", message=f"intent is for book {intent.book_id}")
+        if self._gate is None:  # nothing reaches a broker without a pre-trade decision
+            return SubmitResult("BLOCKED", message="no risk gate installed: refusing to route")
         coid = client_order_id(intent.intent_id)
         existing = self.orders.get(coid)
         if existing is not None:
@@ -186,11 +193,10 @@ class OMS:
             qty = available if qty is None else min(qty, available)
             if qty <= 0:
                 return SubmitResult("BLOCKED", message="reduce-only: nothing left to reduce")
-        if self._gate is not None:
-            decision = await self._gate(intent, qty)
-            if decision.quantity <= 0:
-                return SubmitResult("BLOCKED", message=decision.reason or "rejected by the gate")
-            qty = decision.quantity if qty is None else min(qty, decision.quantity)
+        decision = await self._gate(intent, qty)
+        if decision.quantity <= 0:
+            return SubmitResult("BLOCKED", message=decision.reason or "rejected by the gate")
+        qty = decision.quantity if qty is None else min(qty, decision.quantity)
         if qty is None or qty <= 0:
             return SubmitResult("BLOCKED", message="intent has no quantity (unsized)")
 

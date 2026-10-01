@@ -22,8 +22,8 @@ def _new_symbol(ctx: RiskContext) -> bool:
 def max_positions(ctx: RiskContext) -> RiskCheckResult | None:
     if not _new_symbol(ctx):
         return None
-    held = sum(1 for p in ctx.snapshot.positions.values() if p.quantity)
-    count = held + len(ctx.reserved.symbols)
+    held = {p.instrument_key for p in ctx.snapshot.positions.values() if p.quantity}
+    count = len(held) + len(ctx.reserved.symbols - held)
     if count >= ctx.limits.max_positions:
         return block(R.PF_MAX_POSITIONS, "maximum open positions reached",
                      observed=count, limit=ctx.limits.max_positions)  # fmt: skip

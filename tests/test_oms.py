@@ -242,15 +242,24 @@ async def test_the_gate_can_resize_or_reject(tmp_path):
         return GateResult(quantity=13) if i.side is Side.BUY else GateResult(0, "nope")
 
     with harness(tmp_path) as h:
-        h.oms._gate = gate  # M4 plugs the RiskEngine in here
+        h.oms.use_gate(gate)  # production installs the RiskGate
         h.quote(1000.0)
         resized = await h.oms.submit(intent(Side.BUY, None))
         assert resized.order is not None and resized.order.quantity == 13
 
 
-async def test_unsized_intent_without_a_gate_is_blocked(tmp_path):
+async def test_an_unsized_intent_is_blocked(tmp_path):
     with harness(tmp_path) as h:
         assert (await h.oms.submit(intent(Side.BUY, None))).status == "BLOCKED"
+
+
+async def test_an_oms_without_a_gate_routes_nothing(tmp_path):
+    with harness(tmp_path, gate=None) as h:
+        await h.oms.start()
+        h.quote(1000.0)
+        result = await h.oms.submit(intent(Side.BUY, 10))
+        assert result.status == "BLOCKED" and "no risk gate" in result.message
+        assert h.events("OrderSubmitted") == []
 
 
 # --- UNKNOWN outcomes ------------------------------------------------------------------------------

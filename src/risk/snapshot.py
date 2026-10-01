@@ -153,16 +153,19 @@ class Reservations:
     by_sector: dict[str, Decimal] = field(default_factory=dict)
     by_strategy: dict[str, Decimal] = field(default_factory=dict)
 
-    def add(self, ctx: RiskContext, quantity: int) -> None:
-        if not ctx.opening or ctx.price is None:
+    def add(self, ctx: RiskContext, quantity: int, *, counted: bool = True) -> None:
+        """Reserve an approval's capacity. ``counted=False`` for an order already submitted (it
+        is in the day's order and entry counts; only its exposure is not yet in the book)."""
+        if counted:
             self.orders += 1
+        if not ctx.opening or ctx.price is None:
             return
         notional = ctx.price * quantity
         self.symbols.add(ctx.intent.instrument.key)
         self.gross += notional
         self.cash += notional
-        self.entries += 1
-        self.orders += 1
+        if counted:
+            self.entries += 1
         if ctx.stop_distance is not None:
             self.heat += ctx.stop_distance * quantity
         sector = ctx.sector

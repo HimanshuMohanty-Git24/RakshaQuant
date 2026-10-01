@@ -47,6 +47,7 @@ from src.domain.types import (
 )
 from src.oms.exit_manager import ExitManager
 from src.oms.oms import OMS
+from src.risk.marks import owner as position_owner
 from src.risk.state import Breach
 from src.store.kv import MemoryStateStore, StateStore
 
@@ -273,7 +274,7 @@ class Flattener:
         for position in self._oms.book.positions(now):
             if position.quantity == 0:
                 continue
-            owner = self._owner(position)
+            owner = position_owner(self._oms.book, position)
             if strategy is not None and owner != strategy:
                 continue
             remaining += 1
@@ -298,10 +299,6 @@ class Flattener:
                     source="risk",
                 )  # fmt: skip
         return remaining
-
-    def _owner(self, position: Position) -> str:
-        lots = self._oms.book.lots(position.instrument_key, position.product)
-        return lots[0].strategy if lots else "unknown"
 
     def _flatten_in_flight(self, position: Position) -> bool:
         return any(

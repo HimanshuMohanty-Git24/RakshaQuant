@@ -20,6 +20,7 @@ from src.domain.events import Alert
 from src.domain.sink import EventSink
 from src.oms.position_book import PositionBook
 from src.risk.kill_switch import Flattener, KillSwitchRegistry
+from src.risk.marks import unrealized_by_strategy
 from src.risk.state import Breach, DailyRiskTracker
 
 logger = logging.getLogger(__name__)
@@ -80,18 +81,6 @@ class RiskMonitor:
                     )  # fmt: skip
         return marks
 
-    def unrealized_by_strategy(self, marks: Mapping[str, Decimal]) -> dict[str, Decimal]:
-        out: dict[str, Decimal] = {}
-        for position in self.book.positions(self._clock.now()):
-            if not position.quantity:
-                continue
-            sign = 1 if position.quantity > 0 else -1
-            mark = marks[position.instrument_key]
-            for lot in self.book.lots(position.instrument_key, position.product):
-                pnl = (mark - lot.price) * lot.quantity * sign
-                out[lot.strategy] = out.get(lot.strategy, Decimal(0)) + pnl
-        return out
-
     def start_day(self) -> None:
         """Seed today's risk state from the current marks (a stored state for today wins)."""
         self.tracker.start_day(self.book.equity(self.marks()))
@@ -102,7 +91,8 @@ class RiskMonitor:
         marks = self.marks()
         equity = self.book.equity(marks)
         breaches = self.tracker.risk_tick(
-            equity, unrealized_by_strategy=self.unrealized_by_strategy(marks)
+            equity,
+            unrealized_by_strategy=unrealized_by_strategy(self.book, marks, self._clock.now()),
         )
         tripped = self.switches.apply(breaches)
         remaining = 0
