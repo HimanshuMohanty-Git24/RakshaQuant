@@ -25,6 +25,7 @@ from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
 from src.engine.runner import Engine, EngineConfig, build_engine, held_instruments
 from src.engine.view_model import StatsProjector
 from src.live.views import SessionView
+from src.llm.registry import validate_roles
 from src.marketdata.history import YFinanceHistorySource
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
 from src.marketdata.validation import QuoteValidator, band_lookup
@@ -50,6 +51,7 @@ async def run_paper(
 ) -> int:
     if settings.environment == DEMO:
         raise ConfigError("the demo environment runs synthetic data: use --demo")
+    validate_roles(settings)  # a misconfigured enabled LLM role fails startup (exit 2)
     mode = settings.execution_mode
     if mode not in PAPER_MODES:
         logger.warning("EXECUTION_MODE=%s ignored: the v2 engine trades on the simulated "
@@ -89,6 +91,7 @@ async def run_demo(
 ) -> int:
     if settings.environment != DEMO:
         raise ConfigError("the demo runs only in ENVIRONMENT=demo (its own state directory)")
+    validate_roles(settings)
     calendar = get_calendar()
     today = today or datetime.now(IST).date()
     days = calendar.trading_days(date(today.year, 1, 1), date(today.year, 12, 31))
