@@ -50,7 +50,8 @@ class TelegramNotifier:
         if self.bot_token is None or self.chat_id is None:
             try:
                 settings = get_settings()
-                self.bot_token = getattr(settings, "telegram_bot_token", None)
+                token = getattr(settings, "telegram_bot_token", None)
+                self.bot_token = token.get_secret_value() if token else None
                 self.chat_id = getattr(settings, "telegram_chat_id", None)
             except Exception:
                 pass

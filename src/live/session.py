@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from pathlib import Path
 
 from src.agents.graph import create_trading_graph, run_trading_cycle
 from src.agents.risk_compliance import check_kill_switch
@@ -147,7 +146,7 @@ async def run_trading_session(
     # idempotency (no double-submit on retry/restart) and shadow-mode safety.
     execution_service = ExecutionService.from_settings(
         engine=paper_engine,
-        idempotency=IdempotencyStore(Path("paper_idempotency.json")),
+        idempotency=IdempotencyStore(settings.state_dir / "paper_idempotency.json"),
     )
     effective = execution_service.effective_mode.value
     view.set_effective_mode(effective)
@@ -189,7 +188,7 @@ async def run_trading_session(
         max_hold_minutes=240,
         partial_profit_r=1.0,
         partial_exit_pct=0.5,
-        state_file=Path("exit_manager_state.json"),
+        state_file=settings.state_dir / "exit_manager_state.json",
     )
     dashboard.stats.log_activity("Exit manager initialized", "INFO")
 

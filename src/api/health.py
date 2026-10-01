@@ -81,7 +81,7 @@ async def check_database() -> ServiceHealth:
 
         settings = get_settings()
 
-        engine = create_engine(settings.database_url)
+        engine = create_engine(settings.database_url.get_secret_value())
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
 

@@ -26,24 +26,28 @@ def setup_tracing() -> bool:
     """
     Setup LangSmith tracing for the trading system.
 
-    Configures environment variables and validates connection.
+    Tracing is opt-in (``LANGSMITH_TRACING_V2=true`` plus a key): traces leave the machine.
+    The key is validated against LangSmith *before* anything is exported to the environment.
 
     Returns:
         True if tracing is enabled and working
     """
     try:
         settings = get_settings()
+        if not settings.langsmith_tracing_v2:
+            logger.info("LangSmith tracing is off (opt-in via LANGSMITH_TRACING_V2=true)")
+            return False
+        if settings.langsmith_api_key is None:
+            logger.warning("LangSmith tracing requested but LANGSMITH_API_KEY is not set")
+            return False
 
-        # Set environment variables for LangSmith
-        os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key.get_secret_value()
+        api_key = settings.langsmith_api_key.get_secret_value()
+        client = Client(api_key=api_key)
+        list(client.list_projects(limit=1))  # validate the key/connection first
+
+        os.environ["LANGSMITH_API_KEY"] = api_key
         os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
-        os.environ["LANGSMITH_TRACING_V2"] = str(settings.langsmith_tracing_v2).lower()
-
-        # Validate connection
-        client = Client()
-
-        # Try to list projects to verify connection
-        list(client.list_projects(limit=1))
+        os.environ["LANGSMITH_TRACING_V2"] = "true"
 
         logger.info(f"LangSmith tracing enabled for project: {settings.langsmith_project}")
         return True

@@ -113,6 +113,7 @@ class IdempotencyStore:
         if self._path is None:
             return
         try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".tmp")
             with open(tmp, "w") as f:
                 json.dump(self._seen, f)

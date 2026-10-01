@@ -13,10 +13,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-# Default persistence location for the singleton tracker.
-DEFAULT_HISTORY_FILE = Path("performance_history.json")
+# Persistence file name for the singleton tracker, under settings.state_dir.
+HISTORY_FILE_NAME = "performance_history.json"
 
 
 @dataclass
@@ -109,6 +111,7 @@ class PerformanceTracker:
             return
         try:
             serializable = [{**r, "timestamp": r["timestamp"].isoformat()} for r in self._records]
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.state_file.with_suffix(".tmp")
             with open(tmp, "w") as f:
                 json.dump(serializable, f)
@@ -239,8 +242,9 @@ _tracker_instance: PerformanceTracker | None = None
 
 
 def get_performance_tracker() -> PerformanceTracker:
-    """Get the global performance tracker singleton (persisted to DEFAULT_HISTORY_FILE)."""
+    """Get the global performance tracker singleton (persisted under settings.state_dir)."""
     global _tracker_instance
     if _tracker_instance is None:
-        _tracker_instance = PerformanceTracker(state_file=DEFAULT_HISTORY_FILE)
+        state_file = get_settings().state_dir / HISTORY_FILE_NAME
+        _tracker_instance = PerformanceTracker(state_file=state_file)
     return _tracker_instance

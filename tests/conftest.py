@@ -3,9 +3,9 @@ Hermetic test harness (plan M0.3, audit RQ-01).
 
 The suite must never touch real state or real credentials:
 
-* every test runs with the working directory set to its own ``tmp_path``, so the legacy
-  CWD-relative state files (``paper_wallet.json``, ``exit_manager_state.json``, ...) land
-  there instead of in the repo root;
+* every test runs with the working directory set to its own ``tmp_path``, and with
+  ``ENVIRONMENT=test`` and ``STATE_DIR`` under that ``tmp_path``, so runtime state
+  (``paper_wallet.json``, ``exit_manager_state.json``, ...) never lands in the repo;
 * ``.env`` is never read: ``Settings.model_config["env_file"]`` is disabled for the whole
   session (including collection-time imports), and the cached ``get_settings()`` is cleared
   around every test;
@@ -18,6 +18,7 @@ The suite must never touch real state or real credentials:
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -40,10 +41,12 @@ SECRET_ENV_KEYS = (
     "TELEGRAM_",
 )
 
-# Required settings get placeholders that can never be mistaken for real keys.
+# Required settings get placeholders that can never be mistaken for real keys. The in-memory
+# DATABASE_URL stops tests reaching a Postgres that happens to run at the default URL.
 PLACEHOLDER_ENV = {
+    "ENVIRONMENT": "test",
     "GROQ_API_KEY": "test-groq-key",
-    "LANGSMITH_API_KEY": "test-langsmith-key",
+    "DATABASE_URL": "sqlite:///:memory:",
 }
 
 
@@ -59,16 +62,17 @@ def _is_scrubbed(name: str) -> bool:
     )
 
 
-def _scrub_environ() -> None:
+def _scrub_environ(state_dir: Path) -> None:
     for name in [n for n in os.environ if _is_scrubbed(n)]:
         del os.environ[name]
     os.environ.update(PLACEHOLDER_ENV)
+    os.environ["STATE_DIR"] = str(state_dir)
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Session-wide guard, active before test modules are imported."""
     Settings.model_config["env_file"] = None
-    _scrub_environ()
+    _scrub_environ(Path(tempfile.mkdtemp(prefix="rq-test-state-")))
     get_settings.cache_clear()
 
 
@@ -77,13 +81,17 @@ def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.chdir(tmp_path)
     with patch.dict(os.environ):
-        _scrub_environ()
+        _scrub_environ(tmp_path / "var" / "test")
         get_settings.cache_clear()
         yield
     get_settings.cache_clear()
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path: Path) -> Settings:
     """A fresh ``Settings`` built from code defaults only (no ``.env``, no real keys)."""
-    return Settings(_env_file=None, **{k.lower(): v for k, v in PLACEHOLDER_ENV.items()})
+    return Settings(
+        _env_file=None,
+        state_dir=tmp_path / "var" / "test",
+        **{k.lower(): v for k, v in PLACEHOLDER_ENV.items()},
+    )

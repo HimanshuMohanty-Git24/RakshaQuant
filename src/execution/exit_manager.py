@@ -146,6 +146,7 @@ class ExitManager:
             return
         try:
             data = {pid: pos.to_dict() for pid, pos in self._positions.items()}
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.state_file.with_suffix(".tmp")
             with open(tmp, "w") as f:
                 json.dump(data, f)

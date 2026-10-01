@@ -6,17 +6,31 @@ Includes cross-field validation to ensure configuration consistency.
 """
 
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
-from pydantic import Field, PrivateAttr, SecretStr, model_validator
+from pydantic import (
+    Field,
+    PrivateAttr,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Anchors for files the app owns. Never resolve these against the working directory.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = REPO_ROOT / ".env"
+
+Environment = Literal["dev", "paper", "demo", "test"]
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -31,6 +45,29 @@ class Settings(BaseSettings):
     def config_warnings(self) -> list[str]:
         """Cross-field configuration warnings detected at load time (may be empty)."""
         return self._config_warnings
+
+    # ===========================================
+    # Environment & runtime state
+    # ===========================================
+    environment: Environment = Field(
+        default="dev",
+        description="Runtime environment; selects the state directory. The month run uses "
+        "'paper'; 'demo' is for simulated/replayed data; 'test' is for the test suite.",
+    )
+    state_dir: Path = Field(
+        default=None,
+        validate_default=True,
+        description="Absolute directory for runtime state (default <repo>/var/<environment>). "
+        "A relative value is resolved against the repo root, never the working directory.",
+    )
+
+    @field_validator("state_dir", mode="before")
+    @classmethod
+    def _resolve_state_dir(cls, value: Any, info: ValidationInfo) -> Path:
+        if value is None or value == "":
+            return REPO_ROOT / "var" / str(info.data.get("environment", "dev"))
+        path = Path(value).expanduser()
+        return path if path.is_absolute() else REPO_ROOT / path
 
     # ===========================================
     # LLM Provider - Groq
@@ -70,24 +107,27 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
-    # Observability - LangSmith
+    # Observability - LangSmith (opt-in: traces leave the machine)
     # ===========================================
-    langsmith_api_key: SecretStr = Field(..., description="LangSmith API key")
+    langsmith_api_key: SecretStr | None = Field(
+        default=None,
+        description="LangSmith API key (only needed when tracing is enabled)",
+    )
     langsmith_project: str = Field(
         default="trading-agent",
         description="LangSmith project name for tracing",
     )
     langsmith_tracing_v2: bool = Field(
-        default=True,
-        description="Enable LangSmith tracing v2",
+        default=False,
+        description="Send traces to LangSmith (a hosted service). Off by default.",
     )
 
     # ===========================================
     # Database - PostgreSQL
     # ===========================================
-    database_url: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/trading_agent",
-        description="PostgreSQL connection URL",
+    database_url: SecretStr = Field(
+        default=SecretStr("postgresql://postgres:postgres@localhost:5432/trading_agent"),
+        description="PostgreSQL connection URL (may embed credentials)",
     )
 
     # ===========================================
@@ -164,7 +204,7 @@ class Settings(BaseSettings):
     # ===========================================
     # Telegram Notifications
     # ===========================================
-    telegram_bot_token: str | None = Field(
+    telegram_bot_token: SecretStr | None = Field(
         default=None,
         description="Telegram bot token from @BotFather",
     )
@@ -418,6 +458,11 @@ class Settings(BaseSettings):
                 errors.append("no_trading_before must be before no_trading_after")
         except ValueError as e:
             errors.append(f"Invalid trading window format: {e}")
+
+        if self.langsmith_tracing_v2 and not self.langsmith_api_key:
+            errors.append(
+                "LANGSMITH_TRACING_V2 is on but LANGSMITH_API_KEY is missing; tracing stays off"
+            )
 
         # Telegram requires both token and chat_id
         if self.telegram_enabled:

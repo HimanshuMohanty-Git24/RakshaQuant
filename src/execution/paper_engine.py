@@ -25,8 +25,8 @@ from src.execution.costs import CostModel
 
 logger = logging.getLogger(__name__)
 
-# Default state file location
-STATE_FILE = Path("paper_wallet.json")
+# Default state file name, under settings.state_dir
+STATE_FILE_NAME = "paper_wallet.json"
 
 # Cap persisted order history (the journal is the durable, unbounded record).
 MAX_PERSISTED_ORDERS = 5000
@@ -154,7 +154,7 @@ class LocalPaperEngine:
         """
         settings = get_settings()
         self.initial_balance = initial_balance or settings.paper_wallet_balance
-        self.state_file = state_file or STATE_FILE
+        self.state_file = state_file or settings.state_dir / STATE_FILE_NAME
         self.cost_model = cost_model or CostModel.from_settings(settings)
 
         self.balance = self.initial_balance
@@ -229,6 +229,7 @@ class LocalPaperEngine:
                 updated_at=datetime.now().isoformat(),
             )
 
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
             tmp_file = self.state_file.with_suffix(".tmp")
             with open(tmp_file, "w") as f:
                 json.dump(state.to_dict(), f, indent=2)

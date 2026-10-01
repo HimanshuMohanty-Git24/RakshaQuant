@@ -58,14 +58,15 @@ def main() -> None:
         settings = get_settings()
     except Exception as exc:
         print(f"[!] Configuration could not load: {exc}")
-        print("    Set the required keys (GROQ_API_KEY, LANGSMITH_API_KEY) in .env and re-run.")
+        print("    Set the required key (GROQ_API_KEY) in .env and re-run.")
         print(LINE)
         return
 
     # 3. Readiness checklist.
     groq = settings.groq_api_key.get_secret_value()
     groq_ok = bool(groq) and "your_" not in groq
-    langsmith = settings.langsmith_api_key.get_secret_value()
+    langsmith_key = settings.langsmith_api_key
+    langsmith = langsmith_key.get_secret_value() if langsmith_key else ""
     langsmith_ok = bool(langsmith) and "your_" not in langsmith
 
     print()

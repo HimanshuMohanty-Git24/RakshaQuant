@@ -104,7 +104,7 @@ class AgentMemoryDB:
     def __post_init__(self):
         if not self.database_url:
             settings = get_settings()
-            self.database_url = settings.database_url
+            self.database_url = settings.database_url.get_secret_value()
             self.decay_days = settings.memory_decay_days
 
         self._initialize_db()

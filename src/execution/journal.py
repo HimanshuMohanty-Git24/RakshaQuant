@@ -128,7 +128,7 @@ class TradeJournal:
         """Initialize database connection."""
         if not self.database_url:
             settings = get_settings()
-            self.database_url = settings.database_url
+            self.database_url = settings.database_url.get_secret_value()
 
         self._initialize_db()
 
