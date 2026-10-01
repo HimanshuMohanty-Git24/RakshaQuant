@@ -453,6 +453,7 @@ class LLMOutcome(StrEnum):
     INVALID_OUTPUT = "invalid_output"
     REFUSAL = "refusal"
     BUDGET_EXCEEDED = "budget_exceeded"
+    BREAKER_OPEN = "breaker_open"  # the model was skipped: its circuit breaker is open
     ERROR = "error"
 
 

@@ -181,6 +181,15 @@ class Settings(BaseSettings):
     )
     llm_compat_api_key: SecretStr | None = Field(default=None, description="Key for 'compat'")
     llm_timeout_s: float = Field(default=20.0, gt=0, le=120, description="Per LLM call")
+    llm_breaker_failures: int = Field(
+        default=3, ge=1, le=50, description="Consecutive failures that open a model's breaker"
+    )
+    llm_breaker_cooldown_s: float = Field(
+        default=120.0, gt=0, le=3600, description="How long an open breaker skips the model"
+    )
+    llm_cache_enabled: bool = Field(
+        default=True, description="Reuse a stored reply for an identical prompt and model"
+    )
     # Roles: "provider:model" (empty = role disabled), comma-separated fallbacks, optional effort.
     llm_role_veto: str = Field(default="", description="Book C veto (online, entry window)")
     llm_role_veto_fallbacks: str = ""
