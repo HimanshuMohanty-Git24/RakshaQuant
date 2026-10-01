@@ -26,9 +26,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 
+from src.config import get_settings
 from src.dashboard.cli import TradingStats
 from src.live.session import run_trading_session
 from src.live.views import RichSessionView
+from src.ops.exit_codes import ExitCode
+from src.ops.instance_lock import InstanceLockHeldError, single_instance
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -93,11 +96,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> None:
-    """Main entry point."""
+    """Main entry point. Refuses to start (exit 3) if another instance holds the state dir."""
+    args = _parse_args()
+    try:
+        with single_instance(get_settings().state_dir):
+            _run(args)
+    except InstanceLockHeldError as exc:
+        console.print(f"[red]{exc}[/]")
+        sys.exit(ExitCode.LOCK_HELD)
+
+
+def _run(args: argparse.Namespace) -> None:
     import atexit
     import warnings
-
-    args = _parse_args()
 
     def suppress_threading_errors() -> None:
         warnings.filterwarnings("ignore", category=RuntimeWarning)
