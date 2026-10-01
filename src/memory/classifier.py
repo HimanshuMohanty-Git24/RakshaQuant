@@ -119,6 +119,9 @@ class MistakeClassifier:
     def _initialize_llm(self) -> None:
         """Initialize the LLM for classification."""
         settings = get_settings()
+        if settings.groq_api_key is None:  # rules only; the LLM call path returns {}
+            self._llm = None
+            return
         self._llm = ChatGroq(
             api_key=settings.groq_api_key.get_secret_value(),
             model_name=settings.groq_model_fallback,  # Use faster model for classification

@@ -62,7 +62,7 @@ def create_strategy_agent() -> ChatGroq:
     settings = get_settings()
 
     return ChatGroq(
-        api_key=settings.groq_api_key.get_secret_value(),
+        api_key=settings.groq_api_key.get_secret_value() if settings.groq_api_key else "",
         model_name=settings.groq_model_primary,
         temperature=settings.groq_temperature,
         max_tokens=1024,

@@ -111,6 +111,13 @@ async def check_groq_api() -> ServiceHealth:
         from langchain_groq import ChatGroq
 
         settings = get_settings()
+        if settings.groq_api_key is None:
+            return ServiceHealth(
+                name="groq_api",
+                status=HealthStatus.DEGRADED,
+                latency_ms=0.0,
+                message="GROQ_API_KEY not configured",
+            )
 
         # Simple ping to Groq
         llm = ChatGroq(

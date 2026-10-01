@@ -147,7 +147,9 @@ class Settings(BaseSettings):
     # ===========================================
     # LLM Provider - Groq
     # ===========================================
-    groq_api_key: SecretStr = Field(..., description="Groq API key for LLM access")
+    groq_api_key: SecretStr | None = Field(
+        default=None, description="Groq API key (optional: only for roles that use groq:)"
+    )
     groq_model_primary: str = Field(
         default="llama-3.3-70b-versatile",
         description="Primary Groq model for agent reasoning",
@@ -163,6 +165,56 @@ class Settings(BaseSettings):
     groq_max_tokens: int = Field(
         default=2048,
         description="Maximum tokens per LLM response",
+    )
+
+    # ===========================================
+    # LLM provider layer (plan M6): any role on any provider via "provider:model"
+    # ===========================================
+    openai_api_key: SecretStr | None = Field(default=None, description="OpenAI API key")
+    openrouter_api_key: SecretStr | None = Field(default=None, description="OpenRouter API key")
+    anthropic_api_key: SecretStr | None = Field(default=None, description="Anthropic API key")
+    ollama_base_url: str = Field(
+        default="http://localhost:11434/v1", description="Ollama's OpenAI-compatible endpoint"
+    )
+    llm_compat_base_url: str | None = Field(
+        default=None, description="Any other OpenAI-compatible endpoint (provider 'compat')"
+    )
+    llm_compat_api_key: SecretStr | None = Field(default=None, description="Key for 'compat'")
+    llm_timeout_s: float = Field(default=20.0, gt=0, le=120, description="Per LLM call")
+    # Roles: "provider:model" (empty = role disabled), comma-separated fallbacks, optional effort.
+    llm_role_veto: str = Field(default="", description="Book C veto (online, entry window)")
+    llm_role_veto_fallbacks: str = ""
+    llm_role_veto_effort: str | None = None
+    llm_role_review: str = Field(default="", description="Nightly post-trade review (offline)")
+    llm_role_review_fallbacks: str = ""
+    llm_role_review_effort: str | None = None
+    llm_role_explain: str = Field(default="", description="Trade explanations (offline)")
+    llm_role_explain_fallbacks: str = ""
+    llm_role_explain_effort: str | None = None
+    llm_role_label: str = Field(default="", description="Teacher labels (offline, batch)")
+    llm_role_label_fallbacks: str = ""
+    llm_role_label_effort: str | None = None
+    llm_role_research: str = Field(default="", description="Weekly research memo (offline)")
+    llm_role_research_fallbacks: str = ""
+    llm_role_research_effort: str | None = None
+    usd_inr: float = Field(default=88.0, gt=0, description="USD->INR for LLM cost accounting")
+    llm_budget_daily_inr: float = Field(
+        default=200.0, ge=0, description="All roles, per IST day (0 = unlimited)"
+    )
+    llm_budget_role_daily_inr: dict[str, float] = Field(
+        default_factory=dict, description='Per role, per IST day, e.g. {"veto": 50}'
+    )
+    llm_budget_per_decision_inr: float = Field(
+        default=10.0, ge=0, description="Per decision_id (0 = unlimited)"
+    )
+    llm_openrouter_referer: str = Field(
+        default="", description="Optional HTTP-Referer sent to OpenRouter (app attribution)"
+    )
+    llm_openrouter_deny_data_collection: bool = Field(
+        default=True, description="Ask OpenRouter to route only to no-data-retention providers"
+    )
+    llm_anthropic_fallbacks: bool = Field(
+        default=True, description="Anthropic server-side refusal fallbacks (where supported)"
     )
 
     # ===========================================

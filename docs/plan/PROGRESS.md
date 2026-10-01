@@ -113,7 +113,7 @@ Source of truth: [2026-10-01-platform-v2-plan.md](2026-10-01-platform-v2-plan.md
 
 | Task | Status | Commit | Notes / deviations |
 |---|---|---|---|
-| registry | todo | | |
+| registry | done | (this commit) | Order in M6: registry → pricing → clients → router → prompts → roles+check (pricing before the router that needs it). `src/llm/registry.py`: `ProviderSpec` × 6 (`openai`, `openrouter`, `groq`, `anthropic` (native), `ollama` (key optional, `OLLAMA_BASE_URL`), `compat` (`LLM_COMPAT_BASE_URL` required)); `ModelSpec.parse` splits on the **first** colon (`openrouter:v/m:free` → free); per-model json_schema capability overrides; `role_configs` from `LLM_ROLE_<ROLE>` / `_FALLBACKS` (comma-separated, de-duplicated) / `_EFFORT` for veto, review, explain, label, research (empty = role **off** — the default for every role); `validate_roles` raises one `ConfigError` (exit 2) listing unknown providers or missing keys/base URLs **for enabled roles only**, naming env vars, never values. New settings: provider keys (SecretStr), `LLM_TIMEOUT_S`, role fields, `USD_INR` (default 88 — owner should set the current rate), INR budgets (daily total 200, per-role JSON map, per-decision 10; 0 = unlimited), OpenRouter referer + deny-data-collection, Anthropic fallbacks flag. **`GROQ_API_KEY` is now optional** (no blocking dependency on Groq): the legacy callers (health check, mistake classifier, setup script, legacy agents) handle `None`. `.env.example` documents it all. 12 tests. |
 | clients (openai_compat, anthropic_native) | todo | | |
 | router | todo | | |
 | pricing | todo | | |

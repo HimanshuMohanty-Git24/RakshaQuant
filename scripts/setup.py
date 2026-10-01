@@ -63,7 +63,7 @@ def main() -> None:
         return
 
     # 3. Readiness checklist.
-    groq = settings.groq_api_key.get_secret_value()
+    groq = settings.groq_api_key.get_secret_value() if settings.groq_api_key else ""
     groq_ok = bool(groq) and "your_" not in groq
     langsmith_key = settings.langsmith_api_key
     langsmith = langsmith_key.get_secret_value() if langsmith_key else ""
