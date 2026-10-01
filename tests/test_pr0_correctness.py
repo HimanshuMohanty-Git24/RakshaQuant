@@ -33,18 +33,18 @@ def test_now_ist_is_fixed_utc_plus_530():
 
 
 def test_is_market_hours_weekday_open():
-    # 2024-01-01 is a Monday.
-    assert is_market_hours(datetime(2024, 1, 1, 10, 0, tzinfo=IST)) is True
+    # 2026-10-05 is a Monday (a normal NSE session).
+    assert is_market_hours(datetime(2026, 10, 5, 10, 0, tzinfo=IST)) is True
 
 
 def test_is_market_hours_weekend_closed():
-    # 2024-01-06 is a Saturday.
-    assert is_market_hours(datetime(2024, 1, 6, 10, 0, tzinfo=IST)) is False
+    # 2026-10-03 is a Saturday.
+    assert is_market_hours(datetime(2026, 10, 3, 10, 0, tzinfo=IST)) is False
 
 
 def test_is_market_hours_before_open_and_after_close():
-    assert is_market_hours(datetime(2024, 1, 1, 8, 0, tzinfo=IST)) is False
-    assert is_market_hours(datetime(2024, 1, 1, 16, 0, tzinfo=IST)) is False
+    assert is_market_hours(datetime(2026, 10, 5, 8, 0, tzinfo=IST)) is False
+    assert is_market_hours(datetime(2026, 10, 5, 16, 0, tzinfo=IST)) is False
 
 
 def test_is_market_hours_uses_ist_not_host_clock():
@@ -53,7 +53,7 @@ def test_is_market_hours_uses_ist_not_host_clock():
     open; a buggy one comparing UTC wall-clock (04:30) against IST open (09:15)
     would report closed.
     """
-    instant = datetime(2024, 1, 1, 4, 30, tzinfo=UTC)
+    instant = datetime(2026, 10, 5, 4, 30, tzinfo=UTC)
     assert is_market_hours(instant.astimezone(IST)) is True
 
 

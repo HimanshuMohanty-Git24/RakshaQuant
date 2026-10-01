@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.config import get_settings
-from src.utils.market_time import now_ist
+from src.domain.calendar import CalendarCoverageError
+from src.utils.market_time import is_market_hours, now_ist
 
 from .state import TradingState
 
@@ -298,14 +299,23 @@ def _run_risk_checks(
         )
     )
 
-    # 7. Trading hours (evaluated in IST, not host-local time)
-    current_time = now_ist().strftime("%H:%M")
-    in_trading_hours = limits.no_trading_before <= current_time <= limits.no_trading_after
+    # 7. Trading hours: an NSE session per the exchange calendar (holidays and weekends block),
+    # within the configured entry window, in IST. Outside the calendar's years: fail closed.
+    now = now_ist()
+    current_time = now.strftime("%H:%M")
+    try:
+        in_session = is_market_hours(now)
+    except CalendarCoverageError:
+        in_session = False
+    in_trading_hours = (
+        in_session and limits.no_trading_before <= current_time <= limits.no_trading_after
+    )
     checks.append(
         RiskCheckResult(
             passed=in_trading_hours,
             rule="trading_hours",
-            message=f"Outside trading hours ({limits.no_trading_before}-{limits.no_trading_after})",
+            message=f"Outside trading hours ({limits.no_trading_before}-{limits.no_trading_after}"
+            " on an NSE trading day)",
             severity="block",
         )
     )

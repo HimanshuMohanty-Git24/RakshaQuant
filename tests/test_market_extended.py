@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +9,7 @@ from src.market.simulated_data import SimulatedMarketData, SimulatedQuote
 from src.market.stock_discovery import StockDiscovery
 from src.market.websocket_feed import DhanWebSocketFeed, QuoteData
 from src.market.yfinance_feed import YFinanceFeed
+from src.utils.market_time import IST
 
 # --- MarketDataManager Tests ---
 
@@ -23,24 +24,19 @@ def mock_settings():
 
 
 def test_is_market_open():
-    # is_market_open() now evaluates in IST via utils.market_time.now_ist(),
+    # is_market_open() evaluates in IST via utils.market_time.now_ist() and the NSE calendar,
     # so the clock seam to patch is now_ist (not manager.datetime).
     with patch("src.utils.market_time.now_ist") as mock_now:
-        clock = MagicMock()
-        mock_now.return_value = clock
-
-        # Weekday 10:00 AM IST - Open
-        clock.weekday.return_value = 0  # Monday
-        clock.time.return_value = time(10, 0)
+        mock_now.return_value = datetime(2026, 10, 5, 10, 0, tzinfo=IST)  # Monday 10:00
         assert is_market_open() is True
 
-        # Weekend - Closed
-        clock.weekday.return_value = 5  # Saturday
+        mock_now.return_value = datetime(2026, 10, 3, 10, 0, tzinfo=IST)  # Saturday
         assert is_market_open() is False
 
-        # Weekday 8:00 AM IST - Closed (before open)
-        clock.weekday.return_value = 0
-        clock.time.return_value = time(8, 0)
+        mock_now.return_value = datetime(2026, 10, 5, 8, 0, tzinfo=IST)  # before open
+        assert is_market_open() is False
+
+        mock_now.return_value = datetime(2026, 10, 2, 10, 0, tzinfo=IST)  # Gandhi Jayanti
         assert is_market_open() is False
 
 

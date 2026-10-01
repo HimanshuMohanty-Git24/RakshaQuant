@@ -28,15 +28,19 @@ def now_ist() -> datetime:
 
 def is_market_hours(now: datetime | None = None) -> bool:
     """
-    Return True if ``now`` falls within NSE trading hours on a weekday (IST).
+    Return True if ``now`` falls within an NSE normal-market session (IST).
+
+    Decided by the NSE calendar (``src/domain/calendar.py``): holidays, weekends and special
+    sessions included. Raises ``CalendarCoverageError`` for years the calendar does not cover.
 
     Args:
         now: Optional timezone-aware datetime. Defaults to the current IST time.
             A naive datetime is assumed to already be in IST.
     """
+    from src.domain.calendar import get_calendar  # local: the calendar imports IST from here
+
     if now is None:
         now = now_ist()
-    # Market closed on weekends (Saturday=5, Sunday=6).
-    if now.weekday() >= 5:
-        return False
-    return MARKET_OPEN <= now.time() <= MARKET_CLOSE
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=IST)
+    return get_calendar().is_market_open(now)

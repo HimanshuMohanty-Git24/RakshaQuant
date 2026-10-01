@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from src.agents.market_regime import (
@@ -17,6 +18,7 @@ from src.agents.strategy_selection import (
     _parse_strategy_response,
     strategy_selection_node,
 )
+from src.utils.market_time import IST
 
 # Mock settings
 with patch("src.config.get_settings") as mock_get_settings:
@@ -94,7 +96,7 @@ def test_risk_compliance_node():
 
     # Mock IST clock to be within trading hours
     with patch("src.agents.risk_compliance.now_ist") as mock_now:
-        mock_now.return_value.strftime.return_value = "12:00"
+        mock_now.return_value = datetime(2026, 10, 5, 12, 0, tzinfo=IST)  # Monday, in session
 
         with patch("src.agents.risk_compliance.RiskLimits.from_settings") as mock_limits:
             limits = RiskLimits()  # Defaults

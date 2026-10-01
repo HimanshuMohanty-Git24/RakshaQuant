@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "exchange": "NSE",
+  "segment": "CM",
+  "timezone": "IST (fixed UTC+05:30)",
+  "notes": "Holidays and special sessions per calendar year. A special session overrides a holiday on the same date only when its times are set; null times mean 'announced, timings not yet notified' and the date stays closed (fail closed). Years not listed are not covered: the calendar raises rather than guess.",
+  "default_session": {"pre_open": "09:00", "open": "09:15", "close": "15:30"},
+  "years": {
+    "2026": {
+      "sources": [
+        "NSE API /api/holiday-master?type=trading, segment CM, fetched 2026-10-02",
+        "NSE circular NSE/CMTR/71775 (2025-12-12): trading holidays and Muhurat date for 2026",
+        "NSE circular NSE/CMTR/72349 (2026-01-16): live trading session on Sunday 2026-02-01"
+      ],
+      "holidays": [
+        {"date": "2026-01-15", "name": "Municipal Corporation Election - Maharashtra"},
+        {"date": "2026-01-26", "name": "Republic Day"},
+        {"date": "2026-02-15", "name": "Mahashivratri"},
+        {"date": "2026-03-03", "name": "Holi"},
+        {"date": "2026-03-21", "name": "Id-Ul-Fitr (Ramadan Eid)"},
+        {"date": "2026-03-26", "name": "Shri Ram Navami"},
+        {"date": "2026-03-31", "name": "Shri Mahavir Jayanti"},
+        {"date": "2026-04-03", "name": "Good Friday"},
+        {"date": "2026-04-14", "name": "Dr. Baba Saheb Ambedkar Jayanti"},
+        {"date": "2026-05-01", "name": "Maharashtra Day"},
+        {"date": "2026-05-28", "name": "Bakri Id"},
+        {"date": "2026-06-26", "name": "Muharram"},
+        {"date": "2026-08-15", "name": "Independence Day"},
+        {"date": "2026-09-14", "name": "Ganesh Chaturthi"},
+        {"date": "2026-10-02", "name": "Mahatma Gandhi Jayanti"},
+        {"date": "2026-10-20", "name": "Dussehra"},
+        {"date": "2026-11-08", "name": "Diwali Laxmi Pujan"},
+        {"date": "2026-11-10", "name": "Diwali-Balipratipada"},
+        {"date": "2026-11-24", "name": "Prakash Gurpurb Sri Guru Nanak Dev"},
+        {"date": "2026-12-25", "name": "Christmas"}
+      ],
+      "special_sessions": [
+        {
+          "date": "2026-02-01",
+          "name": "Union Budget live trading session",
+          "pre_open": "09:00",
+          "open": "09:15",
+          "close": "15:30",
+          "source": "NSE/CMTR/72349"
+        },
+        {
+          "date": "2026-11-08",
+          "name": "Muhurat trading (Diwali Laxmi Pujan)",
+          "pre_open": null,
+          "open": null,
+          "close": null,
+          "source": "NSE/CMTR/71775; timings to be notified by a separate circular"
+        }
+      ]
+    }
+  }
+}
