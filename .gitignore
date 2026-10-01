@@ -1,76 +1,66 @@
-# Environment
+# Explicit entries only: no blanket patterns such as *.json or lib/ that silently drop sources.
+
+# Secrets / local environment
 .env
 .env.local
 .env.*.local
+.claude/settings.local.json
 
-# Python
+# Runtime state: everything lives under var/<environment>/ (see Settings.state_dir)
+var/
+*.db
+*.sqlite3
+logs/
+*.log
+
+# Python build artefacts and caches
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/dist/
+/develop-eggs/
+/downloads/
+/eggs/
+/.eggs/
+/parts/
+/sdist/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environments
 .venv/
 venv/
 ENV/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Testing
+# Test, coverage, lint and type-check output
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 .nox/
-
-# Type checking
 .mypy_cache/
-
-# Logs
-*.log
-logs/
-
-# Database
-*.db
-*.sqlite3
-
-# Jupyter
+.ruff_cache/
 .ipynb_checkpoints/
 
-# OS
+# Frontend build output
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
 
-# Project specific
-data/
-*.csv
-*.json
-!.env.example
-
-#context Docs
+# Local scratch, not project sources
 AgentContext/
-
-# Logs
-logs/
-*.log
+.tmp-ui-shots/
