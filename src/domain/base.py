@@ -1,7 +1,7 @@
 """Base classes for domain records: immutable, strictly-shaped and JSON round-trippable."""
 
 from decimal import Decimal
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,6 +12,14 @@ class DomainModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class Routing(NamedTuple):
+    """The lineage keys an event envelope copies from its payload."""
+
+    decision_id: str | None = None
+    book_id: str | None = None
+    instrument_key: str | None = None
+
+
 class EventPayload(DomainModel):
     """A record that can be appended to the event store under ``event_type``.
 
@@ -20,6 +28,19 @@ class EventPayload(DomainModel):
 
     event_type: ClassVar[str]
     schema_version: ClassVar[int] = 1
+
+    def routing(self) -> Routing:
+        """Lineage keys for the envelope. Payloads that nest them override this."""
+        return Routing(
+            decision_id=_str_attr(self, "decision_id"),
+            book_id=_str_attr(self, "book_id"),
+            instrument_key=_str_attr(self, "instrument_key"),
+        )
+
+
+def _str_attr(obj: object, name: str) -> str | None:
+    value = getattr(obj, name, None)
+    return value if isinstance(value, str) else None
 
 
 # Money and prices that reach the OMS, a broker or the cost model are exact decimals.
