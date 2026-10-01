@@ -4,7 +4,7 @@ decision engine, the shadow ledger (M8) and the backtest (M11).
 
 Month 1 is **long-only CNC** swing: a BUY signal becomes an unsized ``OPEN`` intent (the
 RiskEngine sizes it); SELL signals and shadow strategies never become orders. The intent's stop
-and target are ``price ∓ k·ATR`` at the decision price, for the pre-trade checks; the live levels
+and target are ``k·ATR`` around the arrival (fresh) price, for the pre-trade checks; the live levels
 are re-anchored to the **fill** by the ExitManager, using :meth:`TradePolicyConfig.exit_policy`
 (the same multipliers, ``max_hold_days``, trailing and partial rules).
 """
@@ -86,18 +86,26 @@ class TradePolicy:
         price: Decimal,
         atr: Decimal | None,
         decision_ts: datetime,
+        arrival_price: Decimal | None = None,
         sink: EventSink | None = None,
     ) -> Proposal | Skipped:
-        """The entry for ``signal`` at decision ``price`` (or why there is none)."""
+        """The entry for ``signal`` (or why there is none).
+
+        ``price`` is the decision price: the settled close the signal was computed on, which the
+        RiskEngine's price collar compares with the fresh quote (an overnight gap beyond the
+        collar makes the signal stale). The pre-trade stop and target are placed around
+        ``arrival_price`` - the fresh quote just before submit - when it is known.
+        """
         if signal.instrument_key != instrument.key:
             raise ValueError(f"signal for {signal.instrument_key}, instrument {instrument.key}")
         if signal.is_shadow:
             return Skipped(signal, "shadow")
         if signal.side is not Side.BUY:
             return Skipped(signal, "long_only")
-        if atr is None or atr <= 0 or price <= 0:
+        anchor = arrival_price if arrival_price is not None else price
+        if atr is None or atr <= 0 or price <= 0 or anchor <= 0:
             return Skipped(signal, "no_atr")
-        stop = price - Decimal(str(signal.stop_atr_mult)) * atr
+        stop = anchor - Decimal(str(signal.stop_atr_mult)) * atr
         if stop <= 0:
             return Skipped(signal, "no_atr")
         intent = OrderIntent(
@@ -107,7 +115,7 @@ class TradePolicy:
                 instrument_key=instrument.key,
                 signal_bar_date=signal.bar_date,
                 leg="entry",
-            ),  # fmt: skip
+            ),
             decision_id=signal.decision_id,
             book_id=book_id,
             strategy=signal.strategy,
@@ -119,7 +127,7 @@ class TradePolicy:
             order_type=OrderType.MARKET,
             product=self.config.product,
             stop_price=stop,
-            target_price=price + Decimal(str(signal.target_atr_mult)) * atr,
+            target_price=anchor + Decimal(str(signal.target_atr_mult)) * atr,
             reduce_only=False,
             decision_price=price,
             decision_ts=decision_ts,

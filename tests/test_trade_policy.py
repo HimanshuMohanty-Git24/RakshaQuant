@@ -72,6 +72,13 @@ def test_what_never_becomes_an_order(sig, kw, why):
     assert isinstance(out, Skipped) and out.reason == why
 
 
+def test_stops_anchor_to_the_arrival_price_and_the_decision_price_is_kept():
+    out = propose(signal(), price=Decimal(1000), arrival_price=Decimal(1020))
+    assert isinstance(out, Proposal)
+    assert out.intent.decision_price == 1000  # the settled close the signal saw
+    assert (out.intent.stop_price, out.intent.target_price) == (Decimal(980), Decimal(1080))
+
+
 def test_the_same_signal_in_another_book_is_another_order():
     a, b = propose(signal()), propose(signal(), book_id="B")
     assert isinstance(a, Proposal) and isinstance(b, Proposal)
