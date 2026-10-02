@@ -74,7 +74,7 @@ async def _sleep_unless_stopped(clock: Clock, seconds: float, stop: asyncio.Even
 
 
 HEARTBEAT = "heartbeat"
-HEARTBEAT_INTERVAL_S = 60.0
+HEARTBEAT_INTERVAL_S = 30.0  # plan M12.4; the dead-man check alarms after 3 minutes without one
 LOOP_LAG_THRESHOLD_MS = 500.0
 
 

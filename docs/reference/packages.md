@@ -308,10 +308,12 @@ Imports: `config`, `domain`, `store`, `utils`.
 | Module | Purpose |
 | --- | --- |
 | `ops/context.py` | Lineage context for logs (plan M1.6; audit §O.1): ``cycle_id``, ``decision_id``, ``component``, ``symbol`` and ``book_id`` live in ``contextvars``, so every log record emitted inside a :func:`log_context` block carries them. ``asyncio`` tasks and ``asyncio.to_thread`` copy the current context, so the ids follow work into tasks and worker threads. |
+| `ops/deadman.py` | The dead-man check (plan M12.4). Task Scheduler runs it at 10:00 and 13:00 IST on weekdays (``scripts/deadman_check.py``). During market hours, it raises the alarm when the engine's last ``Heartbeat`` (every 30 s) is older than :data:`STALE_AFTER_S`, or when there is none today. |
 | `ops/exit_codes.py` | Process exit codes shared by every entry point, so a scheduler can tell outcomes apart. |
 | `ops/instance_lock.py` | Single-instance guard: at most one RakshaQuant process per state directory. |
 | `ops/logging_config.py` | Logging (plan M1.6; audit §O.2). |
 | `ops/process.py` | Entry-point runner (plan M1.6): every ``scripts/*.py`` runs its ``main`` through :func:`run_entry_point`, which gives all of them the same process contract: |
+| `ops/version.py` | The running code's version (plan M12.4): the package version plus the git commit, so every session's ``ProcessStarted`` event records exactly which code ran. During the month run that is how a P0 fix shows up in the experiment's own record (audit §U: "each such fix is logged"). |
 
 ## `src/reference`
 

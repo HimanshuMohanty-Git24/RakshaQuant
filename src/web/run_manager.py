@@ -142,6 +142,11 @@ class RunManager:
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    async def wait(self) -> None:
+        """Until the current run, if any, has finished."""
+        if self._task is not None:
+            await asyncio.wait({self._task})
+
     @staticmethod
     def _read_only() -> bool:
         """Monitor-only deployment: run-control (start AND stop) is disabled from the UI."""

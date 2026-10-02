@@ -21,9 +21,17 @@ system works, see [architecture](../architecture.md).
      each one.
 4. **Keep the machine awake** from 09:00 to 16:00 on weekdays. Set the power plan to never
    sleep while plugged in, and turn off automatic restarts for updates during market hours.
-5. **Schedule it:** `scripts/install_windows_task.ps1`. It registers the weekday 09:05 start
-   and the 10:00 and 13:00 dead-man checks, and changes nothing else. Run it once, in a
-   PowerShell window as your user.
+5. **Schedule it**, once, in a PowerShell window as your user. First preview it, then register
+   it:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install_windows_task.ps1 -DryRun
+   powershell -ExecutionPolicy Bypass -File scripts\install_windows_task.ps1
+   ```
+
+   It registers two tasks under `\RakshaQuant\` and changes nothing else: the weekday 09:05
+   session, and the 10:00 and 13:00 dead-man checks. Both run only while you are logged on (a
+   locked screen is fine). `-Unregister` removes them.
 6. **Freeze the experiment.** After the first session, do not change any of the following until
    the month ends:
    - `src/config/experiment.yaml`;

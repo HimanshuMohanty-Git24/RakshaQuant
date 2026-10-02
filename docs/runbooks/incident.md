@@ -64,7 +64,7 @@ live in the simulated broker, which only sees quotes while the process runs. Aft
 a stop the price moved through fills at the first quote it sees, which can be worse than the
 stop. Keep downtime short in market hours.
 
-Start the scheduled task by hand with `schtasks /Run /TN "RakshaQuant paper session"`, or run
+Start the scheduled task by hand with `schtasks /Run /TN "\RakshaQuant\RakshaQuant paper session"`, or run
 `uv run python scripts/run_live_trading.py --mode web`.
 
 ## After a P0

@@ -12,6 +12,7 @@ from src.config import get_settings
 from src.ops.exit_codes import ExitCode
 from src.ops.instance_lock import single_instance
 from src.ops.process import ConfigError, run
+from src.ops.version import code_version
 from src.store.event_store import EventStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,7 @@ def test_process_events_are_recorded(monkeypatch):
     ]
     started = events[0].payload
     assert started.argv == ("--mode", "cli") and started.environment == "test"  # type: ignore[attr-defined]
+    assert started.version == code_version()  # type: ignore[attr-defined]  # names the commit (M12.4)
     assert events[3].payload.exit_code == 1  # type: ignore[attr-defined]
 
 

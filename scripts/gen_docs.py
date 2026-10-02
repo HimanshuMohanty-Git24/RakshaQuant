@@ -13,6 +13,7 @@ fails when one is stale.
 import argparse
 import ast
 import json
+import re
 import sys
 import types
 import typing
@@ -317,6 +318,12 @@ def render_packages() -> str:
     return "".join(lines)
 
 
+def _synopsis(path: Path) -> str:
+    """A PowerShell script's ``.SYNOPSIS`` (comment-based help)."""
+    found = re.search(r"\.SYNOPSIS\s*\n(.*?)\n\s*\n", path.read_text(encoding="utf-8"), re.S)
+    return " ".join(found.group(1).split()) if found else ""
+
+
 def render_scripts() -> str:
     lines = [HEADER, "# Scripts\n\n",
              "Entry points in `scripts/`, run from the repo root with `uv run python "
@@ -325,6 +332,8 @@ def render_scripts() -> str:
              "state directory.\n\n" + table("Script", "Purpose")]  # fmt: skip
     for path in sorted((ROOT / "scripts").glob("*.py")):
         lines.append(f"| `{path.name}` | {cell(_docstring(path))} |\n")
+    for path in sorted((ROOT / "scripts").glob("*.ps1")):
+        lines.append(f"| `{path.name}` (PowerShell) | {cell(_synopsis(path))} |\n")
     return "".join(lines)
 
 

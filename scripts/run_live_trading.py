@@ -66,6 +66,7 @@ def _run_web(args: argparse.Namespace) -> int:
         dev=args.dev,
         auto_start=not args.no_auto_start,
         allow_remote=args.allow_remote,
+        exit_after_session=args.exit_after_session,
     )
     return ExitCode.OK
 
@@ -102,7 +103,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Web mode: start the server without auto-starting a trading run.",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--exit-after-session",
+        action="store_true",
+        help="Web mode: shut the server down once the session it started has ended (the "
+        "scheduled daily run; a holiday ends it at once).",
+    )
+    args = parser.parse_args(argv)
+    if args.exit_after_session and (args.mode != "web" or args.no_auto_start):
+        parser.error("--exit-after-session needs --mode web and an auto-started session")
+    return args
 
 
 def main() -> None:

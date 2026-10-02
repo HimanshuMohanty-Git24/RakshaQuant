@@ -22,7 +22,6 @@ from typing import NoReturn
 
 from pydantic import ValidationError
 
-import src
 from src.config.errors import ConfigError
 from src.config.settings import Settings, get_settings
 from src.domain.clock import WallClock
@@ -30,6 +29,7 @@ from src.domain.events import ProcessStarted, ProcessStopped, make_event
 from src.ops.exit_codes import ExitCode
 from src.ops.instance_lock import InstanceLockHeldError, single_instance
 from src.ops.logging_config import configure_logging, redact
+from src.ops.version import code_version
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def _supervise(name: str, main: EntryMain, settings: Settings, record_events: bo
                     entry_point=name,
                     argv=tuple(sys.argv[1:]),
                     environment=settings.environment,
-                    version=src.__version__,
+                    version=code_version(),
                 ),
                 ts=clock.now(),
                 source="process",

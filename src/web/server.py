@@ -24,6 +24,7 @@ the app runs in web mode.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -152,21 +153,34 @@ def create_app(
     dev: bool = False,
     auto_start_demo: bool | None = None,
     frontend_dist: FilePath | None = None,
+    on_session_end: Callable[[], object] | None = None,
 ) -> FastAPI:
     """Build the app. ``dev=True`` enables CORS for the Vite dev server; ``auto_start_demo``
     (when not None) starts a run of that kind once the server is up; ``frontend_dist`` is the
-    built SPA (default ``frontend/dist``)."""
+    built SPA (default ``frontend/dist``). ``on_session_end`` is called once the auto-started
+    run has ended (or could not start): the scheduled console uses it to shut itself down."""
     security = security or WebSecurity.for_launch("127.0.0.1", 8000, token=new_token(), dev=dev)
     run_manager = manager or RunManager()
 
+    async def end_after_the_run(callback: Callable[[], object]) -> None:
+        await run_manager.wait()
+        logger.info("the session has ended: shutting the console down")
+        callback()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        watcher: asyncio.Task[None] | None = None
         if auto_start_demo is not None:
             try:
                 await run_manager.start(demo=auto_start_demo)
             except RunControlError as exc:
                 logger.warning("Auto-start skipped: %s", exc)
+            if on_session_end is not None:
+                watcher = asyncio.create_task(end_after_the_run(on_session_end),
+                                              name="exit-after-session")  # fmt: skip
         yield
+        if watcher is not None:
+            watcher.cancel()
         await run_manager.shutdown()
         await run_manager.hub.stop()
 
@@ -500,16 +514,26 @@ def run_web(
     dev: bool = False,
     auto_start: bool = True,
     allow_remote: bool = False,
+    exit_after_session: bool = False,
 ) -> None:
-    """Launch the web console with uvicorn. Blocks until interrupted. The launch URL (with the
-    token) is printed once to the console and never logged."""
+    """Launch the web console with uvicorn. Blocks until interrupted - or, with
+    ``exit_after_session``, until the session it started has ended (the scheduled daily run).
+    The launch URL (with the token) is printed once to the console and never logged."""
     import uvicorn
 
     security = WebSecurity.for_launch(host, port, dev=dev, allow_remote=allow_remote)
+    server: uvicorn.Server | None = None
+
+    def stop_server() -> None:
+        if server is not None:
+            server.should_exit = True
+
     app = create_app(manager=RunManager(), security=security, dev=dev,
-                     auto_start_demo=demo if auto_start else None)  # fmt: skip
+                     auto_start_demo=demo if auto_start else None,
+                     on_session_end=stop_server if exit_after_session and auto_start else None)  # fmt: skip
     logger.info("RakshaQuant web console on %s:%d (demo=%s)", host, port, demo)
     print(f"\n  RakshaQuant web console -> {security.url(host, port)}\n"
           "  (the link carries this launch's access token; it changes on every start)\n",
           flush=True)  # fmt: skip
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    server.run()

@@ -12,6 +12,7 @@ Entry points in `scripts/`, run from the repo root with `uv run python scripts/<
 | `calibrate_decision_models.py` | Fit and report decision-model calibration (plan M7.5) on the labelled announcement set. |
 | `check_config.py` | Readiness check: environment and state directory, enabled LLM roles (exit 2 if one is misconfigured), Dhan and Telegram status, and configuration warnings. Never prints a secret. |
 | `daily_report.py` | Regenerate the daily report (plan M8.4) for any recorded day from the environment's event store. |
+| `deadman_check.py` | Dead-man check (plan M12.4): during market hours, send a Telegram alarm when the paper session's heartbeat is more than 3 minutes old, or missing today. Task Scheduler runs it at 10:00 and 13:00 IST on weekdays (``scripts/install_windows_task.ps1``). |
 | `export_openapi.py` | Write the web API's OpenAPI document to ``frontend/openapi.json`` (plan M9.5). The frontend's types are generated from it (``cd frontend && npm run gen:api`` → ``src/api/types.gen.ts``); CI fails when either file is stale. |
 | `fetch_bhavcopy.py` | Build the point-in-time daily dataset from NSE's UDiFF capital-market bhavcopies (plan M11.3). |
 | `gen_docs.py` | Generate the reference half of the docs from the code (plan M12.3) into ``docs/reference/``. |
@@ -22,3 +23,4 @@ Entry points in `scripts/`, run from the repo root with `uv run python scripts/<
 | `setup.py` | Guided one-command setup for RakshaQuant. |
 | `test_dhan_connection.py` | DhanHQ Connection Test |
 | `validate_strategy.py` | Validate strategies before risking capital (plan M11.2): backtest the paper engine itself over daily history (``src/backtesting/session.py``) and apply the edge gate (``src/backtesting/edge.py``): VALIDATED needs at least 200 closed trades **and** a 95% bootstrap CI of the mean net return per trade above zero. |
+| `install_windows_task.ps1` (PowerShell) | Register the RakshaQuant paper session and its dead-man check with Windows Task Scheduler (plan M12.4). |
