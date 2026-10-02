@@ -49,6 +49,7 @@ from src.evaluation.daily_report import (
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, ExperimentConfig, load_experiment
 from src.live.views import SessionView
 from src.llm.registry import validate_roles
+from src.llm.router import StoreResponseCache
 from src.llm.setup import build_router
 from src.marketdata.announcements import AnnouncementIngestor, watermark
 from src.marketdata.history import YFinanceHistorySource
@@ -65,6 +66,7 @@ from src.utils.market_time import IST
 logger = logging.getLogger(__name__)
 
 PAPER_MODES = frozenset({"local_paper", "shadow"})
+DM_CACHE = "dm_cache"  # decision-model answers, by state and questions
 DEMO = "demo"
 
 
@@ -97,7 +99,8 @@ async def run_paper(
         priced = {i.key: i for i in universe}
         for book_id in config.books:
             priced |= held_instruments(store, book_id)
-        cascade = build_cascade(settings, sink=sink)  # one Laya for the classifier and Book B
+        # One Laya for the classifier and Book B; every answer is cached for replays (M8.5).
+        cascade = build_cascade(settings, sink=sink, cache=StoreResponseCache(store, DM_CACHE))
         router = build_router(settings, clock=clock, sink=sink, store=store)
         tape = TapeWriter(settings.tape_dir)
         quotes = YFinanceQuoteSource(
@@ -115,7 +118,7 @@ async def run_paper(
                                   regime=lambda: engine.regime)  # fmt: skip
         for book_id, advisor in advisors.items():
             engine.set_advisor(book_id, advisor)
-        engine.reporter = _reporter(engine, experiment, settings, settings.reports_dir,
+        engine.reporter = make_reporter(engine, experiment, settings, settings.reports_dir,
                                     notify=True)  # fmt: skip
         return await _drive(engine, view, stop)
 
@@ -187,7 +190,7 @@ async def run_demo(
                                   regime=lambda: engine.regime)  # fmt: skip
         for book_id, advisor in advisors.items():
             engine.set_advisor(book_id, advisor)
-        engine.reporter = _reporter(engine, experiment, settings,
+        engine.reporter = make_reporter(engine, experiment, settings,
                                     settings.state_dir / "reports", notify=False)  # fmt: skip
         done = asyncio.Event()
         exit_at = datetime.combine(day, time(16, 0), IST)
@@ -202,7 +205,7 @@ async def run_demo(
 _PENDING: set[asyncio.Task[bool]] = set()  # fire-and-forget summaries (kept from GC)
 
 
-def _reporter(
+def make_reporter(
     engine: Engine,
     experiment: ExperimentConfig,
     settings: Settings,
@@ -225,7 +228,7 @@ def _reporter(
         )  # fmt: skip
         result = build_report(engine.store, inputs, engine.calendar)
         _, md_path = write_report(result, reports_dir)
-        engine.sink.emit(Alert(level="INFO", key="daily_report", message=f"written {md_path}"),
+        engine.sink.emit(Alert(level="INFO", key="daily_report", message=f"written {md_path.name}"),
                          source="engine")  # fmt: skip
         if notify:
             notifier = TelegramNotifier()

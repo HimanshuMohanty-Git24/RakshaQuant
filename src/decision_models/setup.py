@@ -9,9 +9,11 @@ from typing import Any
 
 from src.decision_models.adapters import LayaLocal, jev_remote
 from src.decision_models.base import DecisionModel
+from src.decision_models.cache import CachedDecisionModel
 from src.decision_models.calibration import CalibrationMap
 from src.decision_models.cascade import Calibrator, Cascade, CascadeConfig
 from src.domain.sink import EventSink
+from src.llm.router import ResponseCache
 
 
 def laya_available() -> bool:
@@ -19,8 +21,13 @@ def laya_available() -> bool:
 
 
 def build_cascade(
-    settings: Any, *, sink: EventSink, calibrator: Calibrator | None = None
+    settings: Any,
+    *,
+    sink: EventSink,
+    calibrator: Calibrator | None = None,
+    cache: ResponseCache | None = None,
 ) -> Cascade | None:
+    """``cache`` records every answer for replays (plan M8.5)."""
     laya: DecisionModel | None = None
     if settings.decision_laya_enabled and laya_available():
         laya = LayaLocal(checkpoint=settings.decision_laya_checkpoint,
@@ -31,6 +38,9 @@ def build_cascade(
         jev = jev_remote(key.get_secret_value(), model=settings.typesafe_model)
     if laya is None and jev is None:
         return None
+    if cache is not None:
+        laya = CachedDecisionModel(laya, cache) if laya is not None else None
+        jev = CachedDecisionModel(jev, cache) if jev is not None else None
     config = CascadeConfig(
         escalate_band=(settings.decision_escalate_low, settings.decision_escalate_high),
         shadow_pct=settings.decision_shadow_pct,

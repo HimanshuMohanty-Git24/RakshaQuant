@@ -18,9 +18,15 @@ import httpx2
 
 from src.domain.events import Alert
 from src.domain.sink import EventSink
-from src.reference.bands import BandTable, fetch_bands
-from src.reference.download import ReferenceDataError, Snapshot, snapshot_path
-from src.reference.instruments import InstrumentSet, build_instruments, fetch_master
+from src.reference.bands import BANDS_NAME, BandTable, fetch_bands, parse_bands
+from src.reference.download import ReferenceDataError, Snapshot, latest_snapshot, snapshot_path
+from src.reference.instruments import (
+    SCRIP_MASTER_NAME,
+    InstrumentSet,
+    build_instruments,
+    fetch_master,
+    parse_master,
+)
 from src.reference.universe import NIFTY50_NAME, UniverseMember, fetch_universe, load_universe
 
 
@@ -92,3 +98,16 @@ async def refresh_reference(
 def alert_reference(data: ReferenceData, sink: EventSink) -> None:
     for key, message in sorted(data.problems.items()):
         sink.emit(Alert(level="WARNING", key=key, message=message), source="reference")
+
+
+def load_reference_offline(reference_dir: Path, day: date) -> InstrumentSet | None:
+    """The newest cached universe, instrument master and bands dated on or before ``day`` - no
+    network (for replays). ``None`` when no universe snapshot is cached."""
+    universe = latest_snapshot(reference_dir, NIFTY50_NAME, "csv", day)
+    if universe is None:
+        return None
+    master_snap = latest_snapshot(reference_dir, SCRIP_MASTER_NAME, "csv", day)
+    bands_snap = latest_snapshot(reference_dir, BANDS_NAME, "csv", day)
+    master = parse_master(master_snap[1].read_bytes()) if master_snap else None
+    bands = parse_bands(bands_snap[1].read_bytes()) if bands_snap else None
+    return build_instruments(load_universe(universe[1]), master, bands)
