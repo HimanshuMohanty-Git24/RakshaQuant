@@ -183,6 +183,10 @@ The full list is in [docs/reference/packages.md](docs/reference/packages.md).
   - NSE polling and Laya are off (`ANNOUNCEMENTS_ENABLED`, `DECISION_LAYA_ENABLED`).
 - Use the `settings` fixture and `ReplayClock`.
 - OMS mechanics tests use `tests/oms_harness.py` `unchecked` as the gate.
+- CI installs only the `dev` and `web` extras. A local `.venv` with `decision-local` also has
+  what Laya pulls in (e.g. `httpx` via huggingface-hub), which can hide a missing dependency.
+  After changing dependencies or test imports, run the suite in a CI-like environment:
+  `UV_PROJECT_ENVIRONMENT=<temp dir> uv run --locked --extra dev --extra web pytest`.
 
 ### Windows
 

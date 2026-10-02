@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from src.domain.clock import ReplayClock
@@ -206,13 +206,13 @@ async def test_health_stays_fast_while_the_engine_polls_and_the_stream_replays(m
         while not stop.is_set():
             await asyncio.to_thread(time.sleep, 0.2)
 
-    async def reader(client: httpx.AsyncClient) -> None:
+    async def reader(client: httpx2.AsyncClient) -> None:
         while not stop.is_set():
             await client.get("/api/decisions", params={"limit": 1000})
             await client.get("/api/system")
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url=BASE, headers=AUTH) as client:
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url=BASE, headers=AUTH) as client:
         sub = manager.hub.connect()
         manager.hub.subscribe(sub, EVENT_TOPICS, 0)
         sink: list[dict[str, Any]] = []
