@@ -9,6 +9,7 @@ from typing import Any
 
 from src.decision_models.adapters import LayaLocal, jev_remote
 from src.decision_models.base import DecisionModel
+from src.decision_models.calibration import CalibrationMap
 from src.decision_models.cascade import Calibrator, Cascade, CascadeConfig
 from src.domain.sink import EventSink
 
@@ -34,4 +35,6 @@ def build_cascade(
         escalate_band=(settings.decision_escalate_low, settings.decision_escalate_high),
         shadow_pct=settings.decision_shadow_pct,
     )
+    if calibrator is None:  # fitted by scripts/calibrate_decision_models.py (plan M7.5)
+        calibrator = CalibrationMap.load(settings.models_dir / "calibration.json")
     return Cascade(laya=laya, jev=jev, sink=sink, config=config, calibrator=calibrator)
