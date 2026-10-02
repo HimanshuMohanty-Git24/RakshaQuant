@@ -28,10 +28,13 @@ from src.config import get_settings
 from src.config.limits import load_risk_limits
 from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, WallClock
+from src.domain.events import ControlCommand
+from src.engine.live import STOP_GRACE_S
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
 from src.live.recorder import env_badge, snapshot_from_stats
 from src.live.views import StreamSessionView
 from src.store.event_store import EventStore
+from src.web.models import ControlResult
 from src.web.queries import LiveView, Queries
 
 if TYPE_CHECKING:
@@ -78,6 +81,7 @@ class RunManager:
         self._reader: EventStore | None = None
         self._queries: Queries | None = None
         self.engine: Engine | None = None
+        self._starting: str | None = None  # a start to record once the engine exists
         self._snapshot: dict[str, Any] | None = None
         self._cycles: list[dict[str, Any]] = []
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
@@ -111,9 +115,14 @@ class RunManager:
         return self._queries
 
     def attach(self, engine: Engine) -> None:
-        """A run built its engine: read its store, on its clock."""
+        """A run built its engine: read its store, on its clock; record who started it."""
         self.engine = engine
         self.close_reader()
+        if self._starting is not None:
+            engine.sink.emit(ControlCommand(action="session_start", actor="web",
+                                            outcome="applied", detail=self._starting),
+                             source="web")  # fmt: skip
+            self._starting = None
 
     def detach(self) -> None:
         self.engine = None
@@ -207,6 +216,10 @@ class RunManager:
         """Monitor-only deployment: run-control (start AND stop) is disabled from the UI."""
         return os.getenv("RAKSHAQUANT_WEB_READONLY", "").lower() in ("1", "true", "yes")
 
+    @property
+    def read_only(self) -> bool:
+        return self._read_only()
+
     async def start(self, *, demo: bool = False) -> dict[str, Any]:
         """Start a paper run (the v2 engine has no broker path: nothing here can go live)."""
         if self.is_running:
@@ -221,6 +234,7 @@ class RunManager:
         self._stats = TradingStats()
         self._cycles = []
         self._demo = demo
+        self._starting = "demo" if demo else "paper"
         self._stop_event = asyncio.Event()
         view = StreamSessionView(self._stats, self, effective_mode=effective)
 
@@ -236,13 +250,31 @@ class RunManager:
             raise RunControlError("Run-control is disabled (RAKSHAQUANT_WEB_READONLY set).")
         return await self.shutdown()
 
+    async def stop_session(self) -> ControlResult:
+        """The operator's stop: recorded, then cooperative (see :meth:`shutdown`)."""
+        if self._read_only():
+            raise RunControlError("Run-control is disabled (RAKSHAQUANT_WEB_READONLY set).")
+        if not self.is_running:
+            return ControlResult(action="session_stop", outcome="no_change", books=[],
+                                 detail="no run is active")  # fmt: skip
+        detail = "stopped cooperatively (the engine finished its current step)"
+        if self.engine is not None:
+            self.engine.sink.emit(ControlCommand(action="session_stop", actor="web",
+                                                 outcome="applied", detail=detail),
+                                  source="web")  # fmt: skip
+        await self.shutdown()
+        return ControlResult(action="session_stop", outcome="applied", books=[], detail=detail)
+
     async def shutdown(self) -> dict[str, Any]:
-        """Stop the run (server shutdown; not subject to read-only)."""
+        """Stop the run cooperatively (the engine finishes what it is doing; ``_drive`` cancels
+        it after its grace period). Not subject to read-only: the server shutdown uses it."""
         if not self.is_running or self._task is None:
             return {"running": False}
         if self._stop_event is not None:
             self._stop_event.set()
-        self._task.cancel()
+        finished, _ = await asyncio.wait({self._task}, timeout=STOP_GRACE_S + 5.0)
+        if not finished:  # pragma: no cover - _drive already cancels after its grace
+            self._task.cancel()
         try:
             await self._task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown must not raise

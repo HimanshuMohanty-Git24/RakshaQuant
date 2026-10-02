@@ -20,6 +20,7 @@ classifier (M7) and the nightly review (M8).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -149,6 +150,16 @@ class SessionLifecycle:
     hooks: LifecycleHooks = field(default_factory=LifecycleHooks)
     state: SessionState | None = field(default=None, init=False)
     schedule: Schedule | None = field(default=None, init=False)
+    _stop: asyncio.Event = field(default_factory=asyncio.Event, init=False)
+
+    def request_stop(self) -> None:
+        """Stop at the next state boundary: a hook already running (a decision cycle, an
+        order submission) finishes first (plan M9.3)."""
+        self._stop.set()
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop.is_set()
 
     # -- guards ----------------------------------------------------------------------------------
 
@@ -192,13 +203,33 @@ class SessionLifecycle:
         await self._hook("on_pre_open", self.hooks.on_pre_open, schedule)
 
         current = schedule.state_at(self.clock.now())
-        if current is not SessionState.PRE_OPEN:
+        if current is not SessionState.PRE_OPEN and not self.stop_requested:
             await self._enter(current, schedule)  # late start: skip what already passed
         for state, at in schedule.transitions():
             if at <= self.clock.now():
                 continue
-            await self.clock.sleep_until(at)
+            if not await self._sleep_until(at):
+                return self._stopped(schedule)
             await self._enter(state, schedule)
+        return ExitCode.OK
+
+    async def _sleep_until(self, at: datetime) -> bool:
+        """Sleep to ``at``; False when a stop was requested first."""
+        if self.stop_requested:
+            return False
+        sleeper = asyncio.ensure_future(self.clock.sleep_until(at))
+        stopper = asyncio.ensure_future(self._stop.wait())
+        _, pending = await asyncio.wait({sleeper, stopper}, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        return not self.stop_requested
+
+    def _stopped(self, schedule: Schedule) -> int:
+        logger.info("Session %s stopped on request in %s", schedule.day, self.state)
+        self.sink.emit(Alert(level="INFO", key="session_stopped",
+                             message=f"stopped on request in {self.state}"),
+                       source="lifecycle")  # fmt: skip
         return ExitCode.OK
 
     async def _enter(self, state: SessionState, schedule: Schedule) -> None:

@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 PAPER_MODES = frozenset({"local_paper", "shadow"})
 DM_CACHE = "dm_cache"  # decision-model answers, by state and questions
 DEMO = "demo"
+STOP_GRACE_S = 30.0  # plan M9.3: a cooperative stop, then cancellation
 
 
 async def run_paper(
@@ -258,8 +259,16 @@ def make_reporter(
     return report
 
 
-async def _drive(engine: Engine, view: SessionView, stop: asyncio.Event | None) -> int:
-    """Run the engine; refresh the view every second; stop early when ``stop`` is set."""
+async def _drive(
+    engine: Engine,
+    view: SessionView,
+    stop: asyncio.Event | None,
+    *,
+    grace_s: float = STOP_GRACE_S,
+) -> int:
+    """Run the engine; refresh the view every second. When ``stop`` is set the engine stops
+    cooperatively at its next state boundary; only after ``grace_s`` is it cancelled (and an
+    order submission in flight still completes: ``OMS.submit`` is shielded)."""
     stats = getattr(view, "stats", None)
     projector = StatsProjector(stats, engine) if stats is not None else None
     view.set_effective_mode("local_paper")
@@ -280,7 +289,11 @@ async def _drive(engine: Engine, view: SessionView, stop: asyncio.Event | None) 
     async with view:
         await asyncio.wait({run, stopper}, return_when=asyncio.FIRST_COMPLETED)
         if not run.done():  # asked to stop
-            run.cancel()
+            engine.request_stop()
+            finished, _ = await asyncio.wait({run}, timeout=grace_s)
+            if not finished:
+                logger.error("the engine did not stop within %.0f s: cancelling", grace_s)
+                run.cancel()
         stopper.cancel()
         results = await asyncio.gather(run, stopper, return_exceptions=True)
         painter.cancel()

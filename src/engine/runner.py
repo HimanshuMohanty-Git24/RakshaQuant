@@ -198,6 +198,11 @@ class Engine:
 
     # -- the day -------------------------------------------------------------------------------
 
+    def request_stop(self) -> None:
+        """Cooperative stop (plan M9.3): the session ends at the next state boundary; loops
+        finish their step and in-flight submissions complete (``OMS.submit`` is shielded)."""
+        self.lifecycle.request_stop()
+
     async def run(self) -> int:
         self._started = time.monotonic()
         for book in self.books.values():

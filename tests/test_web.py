@@ -189,10 +189,10 @@ def test_websocket_init_contract():
         assert msg["snapshot"] is None
 
 
-def test_run_stop_readonly_returns_409(monkeypatch):
-    # The stop endpoint must translate RunControlError to 409, not surface a 500.
+def test_run_stop_readonly_returns_403(monkeypatch):
+    # Read-only refuses run control with 403, not a 500.
     monkeypatch.setenv("RAKSHAQUANT_WEB_READONLY", "1")
     client = authed(create_app(security=SECURITY))
-    res = client.post("/api/run/stop")
-    assert res.status_code == 409
+    res = client.post("/api/session/stop")
+    assert res.status_code == 403
     assert "error" in res.json()

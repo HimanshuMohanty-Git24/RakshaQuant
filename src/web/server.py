@@ -12,8 +12,9 @@ state-changing request must come from the console's own origin (:mod:`src.web.se
 * ``GET  /api/ai/calls|spend|models|decision-models`` - AI calls, spend, model health.
 * ``GET  /api/market/{symbol}/bars``, ``/api/events/typed``, ``/api/reports/{date}``.
 * ``GET  /api/system``, ``/api/config`` - process health; read-only redacted configuration.
-* ``POST /api/run/start``       - start a run ``{demo}``.
-* ``POST /api/run/stop``        - stop the active run.
+* ``POST /api/session/start|stop`` - start a paper (or demo) run; stop it cooperatively.
+* ``POST /api/risk/halt|resume|flatten`` - the books' kill switches (resume and flatten need
+  ``confirm: true`` and the typed phrase; halt works even in read-only mode).
 * ``WS   /ws``                  - live stream (token as the ``rq.token.<token>`` subprotocol).
 * ``/``                         - the built SPA (``frontend/dist``) when present.
 
@@ -36,26 +37,33 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.websockets import WebSocketDisconnect
 
 from src.domain.events import Disposition
+from src.domain.types import KillScope
 from src.engine.market import INDEX_KEY
+from src.web.control import ControlRefusedError, Controls
 from src.web.models import BarRow as BarRowModel
 from src.web.models import (
     Bars,
     BooksView,
     ConfigView,
+    ControlResult,
     DecisionModelStats,
     DecisionRow,
     FillRow,
+    FlattenBody,
+    HaltBody,
     Lineage,
     LLMCallRow,
     OrderRow,
     PositionRow,
+    ResumeBody,
     RiskView,
     RoleModels,
+    SessionStartBody,
+    SessionStopBody,
     SpendView,
     Summary,
     SystemView,
@@ -90,16 +98,6 @@ npm install
 npm run build</code></pre>
 <p>Then reload this page.</p>
 </body></html>"""
-
-
-class StrictBody(BaseModel):
-    """Request bodies: unknown fields and loose types (``"false"`` for a bool) are a 422."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class StartRunBody(StrictBody):
-    demo: StrictBool = False
 
 
 T = TypeVar("T")
@@ -310,20 +308,48 @@ def create_app(
     async def config() -> ConfigView:
         return await read(lambda q: q.config())
 
-    @api.post("/run/start")
-    async def run_start(body: StartRunBody | None = None) -> JSONResponse:
-        try:
-            result = await mgr().start(demo=(body or StartRunBody()).demo)
-            return JSONResponse(result)
-        except RunControlError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
+    def refuse_if_read_only() -> None:
+        if mgr().read_only:
+            raise HTTPException(status_code=403, detail="read-only: run control is disabled")
 
-    @api.post("/run/stop")
-    async def run_stop() -> JSONResponse:
+    def control(action: Callable[[Controls], ControlResult]) -> ControlResult:
         try:
-            return JSONResponse(await mgr().stop())
+            return action(Controls(mgr()))
+        except ControlRefusedError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from None
+
+    @api.post("/session/start")
+    async def session_start(body: SessionStartBody | None = None) -> ControlResult:
+        refuse_if_read_only()
+        demo = (body or SessionStartBody()).demo
+        try:
+            await mgr().start(demo=demo)
         except RunControlError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return ControlResult(action="session_start", outcome="applied", books=[],
+                             detail="demo" if demo else "paper")  # fmt: skip
+
+    @api.post("/session/stop")
+    async def session_stop(body: SessionStopBody | None = None) -> ControlResult:
+        """Cooperative: the engine finishes the step it is in; cancelled only after 30 s."""
+        refuse_if_read_only()
+        return await mgr().stop_session()
+
+    @api.post("/risk/halt")
+    async def risk_halt(body: HaltBody) -> ControlResult:
+        """Block new entries. Allowed even in read-only mode (stopping risk is always OK)."""
+        return control(lambda c: c.halt(book=body.book, reason=body.reason))
+
+    @api.post("/risk/resume")
+    async def risk_resume(body: ResumeBody) -> ControlResult:
+        refuse_if_read_only()
+        return control(lambda c: c.resume(book=body.book, reason=body.reason,
+                                          scope=KillScope(body.scope), name=body.name))  # fmt: skip
+
+    @api.post("/risk/flatten")
+    async def risk_flatten(body: FlattenBody) -> ControlResult:
+        refuse_if_read_only()
+        return control(lambda c: c.flatten(book=body.book, reason=body.reason))
 
     app.include_router(api)
 

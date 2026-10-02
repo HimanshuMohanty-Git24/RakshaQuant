@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool, StringConstraints, model_validator
 
 
 class ApiModel(BaseModel):
@@ -365,3 +365,60 @@ class ConfigView(ApiModel):
     telegram_configured: bool
     limits_hash: str
     read_only: bool
+
+
+# -- controls (plan M9.3) ----------------------------------------------------------------------
+
+
+class ControlResult(ApiModel):
+    action: str
+    outcome: Literal["applied", "no_change", "refused"]
+    books: list[str]
+    detail: str
+
+
+class StrictBody(BaseModel):
+    """Request bodies: unknown fields and loose types (``"false"`` for a bool) are a 422."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+BookId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9]{1,16}$")]
+Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=200)]
+
+
+class SessionStartBody(StrictBody):
+    demo: StrictBool = False
+
+
+class SessionStopBody(StrictBody):
+    pass
+
+
+class HaltBody(StrictBody):
+    reason: Reason
+    book: BookId | None = None  # None = every book
+
+
+class _Confirmed(StrictBody):
+    """A destructive control: ``confirm`` must be literally ``true`` and the phrase typed."""
+
+    confirm: StrictBool
+    reason: Reason
+    book: BookId | None = None
+
+    @model_validator(mode="after")
+    def _confirmed(self) -> _Confirmed:
+        if self.confirm is not True:
+            raise ValueError("confirm must be true")
+        return self
+
+
+class ResumeBody(_Confirmed):
+    phrase: Literal["RESUME"]
+    scope: Literal["global", "strategy", "broker"] = "global"
+    name: Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,32}$")] | None = None
+
+
+class FlattenBody(_Confirmed):
+    phrase: Literal["FLATTEN"]

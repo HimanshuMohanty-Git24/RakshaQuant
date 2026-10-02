@@ -20,6 +20,7 @@ anything it closed). Status updates move forward only, along the §H.5 state mac
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -151,6 +152,7 @@ class OMS:
         self._fill_listeners: list[FillListener] = []
         self._event_listeners: list[EventListener] = []
         self._subscription: Subscription | None = None
+        self._inflight: set[asyncio.Task[SubmitResult]] = set()
 
     async def start(self) -> None:
         """Subscribe to the broker's order updates and fills."""
@@ -160,6 +162,8 @@ class OMS:
             )
 
     async def stop(self) -> None:
+        if self._inflight:  # let shielded submissions finish recording their outcome
+            await asyncio.gather(*list(self._inflight), return_exceptions=True)
         if self._subscription is not None:
             await self._subscription.close()
             self._subscription = None
@@ -179,6 +183,15 @@ class OMS:
     # -- submission --------------------------------------------------------------------------------
 
     async def submit(self, intent: OrderIntent, quantity: int | None = None) -> SubmitResult:
+        """Gate, register and place one order. Shielded: once started, a submission runs to
+        its recorded outcome even if the caller is cancelled (plan M9.3) - a stop can never
+        leave an order at the broker that the OMS does not know about."""
+        task = asyncio.ensure_future(self._submit(intent, quantity))
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+        return await asyncio.shield(task)
+
+    async def _submit(self, intent: OrderIntent, quantity: int | None) -> SubmitResult:
         if intent.book_id != self.book_id:
             return SubmitResult("BLOCKED", message=f"intent is for book {intent.book_id}")
         if self._gate is None:  # nothing reaches a broker without a pre-trade decision

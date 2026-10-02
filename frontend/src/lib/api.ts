@@ -16,14 +16,14 @@ export async function startRun(opts: { demo?: boolean } = {}): Promise<{
   ok: boolean;
   error?: string;
 }> {
-  const res = await post("/api/run/start", { demo: !!opts.demo });
+  const res = await post("/api/session/start", { demo: !!opts.demo });
   if (res.ok) return { ok: true };
   const data = await res.json().catch(() => ({}));
   return { ok: false, error: data.error ?? `HTTP ${res.status}` };
 }
 
 export async function stopRun(): Promise<void> {
-  await post("/api/run/stop");
+  await post("/api/session/stop");
 }
 
 export async function fetchConfig(): Promise<AppConfig | null> {

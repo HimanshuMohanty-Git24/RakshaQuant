@@ -683,6 +683,17 @@ class ProcessStopped(EventPayload):
     uptime_s: NonNegFloat
 
 
+class ControlCommand(EventPayload):
+    """An operator's control action (plan M9.3), recorded whether or not it changed anything."""
+
+    event_type = "ControlCommand"
+    action: NonEmptyStr  # session_start, session_stop, halt, resume, flatten
+    actor: NonEmptyStr  # "web", ...
+    outcome: NonEmptyStr  # applied, no_change, refused
+    books: tuple[str, ...] = ()
+    detail: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -741,6 +752,7 @@ _PAYLOADS: tuple[type[EventPayload], ...] = (
     Alert,
     ProcessStarted,
     ProcessStopped,
+    ControlCommand,
 )
 
 EVENT_TYPES: Mapping[str, type[EventPayload]] = MappingProxyType(

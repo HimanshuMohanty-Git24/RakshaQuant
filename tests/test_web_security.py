@@ -30,16 +30,16 @@ def app():
 
 def test_a_cross_origin_post_is_forbidden_even_with_the_token(app):
     client = authed(app)
-    res = client.post("/api/run/stop", headers={"Origin": "https://evil.example"})
+    res = client.post("/api/session/stop", headers={"Origin": "https://evil.example"})
     assert res.status_code == 403 and res.json() == {"error": "forbidden"}
-    res = client.post("/api/run/stop", headers={"Sec-Fetch-Site": "cross-site"})
+    res = client.post("/api/session/stop", headers={"Sec-Fetch-Site": "cross-site"})
     assert res.status_code == 403
-    assert client.post("/api/run/stop", headers={"Origin": ORIGIN}).status_code == 200
+    assert client.post("/api/session/stop", headers={"Origin": ORIGIN}).status_code == 200
 
 
 def test_a_missing_or_wrong_token_is_unauthorized(app):
     assert anonymous(app).get("/api/state").status_code == 401
-    assert anonymous(app).post("/api/run/stop", headers={"Origin": ORIGIN}).status_code == 401
+    assert anonymous(app).post("/api/session/stop", headers={"Origin": ORIGIN}).status_code == 401
     wrong = anonymous(app).get("/api/state", headers={"Authorization": "Bearer nope"})
     assert wrong.status_code == 401 and wrong.headers["www-authenticate"] == "Bearer"
     basic = anonymous(app).get("/api/state", headers={"Authorization": f"Basic {TOKEN}"})
@@ -91,12 +91,12 @@ def test_websocket_connections_are_capped():
 
 def test_bodies_are_strict_and_errors_do_not_echo_input(app):
     client = authed(app)
-    res = client.post("/api/run/start", json={"demo": "false"})
+    res = client.post("/api/session/start", json={"demo": "false"})
     assert res.status_code == 422 and res.json() == {"error": "invalid request",
                                                      "fields": ["body.demo"]}  # fmt: skip
-    res = client.post("/api/run/start", json={"demo": "secret-looking-value"})
+    res = client.post("/api/session/start", json={"demo": "secret-looking-value"})
     assert res.status_code == 422 and "secret-looking-value" not in res.text
-    assert client.post("/api/run/start", json={"confirmLive": True}).status_code == 422
+    assert client.post("/api/session/start", json={"confirmLive": True}).status_code == 422
 
 
 def test_an_internal_error_is_generic():

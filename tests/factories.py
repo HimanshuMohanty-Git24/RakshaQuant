@@ -455,4 +455,7 @@ def sample_payloads() -> list[EventPayload]:
         ev.ProcessStopped(
             pid=4242, entry_point="run_live_trading", reason="normal", exit_code=0, uptime_s=60.0
         ),
+        ev.ControlCommand(
+            action="halt", actor="web", outcome="applied", books=("A", "B"), detail="manual"
+        ),
     ]
