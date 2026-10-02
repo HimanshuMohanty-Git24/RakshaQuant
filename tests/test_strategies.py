@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -12,8 +13,6 @@ import pytest
 
 from src.domain.types import Side
 from src.features.technical import Features, compute_features
-from src.market.indicators import Timeframe, calculate_indicators
-from src.market.signals import SignalEngine, SignalType, StrategyType
 from src.strategies import generate_signals, registry
 from src.strategies.base import agreement
 from src.strategies.mean_reversion import MeanReversion
@@ -45,23 +44,40 @@ def feats(**kw: object) -> Features:
     return Features(**base)  # type: ignore[arg-type]
 
 
-def test_features_match_the_legacy_indicators():
+# The features and detections below were proved identical to the legacy indicator and signal
+# engine (pre-v2) by a parity test, up to the commit that deleted it (plan M12.1, after d3e5036);
+# they are frozen here so the v2 implementation keeps exactly that behaviour.
+FROZEN_FEATURES = {
+    "rsi_14": 31.258001330804944,
+    "macd": -21.13984649567533,
+    "macd_signal": -20.60599235304525,
+    "macd_hist": -0.53385414263008,
+    "adx_14": 35.947248130639956,
+    "plus_di_14": 21.8156316630047,
+    "minus_di_14": 44.08238579983605,
+    "atr_14": 10.718746154930727,
+    "bb_upper": 612.8070103567261,
+    "bb_middle": 554.6147461617337,
+    "bb_lower": 496.42248196674126,
+    "bb_percent": 0.26706243985227657,
+    "ema_21": 551.2901008028568,
+    "sma_200": 688.7821930118411,
+}
+
+
+def test_features_keep_the_values_proven_against_the_legacy_indicators():
     frame = walk()
-    new = compute_features(frame, KEY)
-    old = calculate_indicators(frame, "INFY", Timeframe.D1)
-    pairs = [
-        (new.rsi_14, old.rsi), (new.macd, old.macd), (new.macd_signal, old.macd_signal),
-        (new.macd_hist, old.macd_histogram), (new.adx_14, old.adx), (new.plus_di_14, old.plus_di),
-        (new.minus_di_14, old.minus_di), (new.atr_14, old.atr), (new.bb_upper, old.bb_upper),
-        (new.bb_middle, old.bb_middle), (new.bb_lower, old.bb_lower),
-        (new.bb_percent, old.bb_percent), (new.ema[21], old.ema[21]), (new.sma[200], old.sma[200]),
-    ]  # fmt: skip
-    for got, want in pairs:
-        assert got == pytest.approx(want, rel=1e-9)
-    assert new.bar_date == frame.index[-1].date() and new.bars == 260
-    assert new.prev_close == pytest.approx(frame["close"].iloc[-2])
-    assert new.adv20_shares == pytest.approx(frame["volume"].iloc[-20:].mean())
-    assert new.sigma_daily is not None and 0.01 < new.sigma_daily < 0.02
+    f = compute_features(frame, KEY)
+    got = {"rsi_14": f.rsi_14, "macd": f.macd, "macd_signal": f.macd_signal,
+           "macd_hist": f.macd_hist, "adx_14": f.adx_14, "plus_di_14": f.plus_di_14,
+           "minus_di_14": f.minus_di_14, "atr_14": f.atr_14, "bb_upper": f.bb_upper,
+           "bb_middle": f.bb_middle, "bb_lower": f.bb_lower, "bb_percent": f.bb_percent,
+           "ema_21": f.ema[21], "sma_200": f.sma[200]}  # fmt: skip
+    assert got == pytest.approx(FROZEN_FEATURES, rel=1e-9)
+    assert f.bar_date == frame.index[-1].date() and f.bars == 260
+    assert f.prev_close == pytest.approx(frame["close"].iloc[-2])
+    assert f.adv20_shares == pytest.approx(frame["volume"].iloc[-20:].mean())
+    assert f.sigma_daily is not None and 0.01 < f.sigma_daily < 0.02
 
 
 def test_warm_up_values_are_none_never_nan():
@@ -74,26 +90,21 @@ def test_warm_up_values_are_none_never_nan():
         compute_features(walk(30).drop(columns="volume"), KEY)
 
 
-def test_every_strategy_detects_what_the_legacy_engine_did():
-    """Rolling over three random walks: the same side on every bar, for every strategy."""
-    legacy = SignalEngine()
+def test_every_strategy_keeps_the_detections_proven_against_the_legacy_engine():
+    """Rolling over three random walks: every strategy's side on every bar, as a digest."""
     ported = registry()
-    fired = dict.fromkeys(StrategyType, 0)
+    names = sorted(ported)
+    seq, fired = [], dict.fromkeys(names, 0)
     for seed, drift in ((1, 0.0), (2, 0.002), (3, -0.002)):
         frame = walk(320, seed, drift)
         for end in range(60, 321, 4):
-            window = frame.iloc[:end]
-            old_ind = calculate_indicators(window, "X", Timeframe.D1)
-            new_f = compute_features(window, KEY)
-            for strategy in StrategyType:
-                old = legacy._run_strategy(old_ind, strategy)
-                got = ported[strategy.value].detect(new_f)
-                want = (
-                    None if old is None or old.signal_type is SignalType.HOLD else old.signal_type
-                )
-                assert (got.side.value if got else None) == (want.value if want else None)
-                fired[strategy] += want is not None
-    assert all(fired.values()), fired  # every strategy produced real signals to compare
+            features = compute_features(frame.iloc[:end], KEY)
+            for name in names:
+                got = ported[name].detect(features)
+                seq.append(f"{seed}:{end}:{name}:{got.side.value if got else '-'}")
+                fired[name] += got is not None
+    assert fired == {"breakout": 13, "mean_reversion": 18, "momentum": 57, "trend_following": 29}
+    assert hashlib.sha256("\n".join(seq).encode()).hexdigest()[:16] == "7f61c91977c0c9f9"
 
 
 def test_rsi_votes_contrarian_only_for_mean_reversion():

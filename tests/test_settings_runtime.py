@@ -1,20 +1,15 @@
 """
-Plan M0.4: environment + absolute state directory, repo-anchored .env, opt-in LangSmith,
-and secret-typed Telegram token / database URL.
+Plan M0.4: environment + absolute state directory, repo-anchored .env and a secret-typed
+Telegram token. Plan M12.1: the legacy settings are gone, and an old .env still loads.
 """
 
-import os
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from pydantic import SecretStr, ValidationError
 
 from src.config import settings as settings_module
 from src.config.settings import REPO_ROOT, Settings
-from src.execution.costs import CostModel
-from src.execution.paper_engine import LocalPaperEngine
-from src.observability.tracing import setup_tracing
 
 
 def _make(monkeypatch: pytest.MonkeyPatch, **overrides: object) -> Settings:
@@ -62,59 +57,26 @@ def test_settings_construction_does_not_create_state_dir(monkeypatch, tmp_path):
     assert not target.exists()
 
 
-def test_langsmith_is_optional_and_off_by_default(monkeypatch):
-    s = _make(monkeypatch)
-    assert s.langsmith_api_key is None
-    assert s.langsmith_tracing_v2 is False
-
-
-def test_tracing_on_without_key_warns(monkeypatch):
-    s = _make(monkeypatch, langsmith_tracing_v2=True)
-    assert any("LANGSMITH_API_KEY" in w for w in s.config_warnings)
-
-
-def test_setup_tracing_is_a_no_op_by_default(settings):
-    with (
-        patch("src.observability.tracing.get_settings", return_value=settings),
-        patch("src.observability.tracing.Client") as client,
-    ):
-        assert setup_tracing() is False
-    client.assert_not_called()
-    assert "LANGSMITH_API_KEY" not in os.environ
-    assert "LANGSMITH_TRACING_V2" not in os.environ
-
-
-def test_setup_tracing_exports_nothing_when_key_is_rejected(monkeypatch):
-    s = _make(monkeypatch, langsmith_tracing_v2=True, langsmith_api_key="bad")
-    with (
-        patch("src.observability.tracing.get_settings", return_value=s),
-        patch("src.observability.tracing.Client") as client,
-    ):
-        client.return_value.list_projects.side_effect = RuntimeError("401")
-        assert setup_tracing() is False
-    assert "LANGSMITH_API_KEY" not in os.environ
-
-
-def test_telegram_token_and_database_url_are_secret(monkeypatch):
-    s = _make(
-        monkeypatch,
-        telegram_bot_token="bot123:SECRETTOKEN",
-        telegram_chat_id="42",
-        database_url="postgresql://u:hunter2@h/db",
-    )
+def test_telegram_token_is_secret(monkeypatch):
+    s = _make(monkeypatch, telegram_bot_token="bot123:SECRETTOKEN", telegram_chat_id="42")
     assert isinstance(s.telegram_bot_token, SecretStr)
-    assert isinstance(s.database_url, SecretStr)
-    assert "SECRETTOKEN" not in repr(s) and "hunter2" not in repr(s)
-    assert s.database_url.get_secret_value() == "postgresql://u:hunter2@h/db"
+    assert "SECRETTOKEN" not in repr(s)
 
 
-def test_legacy_paper_wallet_lives_under_state_dir(settings):
-    with patch("src.execution.paper_engine.get_settings", return_value=settings):
-        engine = LocalPaperEngine(cost_model=CostModel.zero())
-    assert engine.state_file == settings.state_dir / "paper_wallet.json"
-
-    engine.place_order("INFY", "BUY", 1, 100.0)
-    assert engine.state_file.exists()  # parent directory created on first write
+def test_an_env_file_with_retired_settings_still_loads(monkeypatch, tmp_path):
+    """Plan M12.1 removed the LangChain, Postgres, Redis, FinOps and goal-engine settings; a .env
+    written for the old stack must still load (unknown keys are ignored), not fail startup."""
+    env = tmp_path / "old.env"
+    env.write_text("LANGSMITH_TRACING_V2=true\nLANGSMITH_API_KEY=ls-x\nDATABASE_URL=postgres://u:p@h/d\n"
+                   "REDIS_URL=redis://h\nGROQ_MODEL_PRIMARY=m\nDAILY_LOSS_LIMIT=1\n"
+                   "MONTHLY_PROFIT_TARGET_PCT=0.05\nENABLE_LEARNING=false\n", encoding="utf-8")  # fmt: skip
+    for name in ("VAR_DIR", "STATE_DIR", "ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    s = Settings(_env_file=env)
+    for retired in ("langsmith_api_key", "database_url", "redis_url", "groq_model_primary",
+                    "daily_loss_limit", "monthly_profit_target_pct", "enable_learning"):  # fmt: skip
+        assert not hasattr(s, retired), retired
+    assert s.config_warnings == []
 
 
 def test_var_dir_layout_follows_the_plan(monkeypatch, tmp_path):

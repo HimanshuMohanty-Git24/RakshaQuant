@@ -38,11 +38,10 @@ def main() -> int:
     dhan_ok = bool(s.dhan_client_id and s.dhan_access_token)
     print(f"DhanHQ API:       {'[OK]' if dhan_ok else '[Not configured - optional]'}")
 
-    # Free tier
-    print(f"\nData Source:      {s.market_data_source}")
-    print(f"Execution Mode:   {s.execution_mode}")
-    print(f"Paper Wallet:     Rs.{s.paper_wallet_balance:,.0f}")
-    print(f"News Analysis:    {'[Enabled]' if s.enable_news_analysis else '[Disabled]'}")
+    # Runtime
+    print(f"\nEnvironment:      {s.environment}  (state: {s.state_dir})")
+    print(f"Data Source:      {s.market_data_source}")
+    print(f"Execution Mode:   {s.execution_mode}  (v2 trades on the simulated broker only)")
 
     # Telegram
     telegram_ok = bool(
@@ -50,7 +49,7 @@ def main() -> int:
     )
     print(f"Telegram Alerts:  {'[OK]' if telegram_ok else '[Not configured - optional]'}")
 
-    # Cross-field validation warnings (live-mode creds, risk-param sanity, market hours, ...)
+    # Cross-field validation warnings (live-mode creds, Telegram token/chat pairing)
     config_warnings = getattr(s, "config_warnings", [])
     if config_warnings:
         print(f"\nConfiguration Warnings ({len(config_warnings)}):")

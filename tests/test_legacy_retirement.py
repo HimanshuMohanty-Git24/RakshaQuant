@@ -1,80 +1,32 @@
-"""Plan M3.6: the legacy order paths are retired (and the legacy loop no longer oversells)."""
+"""Plan M12.1: the legacy stack is gone - and stays gone."""
 
 from __future__ import annotations
 
-import asyncio
+import re
 from pathlib import Path
 
-import pytest
-
-from src.execution.adapter import execute_trades
-from src.execution.costs import CostModel
-from src.execution.exit_manager import ExitManager as LegacyExitManager
-from src.execution.paper_engine import LocalPaperEngine
-from src.legacy.session import _held_quantity
-
-SRC = Path(__file__).resolve().parents[1] / "src"
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+DELETED = ("src.api", "src.execution", "src.finops", "src.legacy", "src.market",
+           "src.memory", "src.observability", "src.profit")  # fmt: skip
+IMPORT = re.compile(r"^\s*(?:from|import)\s+(src(?:\.\w+)+)", re.M)
 
 
-def test_no_direct_paper_engine_orders_anywhere_in_src():
-    offenders = [
-        f"{path.relative_to(SRC)}:{n}"
-        for path in SRC.rglob("*.py")
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if "paper_engine.place_order" in line
-    ]
+def test_the_legacy_packages_do_not_exist():
+    for module in DELETED:
+        assert not (ROOT / Path(*module.split("."))).exists(), module
+
+
+def test_nothing_imports_them():
+    offenders = []
+    for path in [
+        *SRC.rglob("*.py"),
+        *(ROOT / "scripts").rglob("*.py"),
+        *(ROOT / "tests").glob("*.py"),
+    ]:
+        if path.name == Path(__file__).name:
+            continue
+        for module in IMPORT.findall(path.read_text(encoding="utf-8")):
+            if any(module == gone or module.startswith(f"{gone}.") for gone in DELETED):
+                offenders.append(f"{path.relative_to(ROOT)}: {module}")
     assert offenders == []
-
-
-def test_nothing_outside_legacy_imports_the_retired_agents_or_loop():
-    """Plan M5.5: the LangGraph agents and the old loop are off every live path."""
-    assert not (SRC / "agents").exists() and not (SRC / "live" / "session.py").exists()
-    offenders = [
-        f"{path.relative_to(SRC)}:{n}"
-        for path in SRC.rglob("*.py")
-        if "legacy" not in path.relative_to(SRC).parts
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if line.lstrip().startswith(("import ", "from ")) and "src.legacy" in line
-    ]
-    assert offenders == []
-    scripts = Path(__file__).resolve().parents[1] / "scripts"
-    assert not [p.name for p in scripts.rglob("*.py") if "src.legacy" in p.read_text("utf-8")]
-
-
-def test_execute_trades_is_retired():
-    with pytest.raises(NotImplementedError, match="OMS.submit"):
-        asyncio.run(execute_trades([{"symbol": "INFY"}]))
-
-
-def test_held_quantity_counts_only_the_given_side(tmp_path):
-    engine = LocalPaperEngine(
-        initial_balance=1_000_000, state_file=tmp_path / "w.json", cost_model=CostModel.zero()
-    )
-    engine.place_order(symbol="INFY", side="BUY", quantity=60, current_price=1000.0)
-    engine.place_order(symbol="INFY", side="BUY", quantity=40, current_price=1001.0)
-    assert _held_quantity(engine, "INFY", "BUY") == 100
-    assert _held_quantity(engine, "INFY", "SELL") == 0
-    assert _held_quantity(engine, "TCS", "BUY") == 0
-
-
-def test_legacy_partial_exit_shrinks_the_managed_quantity(tmp_path):
-    """Audit F-01 in the legacy loop: a partial exit must decrement what is managed, so the
-    final exit sells the remainder, not the original quantity."""
-    manager = LegacyExitManager(state_file=tmp_path / "exits.json", partial_profit_r=1.0)
-    manager.register_position(
-        position_id="p1",
-        symbol="INFY",
-        side="BUY",
-        quantity=100,
-        entry_price=1000.0,
-        stop_loss=979.0,
-        target_price=1063.0,
-    )
-    manager.record_partial("p1", 50)
-    (pos,) = [p for p in manager._positions.values() if p.position_id == "p1"]
-    assert pos.quantity == 50 and pos.partial_taken
-    # No second partial at the next 1R touch.
-    rules = [rule.exit_type for _, rule in manager.check_exits({"INFY": 1022.0}, "", {})]
-    assert "partial" not in rules
-    manager.record_partial("p1", 50)
-    assert "p1" not in manager._positions  # fully exited: no longer managed

@@ -17,7 +17,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
   # Global strict-mypy error ceiling (ratchet). Lower it whenever the count drops; never raise it.
-  MYPY_MAX_ERRORS: "374"
+  MYPY_MAX_ERRORS: "32"
 
 defaults:
   run:

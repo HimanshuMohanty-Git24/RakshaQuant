@@ -3,7 +3,6 @@
 import copy
 import json
 from datetime import UTC, date, datetime, time
-from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +12,6 @@ from src.domain.calendar import (
     NSECalendar,
     get_calendar,
 )
-from src.legacy.agents.risk_compliance import risk_compliance_node
 from src.utils.market_time import IST, is_market_hours
 
 CAL = get_calendar()
@@ -175,32 +173,3 @@ def test_is_market_hours_uses_the_calendar():
     assert is_market_hours(ist(2026, 10, 5, 10, 0))
     assert not is_market_hours(ist(2026, 10, 2, 10, 0))  # holiday, a weekday
     assert is_market_hours(datetime(2026, 10, 5, 10, 0))  # naive = IST (legacy contract)
-
-
-@pytest.mark.parametrize(
-    "when",
-    [ist(2026, 10, 2, 12, 0), ist(2026, 10, 3, 12, 0), ist(2027, 1, 4, 12, 0)],
-    ids=["holiday", "saturday", "uncovered-year"],
-)
-def test_legacy_risk_rule_blocks_entries_on_non_session_days(when):
-    signal = {
-        "signal_id": "SIG-1",
-        "symbol": "RELIANCE",
-        "signal_type": "BUY",
-        "position_size_pct": 5.0,
-        "risk_reward_ratio": 2.0,
-        "entry_price": 100.0,
-        "stop_loss": 98.0,
-        "confidence": 0.7,
-        "validation": {"confidence": 0.7},
-    }
-    state = {
-        "validated_signals": [signal],
-        "portfolio": {"capital": 1_000_000.0, "positions": []},
-        "daily_stats": {"trades_count": 0, "profit_loss": 0.0, "max_drawdown": 0.0},
-    }
-    with patch("src.legacy.agents.risk_compliance.now_ist", return_value=when):
-        result = risk_compliance_node(state)
-    assert result["approved_trades"] == []
-    failures = result["risk_rejected"][0]["risk_result"]["failures"]
-    assert any(f["rule"] == "trading_hours" for f in failures)

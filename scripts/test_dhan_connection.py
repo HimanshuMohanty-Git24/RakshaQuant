@@ -11,7 +11,7 @@ IMPORTANT: For sandbox tokens (from developer.dhan.co), use sandbox URL.
 import sys
 from pathlib import Path
 
-import requests
+import httpx2 as requests  # the same call surface (get / .json()); a direct dependency
 
 # Fix Windows encoding
 sys.stdout.reconfigure(encoding="utf-8")
@@ -97,7 +97,7 @@ def test_dhan_connection():
 
         return True
 
-    except requests.exceptions.RequestException as e:
+    except requests.HTTPError as e:
         print(f"\n[ERROR] Connection Error: {e}")
         return False
     except Exception as e:

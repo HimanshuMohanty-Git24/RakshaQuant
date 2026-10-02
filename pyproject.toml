@@ -1,65 +1,36 @@
 [project]
 name = "trading-agent"
 version = "0.1.0"
-description = "Agentic Paper Trading System for NSE with Learning Feedback Loop & Full Observability"
+description = "Paper-trading platform for NSE equities: a deterministic engine, typed decision models and LLM vetoes, recorded in an event store"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "Trading Agent Team" }
 ]
-keywords = ["trading", "agents", "langgraph", "nse", "paper-trading"]
+keywords = ["trading", "nse", "paper-trading", "event-sourcing"]
 
 dependencies = [
-    # Agent Orchestration
-    "langgraph>=0.2.0",
-    "langchain-core>=0.3.0",
-    "langchain-groq>=0.2.0",
-    
-    # Observability
-    "langsmith>=0.1.0",
-    
-    # Broker API
-    "dhanhq>=2.0.0",
-    
-    # Database
-    "psycopg2-binary>=2.9.0",
-    "sqlalchemy>=2.0.0",
-    
-    # Data Processing
+    # Market data, features and the backtest
     "pandas>=2.0.0",
     # <2.5: numpy 2.5 needs Python 3.12 and its stubs use 3.12 syntax; the target is 3.11.
     "numpy>=1.24.0,<2.5",
-    
-    # Technical Indicators
-    "ta>=0.11.0",
-    
-    # Free Tier Data Sources
-    "yfinance>=0.2.0",           # Yahoo Finance for NSE data
-    "feedparser>=6.0.0",         # Google News RSS parsing
-    "scikit-learn>=1.3.0",       # ML for price prediction
-    "beautifulsoup4>=4.12.0",    # HTML parsing for news
-    
-    # Async & WebSocket
-    "websockets>=12.0",
-    "aiohttp>=3.9.0",
-    
-    # Utilities
-    "python-dotenv>=1.0.0",
+    "ta>=0.11.0",  # technical indicators
+    "yfinance>=0.2.0",  # free daily bars and quotes
+    "pyarrow>=25.0",  # Parquet quote/bar tape and the bhavcopy dataset
+
+    # Config, storage and the process
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    "rich>=13.0.0",  # CLI dashboard
+    "pyyaml>=6.0.3",  # YAML config (costs, pricing, event rules, experiment)
     "filelock>=3.16",  # single-instance lock on the state directory
+    "rich>=13.0.0",  # CLI dashboard
 
-    # Platform v2 (M1-M7): LLM providers, storage, config, HTTP
+    # LLM providers and HTTP
     "openai>=3.22",  # every OpenAI-compatible provider (OpenRouter, Groq, Ollama, ...)
     "anthropic>=1.11",  # native Claude SDK
-    "httpx2>=2.13",  # async HTTP (Jev, RSS); the same client stack the SDKs use
-    "pyarrow>=25.0",  # Parquet quote/bar tape
-    "pyyaml>=6.0.3",  # YAML config (costs, pricing, event rules, experiment)
-    
-    # Optional: Redis for caching
-    "redis>=5.0.0",
+    "httpx2>=2.13",  # async HTTP (Jev, RSS, NSE archives); the same client stack the SDKs use
+    "aiohttp>=3.9.0",  # Telegram alerts
 ]
 
 [project.optional-dependencies]
@@ -87,6 +58,12 @@ decision-local = [
     "laya[onnx]>=0.3.3",
 ]
 
+# DhanHQ broker SDK, for scripts/test_dhan_connection.py and a future Dhan broker adapter. The
+# v2 engine trades on the simulated broker only:  uv sync --extra broker-dhan
+broker-dhan = [
+    "dhanhq>=2.0.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -104,9 +81,7 @@ extend-exclude = ["*.md"]
 select = ["E", "F", "I", "N", "W", "UP"]
 # E501 (line length) is owned by `ruff format` (line-length 100); it only flags string
 # literals the formatter intentionally won't split, so it's not enforced as a lint rule.
-# N806 is disabled because the codebase idiomatically uses `X` (ML feature matrix),
-# `Session` (SQLAlchemy sessionmaker), and `Mock*` (test doubles) as local names.
-ignore = ["E501", "N806"]
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # Scripts insert the repo root onto sys.path before importing `src`, so imports follow code.
@@ -118,31 +93,13 @@ testpaths = ["tests"]
 # Benchmarks are opt-in: `pytest -m bench` (plan §8: before closing M3, M6, M7 and M9).
 markers = ["bench: performance benchmarks (pytest-benchmark)"]
 addopts = "-m 'not bench'"
-filterwarnings = [
-    "ignore:datetime.datetime.utcnow:DeprecationWarning:sqlalchemy",
-]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 
 # Third-party libraries without type stubs / py.typed markers. Silencing the missing-import
-# noise lets mypy focus on our own code. (Reaching full strict-clean across the legacy
-# modules is a separate, larger annotation effort.)
+# noise lets mypy focus on our own code.
 [[tool.mypy.overrides]]
-module = [
-    "ta.*", "dhanhq.*", "feedparser", "sklearn.*", "yfinance.*",
-    "pandas.*", "requests.*", "langchain_groq.*", "pyarrow.*", "laya", "laya.*",
-]
+module = ["ta.*", "yfinance.*", "pandas.*", "pyarrow.*", "laya", "laya.*"]
 ignore_missing_imports = true
-
-# src.legacy.session (retired in plan M5.5, deleted in M12) is a faithful extraction of the
-# former scripts/run_live_trading.py, which
-# lived outside the mypy path (scripts/ is not type-checked). Under strict mode it surfaces the
-# loop's pre-existing dynamic interactions with the (as-yet unannotated) engine — TradingSignal
-# vs dict, TypedDict-vs-dict, untyped-call into cli/market/paper modules. Annotating the engine
-# to make it strict-clean is a separate effort; the *new* web/live abstractions (recorder,
-# views, run_manager, server) are strict-clean. Reduce this exemption when the engine is typed.
-[[tool.mypy.overrides]]
-module = ["src.legacy.session"]
-ignore_errors = true
