@@ -7,6 +7,7 @@ from src.engine.demo import DEMO_DAY, DEMO_PREVIOUS, DEMO_TAPE, synthetic_day, w
 from src.engine.replay import canonical_events
 from src.store.event_store import EventStore
 from src.store.tape import read_bars, read_quotes
+from src.utils.market_time import IST
 from src.web.run_manager import RunControlError, RunManager
 from tests.test_engine_live import RecordingView, env
 
@@ -64,3 +65,16 @@ async def test_the_demo_runs_while_the_entry_point_holds_the_process_store(setti
         assert await live.run_demo(demo, RecordingView(), step_s=300.0, wall_s=0.0) == 0
         assert await live.run_demo(demo, RecordingView(), step_s=300.0, wall_s=0.0) == 0
     assert live.demo_store_path(demo) != demo.db_path
+
+
+async def test_after_a_demo_the_api_keeps_the_demo_s_clock(settings, tmp_path):
+    demo = env(settings, "demo", tmp_path)
+    assert await live.run_demo(demo, RecordingView(), step_s=300.0, wall_s=0.0) == 0
+    manager = RunManager(demo)
+    try:
+        summary = manager.queries().summary(None, running=False)
+        assert summary.now.astimezone(IST).date() == DEMO_DAY  # not the wall clock's today
+        assert summary.session is not None and summary.session.state == "EXIT"
+        assert all(b.trades_today >= 1 and b.valuation == "last_mark" for b in summary.books)
+    finally:
+        manager.close_reader()

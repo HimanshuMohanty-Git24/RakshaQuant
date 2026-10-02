@@ -367,6 +367,7 @@ class ConfigView(ApiModel):
     telegram_configured: bool
     limits_hash: str
     read_only: bool
+    llm_budget_daily_inr: Decimal  # 0 = no daily cap
 
 
 # -- controls (plan M9.3) ----------------------------------------------------------------------

@@ -585,6 +585,8 @@ export interface components {
             };
             /** Limits Hash */
             limits_hash: string;
+            /** Llm Budget Daily Inr */
+            llm_budget_daily_inr: string;
             /** Llm Roles */
             llm_roles: {
                 [key: string]: string[];

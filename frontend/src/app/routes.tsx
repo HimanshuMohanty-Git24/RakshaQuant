@@ -14,19 +14,20 @@ const System = lazy(() => import("../screens/System"));
 export interface Screen {
   path: string;
   label: string;
+  icon: string;
   key: string; // single-key shortcut (off by default, §6.1)
   element: JSX.Element;
 }
 
 export const SCREENS: Screen[] = [
-  { path: "/", label: "Command", key: "1", element: <CommandCenter /> },
-  { path: "/decisions", label: "Decisions", key: "2", element: <Decisions /> },
-  { path: "/blotter", label: "Blotter", key: "3", element: <Blotter /> },
-  { path: "/risk", label: "Risk", key: "4", element: <RiskCenter /> },
-  { path: "/ai", label: "AI", key: "5", element: <AIDesk /> },
-  { path: "/experiment", label: "Experiment", key: "6", element: <Experiment /> },
-  { path: "/market", label: "Market", key: "7", element: <Market /> },
-  { path: "/system", label: "System", key: "8", element: <System /> },
+  { path: "/", icon: "command", label: "Command", key: "1", element: <CommandCenter /> },
+  { path: "/decisions", icon: "decisions", label: "Decisions", key: "2", element: <Decisions /> },
+  { path: "/blotter", icon: "blotter", label: "Blotter", key: "3", element: <Blotter /> },
+  { path: "/risk", icon: "risk", label: "Risk", key: "4", element: <RiskCenter /> },
+  { path: "/ai", icon: "ai", label: "AI", key: "5", element: <AIDesk /> },
+  { path: "/experiment", icon: "experiment", label: "Experiment", key: "6", element: <Experiment /> },
+  { path: "/market", icon: "market", label: "Market", key: "7", element: <Market /> },
+  { path: "/system", icon: "system", label: "System", key: "8", element: <System /> },
 ];
 
 export const INSPECTOR = { path: "/decisions/:id", element: <DecisionInspector /> };

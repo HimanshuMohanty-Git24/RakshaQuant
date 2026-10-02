@@ -438,6 +438,11 @@
             "title": "Limits Hash",
             "type": "string"
           },
+          "llm_budget_daily_inr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Llm Budget Daily Inr",
+            "type": "string"
+          },
           "llm_roles": {
             "additionalProperties": {
               "items": {
@@ -479,7 +484,8 @@
           "announcements_enabled",
           "telegram_configured",
           "limits_hash",
-          "read_only"
+          "read_only",
+          "llm_budget_daily_inr"
         ],
         "title": "ConfigView",
         "type": "object"

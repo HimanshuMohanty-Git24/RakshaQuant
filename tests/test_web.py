@@ -185,3 +185,19 @@ def test_run_stop_readonly_returns_403(monkeypatch):
     res = client.post("/api/session/stop")
     assert res.status_code == 403
     assert "error" in res.json()
+
+
+def test_the_spa_is_served_for_deep_links_but_never_outside_its_folder(tmp_path):
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    (dist / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("nope", encoding="utf-8")
+    client = authed(create_app(security=SECURITY, frontend_dist=dist))
+    assert "id=root" in client.get("/decisions/abc123").text  # the client routes it
+    assert client.get("/assets/app.js").text == "console.log(1)"
+    assert client.get("/favicon.svg").text == "<svg/>"
+    assert "nope" not in client.get("/..%2Fsecret.txt").text
+    assert client.get("/api/does-not-exist").status_code == 404
+    assert client.get("/api/health").json() == {"status": "ok"}

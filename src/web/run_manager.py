@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from src.config import get_settings
 from src.config.limits import load_risk_limits
 from src.domain.calendar import get_calendar
-from src.domain.clock import Clock, WallClock
+from src.domain.clock import Clock, ReplayClock, WallClock
 from src.domain.events import ControlCommand
 from src.engine.live import STOP_GRACE_S, demo_store_path
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
@@ -59,6 +59,13 @@ def resolve_effective_mode(settings: Any) -> str:
     if mode in ("live", "dhan_paper") and not bool(getattr(settings, "allow_live_orders", False)):
         return "shadow"
     return mode
+
+
+def _stopped_clock(store: EventStore) -> Clock | None:
+    """A clock standing at the store's last event (None for an empty store)."""
+    last = store.last_seq()
+    found = store.read(since_seq=last - 1, limit=1) if last else []
+    return ReplayClock(found[0].ts_utc) if found else None
 
 
 class RunManager:
@@ -103,11 +110,14 @@ class RunManager:
             default = demo_store_path(settings) if demo else settings.db_path
             path = engine.store.path if engine else self._store_path or default
             self._reader = EventStore(path)
+            clock = engine.clock if engine else self._clock
+            if engine is None and demo:  # a finished demo: its clock stopped on the tape's day
+                clock = _stopped_clock(self._reader) or clock
             self._queries = Queries(
                 self._reader, settings=settings,
                 experiment=load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH),
                 limits=load_risk_limits(), calendar=get_calendar(),
-                clock=engine.clock if engine else self._clock,
+                clock=clock,
                 reports_dir=settings.state_dir / "reports" if demo else settings.reports_dir,
                 demo=demo, read_only=self._read_only(),
             )  # fmt: skip

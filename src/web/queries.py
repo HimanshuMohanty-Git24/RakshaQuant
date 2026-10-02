@@ -617,6 +617,7 @@ class Queries:
             telegram_configured=bool(s.telegram_enabled and s.telegram_bot_token
                                      and s.telegram_chat_id),
             limits_hash=self.limits.limits_hash(), read_only=self.read_only,
+            llm_budget_daily_inr=Decimal(str(s.llm_budget_daily_inr)),
         )  # fmt: skip
 
 

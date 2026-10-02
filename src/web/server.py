@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Req
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.websockets import WebSocketDisconnect
@@ -146,9 +146,11 @@ def create_app(
     security: WebSecurity | None = None,
     dev: bool = False,
     auto_start_demo: bool | None = None,
+    frontend_dist: FilePath | None = None,
 ) -> FastAPI:
     """Build the app. ``dev=True`` enables CORS for the Vite dev server; ``auto_start_demo``
-    (when not None) starts a run of that kind once the server is up."""
+    (when not None) starts a run of that kind once the server is up; ``frontend_dist`` is the
+    built SPA (default ``frontend/dist``)."""
     security = security or WebSecurity.for_launch("127.0.0.1", 8000, token=new_token(), dev=dev)
     run_manager = manager or RunManager()
 
@@ -403,8 +405,21 @@ def create_app(
             app.state.websockets -= 1
 
     # Serve the built SPA (if present); otherwise a helpful placeholder.
-    if _FRONTEND_DIST.exists():
-        app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="spa")
+    dist = (frontend_dist or _FRONTEND_DIST).resolve()
+    if (dist / "index.html").is_file():
+        if (dist / "assets").is_dir():
+            app.mount("/assets", StaticFiles(directory=str(dist / "assets")), name="assets")
+
+        @app.get("/{path:path}", include_in_schema=False)
+        async def spa(path: str) -> FileResponse:
+            """A file at the root of the build, else ``index.html``: the client routes deep
+            links such as ``/decisions/<id>`` (an unknown ``/api`` path stays a 404)."""
+            if path.startswith(("api/", "ws")) or path == "api":
+                raise HTTPException(status_code=404, detail="not found")
+            candidate = (dist / path).resolve()
+            if path and candidate.is_file() and dist in candidate.parents:
+                return FileResponse(candidate)
+            return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
     else:
 
         @app.get("/", response_class=HTMLResponse, include_in_schema=False)
