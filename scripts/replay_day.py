@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
 
 from src.config import get_settings
+from src.engine.live import DEMO, demo_store_path
 from src.engine.replay import replay_day
 from src.ops.exit_codes import ExitCode
 from src.ops.process import run_entry_point
@@ -31,8 +32,10 @@ def main() -> int:
     args = parser.parse_args()
     settings = get_settings()
     out = args.out or settings.var_dir / "replays" / args.date.isoformat()
+    # The engine's store: the environment's db_path, or the demo's own store.
+    recorded = demo_store_path(settings) if settings.environment == DEMO else settings.db_path
     db = asyncio.run(replay_day(settings, args.date, out_dir=out,
-                                source_db=args.source or settings.db_path))  # fmt: skip
+                                source_db=args.source or recorded))  # fmt: skip
     print(f"replayed {args.date}: {db} (report in {out})")
     return ExitCode.OK
 

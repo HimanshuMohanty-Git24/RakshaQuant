@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.engine import live
 from src.engine.demo import DEMO_DAY, DEMO_PREVIOUS, DEMO_TAPE, synthetic_day, write_demo_tape
-from src.engine.replay import canonical_events
+from src.engine.replay import canonical_events, replay_day
 from src.store.event_store import EventStore
 from src.store.tape import read_bars, read_quotes
 from src.utils.market_time import IST
@@ -33,6 +33,21 @@ async def test_every_demo_run_replays_the_same_day(settings, tmp_path):
     assert runs[0] == runs[1] and len(runs[0]) > 100
     assert '"type": "FillReceived"' in "\n".join(runs[0])  # it trades
     assert f'"session_date": "{DEMO_DAY}"' in "\n".join(runs[0])
+
+
+async def test_a_recorded_demo_day_replays_event_for_event(settings, tmp_path):
+    """Plan M12.5: replaying a recorded day reproduces it. ``replay_day`` on the demo's own store
+    (its tape, its instruments, book B's scripted veto, the recorded start time) gives exactly
+    the run's events - fills, vetoes, exits and the report included."""
+    demo = env(settings, "demo", tmp_path)
+    assert await live.run_demo(demo, step_s=30.0, wall_s=0.0) == 0
+    source = live.demo_store_path(demo)
+    db = await replay_day(demo, DEMO_DAY, out_dir=tmp_path / "replay", source_db=source)
+    with EventStore(source) as recorded, EventStore(db) as replayed:
+        expected = canonical_events(recorded)
+        assert canonical_events(replayed) == expected and len(expected) > 150
+    joined = "\n".join(expected)
+    assert '"verdict": "VETO"' in joined and '"type": "TradeClosed"' in joined
 
 
 async def test_demo_and_paper_runs_never_cross_environments(settings, tmp_path):

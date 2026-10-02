@@ -35,10 +35,11 @@ from src.decision_models.cascade import Cascade, CascadeConfig
 from src.decision_models.tasks.announcements import AnnouncementPipeline, EventClassifier
 from src.domain.calendar import get_calendar
 from src.domain.clock import ReplayClock
-from src.domain.events import AnnouncementReceived
+from src.domain.events import AnnouncementReceived, SessionStateChanged
 from src.domain.sink import EventSink
-from src.domain.types import Instrument
-from src.engine.live import DM_CACHE, make_reporter
+from src.domain.types import Instrument, SessionState
+from src.engine.demo import DEMO_TAPE, ScriptedVeto, demo_instruments
+from src.engine.live import DEMO, DM_CACHE, make_reporter
 from src.engine.runner import Engine, build_engine
 from src.evaluation.books import build_advisors, engine_config
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
@@ -110,12 +111,16 @@ async def replay_day(
     universe: Sequence[Instrument] | None = None,
     step_s: float = 30.0,
 ) -> Path:
-    """Replay ``day``; returns the replay's event store path."""
-    tape_root = tape_dir or settings.tape_dir
+    """Replay ``day``; returns the replay's event store path. In the ``demo`` environment a
+    recording of the demo is replayed as the demo ran it: its bundled tape, its instruments and
+    book B's scripted veto (no model runs in the demo)."""
+    demo = settings.environment == DEMO
+    tape_root = tape_dir or (DEMO_TAPE if demo else settings.tape_dir)
     quotes, bars = read_quotes(tape_root, day), read_bars(tape_root, day)
     if not quotes:
         raise FileNotFoundError(f"no quotes on the tape for {day} under {tape_root}")
-    instruments = list(universe or _universe(settings, day, quotes))
+    instruments = list(universe or (demo_instruments() if demo else
+                                    _universe(settings, day, quotes)))  # fmt: skip
     experiment = load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH)
     limits = load_risk_limits()
     config = engine_config(experiment, environment=settings.environment, limits=limits)
@@ -130,7 +135,7 @@ async def replay_day(
             if isinstance(p := e.payload, AnnouncementReceived)
             and p.received_at.astimezone(IST).date() == day
         ]  # fmt: skip
-        clock = ReplayClock(datetime.combine(day, START, IST))
+        clock = ReplayClock(_started_at(source, day) or datetime.combine(day, START, IST))
         with EventStore(db) as store:
             sink = StoreSink(store, clock, "engine")
             cascade = _replay_cascade(settings, sink, source)
@@ -147,10 +152,15 @@ async def replay_day(
                                pricing=PricingTable.from_yaml(), sink=sink, clock=clock,
                                usd_inr=settings.usd_inr, timeout_s=settings.llm_timeout_s,
                                budgets=BudgetLimits(), cache=_ReadOnlyCache(source, "llm_cache"))  # fmt: skip
-            for book_id, advisor in build_advisors(
+            advisors = build_advisors(
                 experiment, sink=sink, clock=clock, calendar=engine.calendar, cascade=cascade,
                 router=router, events=engine.events_for, regime=lambda: engine.regime,
-            ).items():  # fmt: skip
+            )  # fmt: skip
+            if demo:
+                for book_id, spec in experiment.books.items():
+                    if spec.advisor == "typed_veto":
+                        advisors[book_id] = ScriptedVeto(book_id=book_id, sink=sink)
+            for book_id, advisor in advisors.items():
                 engine.set_advisor(book_id, advisor)
             engine.reporter = make_reporter(engine, experiment, settings, out_dir, notify=False)
             await _run(engine, clock, datetime.combine(day, END, IST), step_s)
@@ -158,6 +168,17 @@ async def replay_day(
         if source is not None:
             source.close()
     return db
+
+
+def _started_at(source: EventStore | None, day: date) -> datetime | None:
+    """When the recorded session began (its ``PRE_OPEN``), so the replay keeps its timeline."""
+    if source is None:
+        return None
+    for event in source.read(types=[SessionStateChanged.event_type], ist_date=day):
+        p = event.payload
+        if isinstance(p, SessionStateChanged) and p.current is SessionState.PRE_OPEN:
+            return event.ts_utc
+    return None
 
 
 def _replay_cascade(settings: Settings, sink: EventSink, source: EventStore | None) -> Cascade:
