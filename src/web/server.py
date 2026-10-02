@@ -1,16 +1,16 @@
 """
 FastAPI server for the RakshaQuant web console.
 
-Exposes:
-* ``GET  /api/health``          — liveness + whether a run is active.
-* ``GET  /api/state``           — latest snapshot + recent cycle traces (for a cold load).
-* ``GET  /api/cycles``          — recent cycle traces.
-* ``GET  /api/cycles/{id}``     — one cycle trace (drawer / deep-link).
-* ``GET  /api/config``          — safe, secret-free view of the active configuration.
-* ``POST /api/run/start``       — start a run  ({demo, confirmLive}); guarded for LIVE.
-* ``POST /api/run/stop``        — stop the active run.
-* ``WS   /ws``                  — live snapshot/cycle stream.
-* ``/``                         — the built SPA (``frontend/dist``) when present.
+Every ``/api/*`` route except ``/api/health`` needs the per-launch bearer token, and every
+state-changing request must come from the console's own origin (:mod:`src.web.security`).
+
+* ``GET  /api/health``          - liveness only (public, no state).
+* ``GET  /api/state``           - latest snapshot (for a cold load).
+* ``GET  /api/config``          - a secret-free view of the configuration.
+* ``POST /api/run/start``       - start a run ``{demo}``.
+* ``POST /api/run/stop``        - stop the active run.
+* ``WS   /ws``                  - live stream (token as the ``rq.token.<token>`` subprotocol).
+* ``/``                         - the built SPA (``frontend/dist``) when present.
 
 FastAPI / uvicorn are optional deps (the ``web`` extra); this module is only imported when
 the app runs in web mode.
@@ -19,16 +19,31 @@ the app runs in web mode.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict, StrictBool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.websockets import WebSocketDisconnect
 
 from src.config import get_settings
 from src.web.run_manager import RunControlError, RunManager, resolve_effective_mode
+from src.web.security import (
+    DEV_ORIGINS,
+    WebSecurity,
+    accepted_subprotocol,
+    new_token,
+    require_same_origin,
+    require_token,
+    websocket_refusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +59,18 @@ padding:3rem;line-height:1.6}code{color:#F5A623}a{color:#5B8DEF}</style></head>
 <pre><code>cd frontend
 npm install
 npm run build</code></pre>
-<p>Then reload this page. The API is live at <a href="/api/health">/api/health</a>.</p>
+<p>Then reload this page.</p>
 </body></html>"""
+
+
+class StrictBody(BaseModel):
+    """Request bodies: unknown fields and loose types (``"false"`` for a bool) are a 422."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class StartRunBody(StrictBody):
+    demo: StrictBool = False
 
 
 def _safe_config() -> dict[str, Any]:
@@ -70,74 +95,114 @@ def _safe_config() -> dict[str, Any]:
     }
 
 
-def create_app(*, manager: RunManager | None = None, dev: bool = False) -> FastAPI:
-    """Build the FastAPI app. ``dev=True`` enables CORS for the Vite dev server."""
-    app = FastAPI(title="RakshaQuant Web Console", version="1.0.0")
-    app.state.manager = manager or RunManager()
+def _install_error_handlers(app: FastAPI) -> None:
+    """Errors never echo exception text or request input back to the client."""
 
+    async def http_error(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, HTTPException)
+        return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code,
+                            headers=exc.headers)  # fmt: skip
+
+    async def invalid(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, RequestValidationError)
+        fields = sorted({".".join(str(p) for p in e.get("loc", ())) for e in exc.errors()})
+        return JSONResponse({"error": "invalid request", "fields": fields}, status_code=422)
+
+    async def crashed(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse({"error": "internal error"}, status_code=500)
+
+    app.add_exception_handler(HTTPException, http_error)
+    app.add_exception_handler(RequestValidationError, invalid)
+    app.add_exception_handler(Exception, crashed)
+
+
+def create_app(
+    *,
+    manager: RunManager | None = None,
+    security: WebSecurity | None = None,
+    dev: bool = False,
+    auto_start_demo: bool | None = None,
+) -> FastAPI:
+    """Build the app. ``dev=True`` enables CORS for the Vite dev server; ``auto_start_demo``
+    (when not None) starts a run of that kind once the server is up."""
+    security = security or WebSecurity.for_launch("127.0.0.1", 8000, token=new_token(), dev=dev)
+    run_manager = manager or RunManager()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if auto_start_demo is not None:
+            try:
+                await run_manager.start(demo=auto_start_demo)
+            except RunControlError as exc:
+                logger.warning("Auto-start skipped: %s", exc)
+        yield
+        await run_manager.shutdown()
+
+    app = FastAPI(title="RakshaQuant Web Console", version="2.0.0", lifespan=lifespan)
+    app.state.manager = run_manager
+    app.state.security = security
+    app.state.websockets = 0
+    _install_error_handlers(app)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(security.allowed_hosts))
     if dev:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        app.add_middleware(CORSMiddleware, allow_origins=list(DEV_ORIGINS),
+                           allow_methods=["GET", "POST"],
+                           allow_headers=["Authorization", "Content-Type"])  # fmt: skip
 
     def mgr() -> RunManager:
         return cast(RunManager, app.state.manager)
 
     @app.get("/api/health")
-    async def health() -> dict[str, Any]:
-        return {"status": "ok", "running": mgr().is_running}
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
 
-    @app.get("/api/state")
+    api = APIRouter(prefix="/api", dependencies=[Depends(require_same_origin),
+                                                 Depends(require_token)])  # fmt: skip
+
+    @api.get("/state")
     async def state() -> dict[str, Any]:
         return mgr().state()
 
-    @app.get("/api/cycles")
-    async def cycles() -> dict[str, Any]:
-        return {"cycles": mgr().state()["cycles"]}
-
-    @app.get("/api/cycles/{cycle_id}")
-    async def cycle(cycle_id: str) -> JSONResponse:
-        found = mgr().cycle(cycle_id)
-        if found is None:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse(found)
-
-    @app.get("/api/config")
+    @api.get("/config")
     async def config() -> dict[str, Any]:
         return _safe_config()
 
-    @app.post("/api/run/start")
-    async def run_start(body: dict[str, Any] | None = None) -> JSONResponse:
-        body = body or {}
+    @api.post("/run/start")
+    async def run_start(body: StartRunBody | None = None) -> JSONResponse:
         try:
-            result = await mgr().start(
-                demo=bool(body.get("demo", False)),
-                confirm_live=bool(body.get("confirmLive", False)),
-            )
+            result = await mgr().start(demo=(body or StartRunBody()).demo)
             return JSONResponse(result)
         except RunControlError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
 
-    @app.post("/api/run/stop")
+    @api.post("/run/stop")
     async def run_stop() -> JSONResponse:
         try:
             return JSONResponse(await mgr().stop())
         except RunControlError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
 
+    app.include_router(api)
+
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
-        await websocket.accept()
+        refusal = websocket_refusal(websocket, app.state.websockets)
+        if refusal is not None:  # accept only to deliver the close code; nothing is sent
+            await websocket.accept()
+            await websocket.close(code=refusal)
+            return
+        await websocket.accept(subprotocol=accepted_subprotocol(websocket))
+        app.state.websockets += 1
         try:
             async for message in mgr().subscribe():
                 await websocket.send_json(message)
         except WebSocketDisconnect:
             pass
         except Exception as exc:  # pragma: no cover - client vanished mid-send
-            logger.debug("WebSocket closed: %s", exc)
+            logger.debug("WebSocket closed: %s", type(exc).__name__)
+        finally:
+            app.state.websockets -= 1
 
     # Serve the built SPA (if present); otherwise a helpful placeholder.
     if _FRONTEND_DIST.exists():
@@ -158,23 +223,16 @@ def run_web(
     demo: bool = False,
     dev: bool = False,
     auto_start: bool = True,
+    allow_remote: bool = False,
 ) -> None:
-    """Launch the web console with uvicorn. Blocks until interrupted."""
+    """Launch the web console with uvicorn. Blocks until interrupted. The launch URL (with the
+    token) is printed once to the console and never logged."""
     import uvicorn
 
-    manager = RunManager()
-    app = create_app(manager=manager, dev=dev)
-
-    if auto_start:
-
-        @app.on_event("startup")
-        async def _auto_start() -> None:
-            try:
-                await manager.start(demo=demo)
-            except RunControlError as exc:
-                logger.warning("Auto-start skipped: %s", exc)
-
-    banner = f"http://{host}:{port}"
-    logger.info("RakshaQuant web console -> %s  (demo=%s)", banner, demo)
-    print(f"\n  RakshaQuant web console -> {banner}   (demo={demo})\n")
+    security = WebSecurity.for_launch(host, port, dev=dev, allow_remote=allow_remote)
+    app = create_app(manager=RunManager(), security=security, dev=dev,
+                     auto_start_demo=demo if auto_start else None)  # fmt: skip
+    logger.info("RakshaQuant web console on %s:%d (demo=%s)", host, port, demo)
+    print(f"\n  RakshaQuant web console -> {security.url(host, port)}\n"
+          "  (the link carries this launch's access token; it changes on every start)\n")  # fmt: skip
     uvicorn.run(app, host=host, port=port, log_level="warning")

@@ -12,13 +12,13 @@ import pytest
 os.environ.setdefault("GROQ_API_KEY", "test-key")
 os.environ.setdefault("LANGSMITH_API_KEY", "test-key")
 
-from fastapi.testclient import TestClient  # noqa: E402
 
 from src.dashboard.cli import TradingStats  # noqa: E402
 from src.live.recorder import CycleRecorder, env_badge, snapshot_from_stats  # noqa: E402
 from src.live.views import StreamSessionView  # noqa: E402
 from src.web.run_manager import RunControlError, RunManager, resolve_effective_mode  # noqa: E402
 from src.web.server import create_app  # noqa: E402
+from tests.web_helpers import PROTOCOLS, SECURITY, WS_URL, authed  # noqa: E402
 
 
 class _CollectSink:
@@ -169,8 +169,8 @@ async def test_run_manager_subscribe_sends_init_frame():
 
 
 def test_rest_endpoints():
-    client = TestClient(create_app())
-    assert client.get("/api/health").json() == {"status": "ok", "running": False}
+    client = authed(create_app(security=SECURITY))
+    assert client.get("/api/health").json() == {"status": "ok"}  # liveness only
 
     state = client.get("/api/state").json()
     assert state["running"] is False and state["cycles"] == []
@@ -178,13 +178,11 @@ def test_rest_endpoints():
     cfg = client.get("/api/config").json()
     assert "env" in cfg and "allowLiveOrders" in cfg and "effectiveMode" in cfg
 
-    assert client.get("/api/cycles").json() == {"cycles": []}
-    assert client.get("/api/cycles/nope").status_code == 404
-
 
 def test_websocket_init_contract():
-    client = TestClient(create_app())
-    with client.websocket_connect("/ws") as ws:
+    client = authed(create_app(security=SECURITY))
+    with client.websocket_connect(WS_URL, subprotocols=PROTOCOLS) as ws:
+        assert ws.accepted_subprotocol == "rq.v1"
         msg = ws.receive_json()
         assert msg["type"] == "init"
         assert msg["running"] is False
@@ -194,7 +192,7 @@ def test_websocket_init_contract():
 def test_run_stop_readonly_returns_409(monkeypatch):
     # The stop endpoint must translate RunControlError to 409, not surface a 500.
     monkeypatch.setenv("RAKSHAQUANT_WEB_READONLY", "1")
-    client = TestClient(create_app())
+    client = authed(create_app(security=SECURITY))
     res = client.post("/api/run/stop")
     assert res.status_code == 409
     assert "error" in res.json()

@@ -125,7 +125,8 @@ class RunManager:
         """Monitor-only deployment: run-control (start AND stop) is disabled from the UI."""
         return os.getenv("RAKSHAQUANT_WEB_READONLY", "").lower() in ("1", "true", "yes")
 
-    async def start(self, *, demo: bool = False, confirm_live: bool = False) -> dict[str, Any]:
+    async def start(self, *, demo: bool = False) -> dict[str, Any]:
+        """Start a paper run (the v2 engine has no broker path: nothing here can go live)."""
         if self.is_running:
             raise RunControlError("A run is already active.")
         if self._read_only():
@@ -133,11 +134,6 @@ class RunManager:
 
         settings = get_settings()
         effective = resolve_effective_mode(settings)
-
-        if not demo and effective == "live" and not confirm_live:
-            raise RunControlError(
-                "Starting a LIVE run requires explicit confirmation (confirmLive=true)."
-            )
 
         from src.dashboard.cli import TradingStats
 
@@ -157,6 +153,10 @@ class RunManager:
         # action too, so the browser cannot issue it (the operator stops the server process).
         if self._read_only():
             raise RunControlError("Run-control is disabled (RAKSHAQUANT_WEB_READONLY set).")
+        return await self.shutdown()
+
+    async def shutdown(self) -> dict[str, Any]:
+        """Stop the run (server shutdown; not subject to read-only)."""
         if not self.is_running or self._task is None:
             return {"running": False}
         if self._stop_event is not None:
@@ -177,9 +177,10 @@ class RunManager:
             await run_paper(get_settings(), view, stop=self._stop_event)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - surfaced to the UI, never crashes server
+        except Exception:  # pragma: no cover - surfaced to the UI, never crashes server
             logger.exception("Trading session crashed")
-            self._broadcast({"type": "error", "data": {"message": str(exc)}})
+            self._broadcast({"type": "error", "data": {"message": "the run stopped on an error "
+                                                                  "(see the logs)"}})  # fmt: skip
 
     # ── Demo generator (no market data / API keys required) ─────────────────────────
 
@@ -197,9 +198,10 @@ class RunManager:
                 await self._demo_loop(view)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - demo must never crash the server
+        except Exception:  # pragma: no cover - demo must never crash the server
             logger.exception("Demo session crashed")
-            self._broadcast({"type": "error", "data": {"message": str(exc)}})
+            self._broadcast({"type": "error", "data": {"message": "the demo stopped on an error "
+                                                                  "(see the logs)"}})  # fmt: skip
 
     async def _demo_loop(self, view: StreamSessionView) -> None:
         assert self._stop_event is not None

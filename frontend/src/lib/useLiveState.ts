@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnState, CycleTrace, Snapshot, WsMessage } from "../types";
+import { wsProtocols } from "./auth";
 
 interface LiveState {
   snapshot: Snapshot | null;
@@ -33,7 +34,7 @@ export function useLiveState(): LiveState {
     const url = `${proto}://${window.location.host}/ws`;
     let ws: WebSocket;
     try {
-      ws = new WebSocket(url);
+      ws = new WebSocket(url, wsProtocols());
     } catch {
       scheduleReconnect();
       return;

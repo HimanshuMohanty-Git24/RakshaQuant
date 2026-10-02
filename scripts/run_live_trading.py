@@ -65,6 +65,7 @@ def _run_web(args: argparse.Namespace) -> int:
         demo=args.demo,
         dev=args.dev,
         auto_start=not args.no_auto_start,
+        allow_remote=args.allow_remote,
     )
     return ExitCode.OK
 
@@ -91,6 +92,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dev",
         action="store_true",
         help="Web mode: enable CORS for the Vite dev server (localhost:5173).",
+    )
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Web mode: allow binding --host to a non-loopback address (reachable from other "
+        "machines; the access token is still required).",
     )
     parser.add_argument(
         "--no-auto-start",
