@@ -238,6 +238,26 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Typed decision models (plan M7): Laya (local) -> Jev (TypeSafe)
+    # ===========================================
+    decision_laya_enabled: bool = Field(
+        default=True, description="Use local Laya when the decision-local extra is installed"
+    )
+    decision_laya_checkpoint: Literal["english", "multilingual", "typed-decisions"] = Field(
+        default="multilingual", description="Fastest on CPU (docs/plan/decision-model-benchmark.md)"
+    )
+    typesafe_api_key: SecretStr | None = Field(default=None, description="Jev (TypeSafe) key")
+    typesafe_model: str = Field(default="jev-1.13.0", description="Pinned Jev model")
+    decision_escalate_low: float = Field(default=0.35, ge=0, le=1)
+    decision_escalate_high: float = Field(default=0.65, ge=0, le=1)
+    decision_shadow_pct: float = Field(
+        default=0.20,
+        ge=0,
+        le=1,
+        description="Laya-only states also sent to Jev to measure agreement",
+    )
+
+    # ===========================================
     # Broker API - DhanHQ (Optional for free tier)
     # ===========================================
     dhan_client_id: str | None = Field(

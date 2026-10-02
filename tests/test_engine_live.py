@@ -15,6 +15,7 @@ from src.domain.clock import ReplayClock
 from src.domain.types import MarketDataSource
 from src.engine.demo import DEMO_SYMBOLS, demo_day, demo_instruments, pace, synthetic_day
 from src.live.views import SessionView
+from src.marketdata.announcements import PollStats
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
 from src.reference.instruments import InstrumentSet
 from src.reference.refresh import ReferenceData
@@ -137,8 +138,9 @@ async def test_the_paper_run_wires_reference_data_yfinance_and_the_tape(
             seen["announced"] = sorted(i.key for i in instruments)
             seen["url"] = url
 
-        async def poll(self, *, force: bool = False) -> None:
+        async def poll(self, *, force: bool = False) -> PollStats:
             polls.append((clock.now(), force))
+            return PollStats(ok=True)
 
     monkeypatch.setattr(live, "AnnouncementIngestor", FakeAnnouncements)
     paper = env(settings, "paper", tmp_path).model_copy(update={"announcements_enabled": True})

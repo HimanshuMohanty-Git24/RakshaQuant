@@ -19,9 +19,15 @@ from decimal import Decimal
 from src.config.errors import ConfigError
 from src.config.limits import load_risk_limits
 from src.config.settings import Settings
+from src.decision_models.setup import build_cascade
+from src.decision_models.tasks.announcements import (
+    AnnouncementPipeline,
+    EventClassifier,
+    unclassified,
+)
 from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, ReplayClock, WallClock, now_ist
-from src.domain.events import AnnouncementReceived
+from src.domain.events import Alert, AnnouncementReceived
 from src.domain.types import Instrument
 from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
 from src.engine.runner import Engine, EngineConfig, build_engine, held_instruments
@@ -89,14 +95,27 @@ def _announcements(
     clock: Clock,
     sink: StoreSink,
     instruments: dict[str, Instrument],
-) -> AnnouncementIngestor | None:
+) -> AnnouncementPipeline | None:
     if not settings.announcements_enabled:
         return None
-    stored = [e.payload for e in store.read(types=["AnnouncementReceived"])]
-    seen, newest = watermark(p for p in stored if isinstance(p, AnnouncementReceived))
+    stored = [p for e in store.read(types=["AnnouncementReceived"])
+              if isinstance(p := e.payload, AnnouncementReceived)]  # fmt: skip
+    seen, newest = watermark(stored)
     equities = [i for i in instruments.values() if i.series == "EQ"]
-    return AnnouncementIngestor(instruments=equities, clock=clock, sink=sink,
-                                url=settings.announcements_url, seen=seen, last_newest=newest)  # fmt: skip
+    ingestor = AnnouncementIngestor(instruments=equities, clock=clock, sink=sink,
+                                    url=settings.announcements_url, seen=seen,
+                                    last_newest=newest)  # fmt: skip
+    cascade = build_cascade(settings, sink=sink)
+    if cascade is None:
+        logger.warning("no decision model (laya not installed, no TYPESAFE_API_KEY): "
+                       "announcements are stored but not classified")  # fmt: skip
+        sink.emit(Alert(level="WARNING", key="decision_models_unavailable",
+                        message="announcements stored, not classified"), source="engine")  # fmt: skip
+        return AnnouncementPipeline(ingestor=ingestor, classifier=None)
+    classified = [r["event_id"] for r in store.query("SELECT event_id FROM typed_events")]
+    classifier = EventClassifier(cascade=cascade, sink=sink, clock=clock)
+    return AnnouncementPipeline(ingestor=ingestor, classifier=classifier,
+                                backlog=unclassified(stored, classified))  # fmt: skip
 
 
 async def run_demo(

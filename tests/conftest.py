@@ -51,6 +51,7 @@ PLACEHOLDER_ENV = {
     "GROQ_API_KEY": "test-groq-key",
     "DATABASE_URL": "sqlite:///:memory:",
     "ANNOUNCEMENTS_ENABLED": "false",  # no test polls NSE; wiring tests opt in with a fake
+    "DECISION_LAYA_ENABLED": "false",  # no test loads the 1.5 GB local model
 }
 
 
