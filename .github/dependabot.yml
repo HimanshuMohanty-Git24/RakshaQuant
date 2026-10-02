@@ -1,11 +1,16 @@
 # Weekly dependency updates, one grouped PR per ecosystem. Dependabot only opens PRs: during
 # the month run, merging anything that touches the trading path is subject to the freeze rule.
+# Major versions are ignored for Python and npm (OD-12): they need a deliberate migration
+# (React 19, react-router 8, Tailwind 4 and TypeScript 7 broke the first grouped PR, #23).
 version: 2
 updates:
   - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       python:
         patterns: ["*"]
@@ -14,6 +19,9 @@ updates:
     directory: "/frontend"
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend:
         patterns: ["*"]
