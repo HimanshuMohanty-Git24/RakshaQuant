@@ -27,6 +27,7 @@ from src.config.limits import load_risk_limits
 from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, ReplayClock, WallClock
 from src.domain.events import ControlCommand
+from src.engine.demo import DEMO_TAPE
 from src.engine.live import STOP_GRACE_S, demo_store_path
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
 from src.live.recorder import env_badge
@@ -120,6 +121,7 @@ class RunManager:
                 clock=clock,
                 reports_dir=settings.state_dir / "reports" if demo else settings.reports_dir,
                 demo=demo, read_only=self._read_only(),
+                tape_dir=DEMO_TAPE if demo else settings.tape_dir,  # what the demo replays
             )  # fmt: skip
         return self._queries
 

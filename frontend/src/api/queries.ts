@@ -36,7 +36,7 @@ export const INVALIDATES: Record<string, string[]> = {
   risk: ["risk", "summary"],
   ai: ["ai", "decision"],
   market: ["typed", "bars"],
-  system: ["system"],
+  system: ["system", "alerts"],
 };
 
 /** Collects the topics of applied events and invalidates their queries at most once a second. */

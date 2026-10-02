@@ -12,23 +12,29 @@ export function Dialog({
   title,
   description,
   children,
+  wide = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: ReactNode;
   children: ReactNode;
+  wide?: boolean;
 }) {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 bg-overlay" />
-        <RadixDialog.Content className="fixed left-1/2 top-[20%] w-[440px] max-w-[92vw] -translate-x-1/2 rounded border border-line-strong bg-bg-1 p-4 shadow-popover">
+        <RadixDialog.Content
+          className={`fixed left-1/2 -translate-x-1/2 rounded border border-line-strong bg-bg-1 p-4 shadow-popover ${
+            wide ? "top-[6%] flex max-h-[88vh] w-[920px] max-w-[94vw] flex-col" : "top-[20%] w-[440px] max-w-[92vw]"
+          }`}
+        >
           <RadixDialog.Title className="text-sm font-medium text-fg-0">{title}</RadixDialog.Title>
           <RadixDialog.Description className="mt-1 text-xs text-fg-1">
             {description ?? " "}
           </RadixDialog.Description>
-          <div className="mt-3">{children}</div>
+          <div className={wide ? "mt-3 min-h-0 flex-1 overflow-auto" : "mt-3"}>{children}</div>
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>

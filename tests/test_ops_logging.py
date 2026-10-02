@@ -140,3 +140,16 @@ def test_configure_and_close_restore_the_root_logger(tmp_path):
     assert logging.getLogger("yfinance").level >= logging.WARNING
     handle.close()
     assert root.handlers == before_handlers and root.level == before_level
+
+
+def test_the_windows_proactor_reset_noise_is_dropped_and_nothing_else():
+    from src.ops.logging_config import ProactorResetFilter
+
+    def record(msg: str) -> logging.LogRecord:
+        return logging.LogRecord("asyncio", logging.ERROR, __file__, 1, msg, None, None)
+
+    f = ProactorResetFilter()
+    assert not f.filter(record("Exception in callback _ProactorBasePipeTransport."
+                               "_call_connection_lost(None)"))  # fmt: skip
+    assert f.filter(record("Task exception was never retrieved"))
+    assert f.filter(record("Exception in callback something_else()"))

@@ -172,6 +172,7 @@ class Queries:
         reports_dir: Path,
         demo: bool = False,
         read_only: bool = False,
+        tape_dir: Path | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -182,6 +183,7 @@ class Queries:
         self.reports_dir = reports_dir
         self.demo = demo
         self.read_only = read_only
+        self.tape_dir = tape_dir if tape_dir is not None else Path(settings.tape_dir)
 
     @property
     def books(self) -> list[str]:
@@ -738,7 +740,7 @@ class Queries:
 
     def tape_bars(self, instrument_key: str, *, adjusted: bool) -> list[Bar]:
         """The instrument's daily bars from the newest taped history (no engine running)."""
-        root = Path(self.settings.tape_dir)
+        root = self.tape_dir
         if not root.is_dir():
             return []
         for day_dir in sorted((d for d in root.iterdir() if d.is_dir()), reverse=True):
@@ -933,7 +935,7 @@ class Queries:
         return out
 
     def _tape_quotes(self) -> dict[str, Quote]:
-        root = Path(self.settings.tape_dir)
+        root = self.tape_dir
         if not root.is_dir():
             return {}
         for day_dir in sorted((d for d in root.iterdir() if d.is_dir()), reverse=True):

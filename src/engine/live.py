@@ -35,7 +35,7 @@ from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, ReplayClock, WallClock, now_ist
 from src.domain.events import Alert, AnnouncementReceived
 from src.domain.types import Instrument
-from src.engine.demo import DEMO_DAY, DEMO_TAPE, demo_instruments, pace
+from src.engine.demo import DEMO_DAY, DEMO_TAPE, ScriptedVeto, demo_instruments, pace
 from src.engine.runner import Engine, build_engine, held_instruments
 from src.engine.view_model import StatsProjector
 from src.evaluation.books import build_advisors, engine_config
@@ -196,6 +196,9 @@ async def run_demo(
         advisors = build_advisors(experiment, sink=sink, clock=clock, calendar=calendar,
                                   cascade=None, router=None, events=engine.events_for,
                                   regime=lambda: engine.regime)  # fmt: skip
+        for book_id, spec in experiment.books.items():  # no model runs in the demo: script it
+            if spec.advisor == "typed_veto":
+                advisors[book_id] = ScriptedVeto(book_id=book_id, sink=sink)
         for book_id, advisor in advisors.items():
             engine.set_advisor(book_id, advisor)
         engine.reporter = make_reporter(engine, experiment, settings,

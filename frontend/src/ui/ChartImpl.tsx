@@ -1,5 +1,5 @@
-// lightweight-charts behind a small declarative API: candles (+ volume), up to three lines,
-// and markers for entries, exits and events (§6.4). Loaded lazily through ./Chart.
+// lightweight-charts behind a small declarative API: candles (+ volume), lines in at most three
+// colours (a dashed benchmark may reuse one), and entry/exit/event markers (§6.4). Lazy (./Chart).
 
 import {
   CandlestickSeries,
@@ -7,11 +7,14 @@ import {
   createSeriesMarkers,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   type IChartApi,
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
+
+import { inrCompact, pct, price } from "../lib/format";
 
 export interface Candle {
   time: string; // YYYY-MM-DD
@@ -26,6 +29,7 @@ export interface ChartLine {
   name: string;
   points: { time: string; value: number }[];
   tone?: "accent" | "neutral" | "warn";
+  dashed?: boolean; // a benchmark: same palette, different stroke
 }
 
 export interface ChartMarker {
@@ -35,6 +39,8 @@ export interface ChartMarker {
 }
 
 export interface ChartProps {
+  /** How the price axis reads: rupees (grouped en-IN), percent, or a plain number. */
+  axis?: "inr" | "pct" | "price";
   candles?: Candle[];
   lines?: ChartLine[];
   markers?: ChartMarker[];
@@ -46,7 +52,16 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
 }
 
-export default function ChartImpl({ candles, lines = [], markers = [], height = 280, label }: ChartProps) {
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Session dates arrive as business days; label them like the rest of the UI (05 Oct). */
+function dayLabel(time: Time): string {
+  if (typeof time === "object") return `${String(time.day).padStart(2, "0")} ${MONTHS[time.month - 1]}`;
+  if (typeof time === "string") return dayLabel({ year: +time.slice(0, 4), month: +time.slice(5, 7), day: +time.slice(8, 10) });
+  return new Date(time * 1000).toISOString().slice(0, 10);
+}
+
+export default function ChartImpl({ candles, lines = [], markers = [], height = 280, label, axis = "price" }: ChartProps) {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
 
@@ -66,8 +81,13 @@ export default function ChartImpl({ candles, lines = [], markers = [], height = 
       },
       grid: { vertLines: { color: grid }, horzLines: { color: grid } },
       rightPriceScale: { borderColor: grid },
-      timeScale: { borderColor: grid },
+      timeScale: { borderColor: grid, tickMarkFormatter: (t: Time) => dayLabel(t) },
       crosshair: { mode: 0 },
+      localization: {
+        locale: "en-IN",
+        priceFormatter: (v: number) => (axis === "pct" ? pct(v) : axis === "inr" ? inrCompact(v) : price(v)),
+        timeFormatter: (t: Time) => dayLabel(t),
+      },
     });
     chart.current = api;
     const up = cssVar("--up");
@@ -87,6 +107,8 @@ export default function ChartImpl({ candles, lines = [], markers = [], height = 
           priceScaleId: "volume",
           priceFormat: { type: "volume" },
           color: cssVar("--border-strong"),
+          lastValueVisible: false,
+          priceLineVisible: false,
         });
         api.priceScale("volume").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
         volume.setData(candles.map((c) => ({ time: c.time as Time, value: c.volume ?? 0 })));
@@ -108,8 +130,13 @@ export default function ChartImpl({ candles, lines = [], markers = [], height = 
       }
     }
     const tones = { accent: cssVar("--accent"), neutral: cssVar("--text-1"), warn: cssVar("--warn") };
-    for (const line of lines.slice(0, 3)) {
-      const series = api.addSeries(LineSeries, { color: tones[line.tone ?? "accent"], lineWidth: 2 });
+    for (const line of lines.slice(0, 4)) {
+      const series = api.addSeries(LineSeries, {
+        color: tones[line.tone ?? "accent"],
+        lineWidth: 2,
+        lineStyle: line.dashed ? LineStyle.Dashed : LineStyle.Solid,
+        title: line.name,
+      });
       series.setData(line.points.map((p) => ({ time: p.time as Time, value: p.value })));
     }
     api.timeScale().fitContent();
@@ -117,7 +144,7 @@ export default function ChartImpl({ candles, lines = [], markers = [], height = 
       api.remove();
       chart.current = null;
     };
-  }, [candles, lines, markers, height]);
+  }, [candles, lines, markers, height, axis]);
 
   return <div ref={host} role="img" aria-label={label} style={{ height }} />;
 }

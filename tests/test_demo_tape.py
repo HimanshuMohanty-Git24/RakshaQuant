@@ -78,3 +78,24 @@ async def test_after_a_demo_the_api_keeps_the_demo_s_clock(settings, tmp_path):
         assert all(b.trades_today >= 1 and b.valuation == "last_mark" for b in summary.books)
     finally:
         manager.close_reader()
+
+
+async def test_the_demo_shows_a_veto_that_avoided_a_loss(settings, tmp_path):
+    """No model runs in the demo: the typed-veto book (B) vetoes TCS by script, and says so."""
+    demo = env(settings, "demo", tmp_path)
+    assert await live.run_demo(demo, RecordingView(), step_s=300.0, wall_s=0.0) == 0
+    with EventStore(live.demo_store_path(demo)) as store:
+        trades = {(r["book_id"], r["instrument_key"]): r["net_pnl"]
+                  for r in store.query("SELECT book_id, instrument_key, net_pnl FROM trades")}  # fmt: skip
+        verdicts = [e.payload for e in store.read(types=["AdvisorVerdict"], book_id="B")]
+    assert ("A", "NSE:EQ:TCS") in trades and float(trades[("A", "NSE:EQ:TCS")]) < 0  # a loser
+    assert ("B", "NSE:EQ:TCS") not in trades and ("B", "NSE:EQ:INFY") in trades
+    veto = next(v for v in verdicts if v.verdict.value == "VETO")
+    assert veto.model == "demo-script" and "scripted demo veto" in veto.reasons[0].claim
+    manager = RunManager(demo)  # after the run: the API reads the tape the demo replayed
+    try:
+        watch = {w.symbol: w for w in manager.queries().watchlist(None)}
+        assert len(watch) == 8 and watch["TCS"].ltp is not None
+        assert "momentum BUY" in watch["TCS"].signals_today
+    finally:
+        manager.close_reader()

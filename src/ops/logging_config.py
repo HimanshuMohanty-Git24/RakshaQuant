@@ -49,6 +49,17 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\beyJ[\w-]+\.[\w-]+\.[\w-]+"), "[REDACTED]"),
 )
 
+
+class ProactorResetFilter(logging.Filter):
+    """Drops one known-harmless asyncio error on Windows: a client (a browser tab) resetting its
+    connection raises inside ``_ProactorBasePipeTransport._call_connection_lost``."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not str(record.msg).startswith(
+            "Exception in callback _ProactorBasePipeTransport._call_connection_lost"
+        )
+
+
 _NOISY_LOGGERS = ("httpx", "httpx2", "httpcore", "urllib3", "yfinance", "peewee", "filelock")
 
 
@@ -198,4 +209,7 @@ def configure_logging(
         noisy = logging.getLogger(name)
         handle.previous_levels[name] = noisy.level
         noisy.setLevel(max(logging.WARNING, noisy.level))
+    asyncio_logger = logging.getLogger("asyncio")
+    if not any(isinstance(f, ProactorResetFilter) for f in asyncio_logger.filters):
+        asyncio_logger.addFilter(ProactorResetFilter())
     return handle
