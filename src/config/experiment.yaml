@@ -1,0 +1,19 @@
+# The month-1 paper experiment (plan §7, M8.1; audit §Y). Books share market data, features,
+# signals and typed events; each has its own broker state, positions, risk state and kill
+# switches. Trading-path config is frozen for the month (audit §Y.1).
+experiment: month1-2026-10
+universe: nifty50          # the pinned snapshot date is recorded at start
+capital_inr: 1000000       # per book
+product: CNC
+direction: long_only
+entry_window: "09:20-09:45"
+strategies:
+  enabled: [momentum, mean_reversion]
+  shadow: [breakout, trend_following]
+policy: {k_stop_atr: 2.0, k_target_atr: 3.0, max_hold_days: 10, partial_at_r: null}
+books:
+  A: {advisor: none}
+  B: {advisor: typed_veto, threshold: 0.6}
+  C: {advisor: llm_veto, role: veto, threshold: 0.6}
+benchmark: "^NSEI"
+learning_injection: false  # nightly lessons are stored, never fed back (audit F-20)

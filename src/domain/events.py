@@ -291,6 +291,31 @@ class AdvisorFallback(EventPayload):
     error: str | None = None
 
 
+class Disposition(StrEnum):
+    """What one book did with one signal (plan M8.3)."""
+
+    SHADOW_STRATEGY = "shadow_strategy"  # recorded only (plan D8)
+    REGIME_GATED = "regime_gated"
+    POLICY_SKIPPED = "policy_skipped"  # e.g. long-only, no ATR
+    VETOED = "vetoed"  # the book's advisor
+    RISK_REJECTED = "risk_rejected"  # the RiskEngine (or reduce-only/duplicate rules)
+    SUBMITTED = "submitted"
+    BROKER_REJECTED = "broker_rejected"
+    UNKNOWN = "unknown"  # the order's outcome is not yet known
+
+
+class SignalDisposition(EventPayload):
+    event_type = "SignalDisposition"
+    signal_id: NonEmptyStr
+    decision_id: NonEmptyStr
+    book_id: NonEmptyStr
+    instrument_key: NonEmptyStr
+    strategy: NonEmptyStr
+    disposition: Disposition
+    detail: str = ""
+    client_order_id: str | None = None
+
+
 class OrderIntentProposed(EventPayload):
     event_type = "OrderIntentProposed"
     intent: OrderIntent
@@ -605,6 +630,7 @@ _PAYLOADS: tuple[type[EventPayload], ...] = (
     AdvisorVerdict,
     AdvisorFallback,
     OrderIntentProposed,
+    SignalDisposition,
     # risk
     RiskDecision,
     KillSwitchChanged,

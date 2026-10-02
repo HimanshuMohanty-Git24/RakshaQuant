@@ -1,30 +1,32 @@
 """
-The engine runner (plan M5.6): one book's trading day, end to end, replacing the legacy
-``run_trading_session`` loop. The same code runs live (wall clock, YFinance) and in replay
-(ReplayClock, a recorded tape).
+The engine runner (plan M5.6, M8.1-8.2): the trading day, end to end, for one or more paired
+**books**. The same code runs live (wall clock, YFinance) and in replay (ReplayClock, a tape).
 
-:func:`build_engine` wires the v2 components on one event store:
-``MarketService → DecisionEngine → OMS (RiskGate) → SimulatedBroker → ExitManager``, with the
-DailyRiskTracker, kill switches, Flattener and RiskMonitor around them. On a restart the OMS is
-restored from the store's events, and every stateful component reloads its own kv state, so a
-CNC book carries over from day to day.
+:func:`build_engine` wires the v2 components on one event store. **Shared** by every book: the
+:class:`MarketService` (quotes, history, features), the signals, the regime, the announcements
+and the session lifecycle. **Per book** (a :class:`Book`): its own ``SimulatedBroker`` state,
+PositionBook/OMS behind its own RiskGate, ExitManager, DailyRiskTracker, kill switches,
+Flattener and RiskMonitor - so books A (no advisor), B (typed veto) and C (LLM veto) never share
+cash, capacity or limits. One ``decision_id`` per signal is shared across books; ``book_id`` is
+on every event. On a restart each book's OMS is restored from the store's events and every
+stateful component reloads its own kv state, so CNC books carry over from day to day.
 
 :meth:`Engine.run` drives the session state machine (:class:`SessionLifecycle`):
 
-* **PRE_OPEN** - load the day's history (universe ∪ held ∪ NIFTY), compute the regime, start the
-  risk day, reconcile with the broker.
+* **PRE_OPEN** - load the day's history (universe ∪ held ∪ NIFTY), compute the regime, start each
+  book's risk day, reconcile each book, backfill announcements.
 * **OPEN / ENTRY_WINDOW / MONITOR** (whichever comes first, so a late start still does it) - set
-  the fill model's liquidity, re-place the exits' DAY stops (trailing, time exits), and start the
-  market-data, monitor and reconciler loops.
-* **ENTRY_WINDOW** - one decision cycle.
-* **CLOSE** - stop the loops, expire live DAY orders, a last risk tick.
-* **REPORT** - the day's mark-to-market (the full daily report is M8).
+  the fill model's liquidity, re-place each book's DAY stops (trailing, time exits), and start the
+  market-data, per-book monitor and reconciler, and announcements loops.
+* **ENTRY_WINDOW** - one decision cycle (every book).
+* **CLOSE** - stop the loops, expire live DAY orders, a last risk tick per book.
+* **REPORT** - each book's mark-to-market (the full daily report: :mod:`src.evaluation`).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -34,7 +36,7 @@ from src.brokers.simulated.broker import SimulatedBroker
 from src.brokers.simulated.costs import NSECostSchedule
 from src.brokers.simulated.fill_model import FillModelConfig, MarketContext
 from src.config.limits import RiskLimits
-from src.decision.engine import CycleResult, DecisionConfig, DecisionEngine
+from src.decision.engine import Advisor, BookTarget, CycleResult, DecisionConfig, DecisionEngine
 from src.domain.calendar import NSECalendar
 from src.domain.clock import Clock
 from src.domain.events import Alert, MarkToMarket, OrderSubmitted
@@ -77,7 +79,7 @@ _IN_SESSION = frozenset({SessionState.OPEN, SessionState.ENTRY_WINDOW, SessionSt
 
 
 class AnnouncementSource(Protocol):
-    """Polls corporate announcements (and, from M7.7, classifies them)."""
+    """Polls corporate announcements and classifies them."""
 
     @property
     def interval_s(self) -> float: ...
@@ -88,16 +90,37 @@ class AnnouncementSource(Protocol):
 @dataclass(frozen=True)
 class EngineConfig:
     environment: str
-    book_id: str = "A"
-    starting_cash: Decimal = Decimal(1_000_000)
+    books: tuple[str, ...] = ("A",)
+    starting_cash: Decimal = Decimal(1_000_000)  # per book
     halt_file: Path | None = None
     costs: NSECostSchedule = field(default_factory=NSECostSchedule.from_yaml)
     fill_model: FillModelConfig = field(default_factory=FillModelConfig)
     lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
     policy: TradePolicyConfig = field(default_factory=TradePolicyConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
-    decision: DecisionConfig | None = None  # default: the book, with enabled = the risk limits'
+    decision: DecisionConfig | None = None  # default: enabled = the risk limits' strategies
     event_rules: EventRules = field(default_factory=EventRules.from_yaml)
+
+    def __post_init__(self) -> None:
+        if not self.books or len(set(self.books)) != len(self.books):
+            raise ValueError("books must be non-empty and distinct")
+
+    @property
+    def book_id(self) -> str:
+        """The primary book (the first)."""
+        return self.books[0]
+
+
+@dataclass
+class Book:
+    book_id: str
+    broker: SimulatedBroker
+    oms: OMS
+    gate: RiskGate
+    exits: ExitManager
+    tracker: DailyRiskTracker
+    switches: KillSwitchRegistry
+    monitor: RiskMonitor
 
 
 @dataclass
@@ -108,13 +131,7 @@ class Engine:
     store: EventStore
     sink: StoreSink
     market: MarketService
-    broker: SimulatedBroker
-    oms: OMS
-    gate: RiskGate
-    exits: ExitManager
-    tracker: DailyRiskTracker
-    switches: KillSwitchRegistry
-    monitor: RiskMonitor
+    books: dict[str, Book]
     decision: DecisionEngine
     lifecycle: SessionLifecycle
     tasks: TaskGroup
@@ -123,24 +140,71 @@ class Engine:
     cycles: list[CycleResult] = field(default_factory=list)
     _session_started: bool = False
 
+    # -- the primary book (single-book callers: the CLI/web view model, tests) -------------------
+
+    @property
+    def primary(self) -> Book:
+        return self.books[self.config.book_id]
+
+    @property
+    def broker(self) -> SimulatedBroker:
+        return self.primary.broker
+
+    @property
+    def oms(self) -> OMS:
+        return self.primary.oms
+
+    @property
+    def gate(self) -> RiskGate:
+        return self.primary.gate
+
+    @property
+    def exits(self) -> ExitManager:
+        return self.primary.exits
+
+    @property
+    def tracker(self) -> DailyRiskTracker:
+        return self.primary.tracker
+
+    @property
+    def switches(self) -> KillSwitchRegistry:
+        return self.primary.switches
+
+    @property
+    def monitor(self) -> RiskMonitor:
+        return self.primary.monitor
+
+    def set_advisor(self, book_id: str, advisor: Advisor | None) -> None:
+        self.decision.books[book_id].advisor = advisor
+
+    def events_for(self, instrument_key: str) -> list[TypedEvent]:
+        """An instrument's classified announcements (for Book B's typed veto)."""
+        rows = self.store.query(
+            "SELECT payload FROM typed_events WHERE instrument_key = ?", (instrument_key,)
+        )
+        return [TypedEvent.model_validate_json(r["payload"]) for r in rows]
+
     # -- the day -------------------------------------------------------------------------------
 
     async def run(self) -> int:
-        await self.oms.start()
+        for book in self.books.values():
+            await book.oms.start()
         try:
             return await self.lifecycle.run()
         finally:
             await self.tasks.stop()
-            await self.oms.stop()
+            for book in self.books.values():
+                await book.oms.stop()
 
     async def on_pre_open(self, schedule: Schedule) -> None:
         day = schedule.day
         previous = self.calendar.previous_trading_day(day)
         await self.market.load_history(day, previous)
         self.regime = self._compute_regime(day)
-        self.monitor.start_day()
-        result = await self.oms.reconcile()
-        self.gate.flags.recon_drift = not result.in_sync
+        for book in self.books.values():
+            book.monitor.start_day()
+            result = await book.oms.reconcile()
+            book.gate.flags.recon_drift = not result.in_sync
         if self.announcements is not None:
             try:  # the overnight backfill; a feed outage never blocks the session
                 await self.announcements_step(force=True)
@@ -160,10 +224,12 @@ class Engine:
             self.cycles.append(await self.decision.run_cycle(universe, regime=self.regime))
         elif state is SessionState.CLOSE:
             await self.tasks.stop()
-            self.broker.expire_session(self.clock.now())
-            await self.monitor.tick()
+            for book in self.books.values():
+                book.broker.expire_session(self.clock.now())
+                await book.monitor.tick()
         elif state is SessionState.REPORT:
-            self._report()
+            for book in self.books.values():
+                self._report(book)
 
     async def _open_session(self, schedule: Schedule) -> None:
         market = self.market
@@ -179,21 +245,18 @@ class Engine:
             if f.atr_14:
                 atr[key] = Decimal(str(f.atr_14))
             closes[key] = Decimal(str(f.close))
-        self.broker.set_market_context(contexts)
+        for book in self.books.values():
+            book.broker.set_market_context(contexts)
         await market.poll()  # the first quotes of the day, before any exit is re-placed
-        await self.exits.on_session_start(schedule.day, atr=atr, closes=closes)
-
-        async def monitor_step() -> None:
-            await self.oms.resolve_unknown()
-            await self.monitor.tick()
-
-        async def reconcile_step() -> None:
-            result = await self.oms.reconcile()
-            self.gate.flags.recon_drift = not result.in_sync
+        for book in self.books.values():
+            await book.exits.on_session_start(schedule.day, atr=atr, closes=closes)
 
         self.tasks.start(MARKET_DATA, market.poll, lambda: market.next_delay_s)
-        self.tasks.start(MONITOR, monitor_step, lambda: MONITOR_INTERVAL_S)
-        self.tasks.start(RECONCILER, reconcile_step, lambda: RECONCILE_INTERVAL_S)
+        for book in self.books.values():
+            self.tasks.start(f"{MONITOR}:{book.book_id}", _monitor_step(book),
+                             lambda: MONITOR_INTERVAL_S)  # fmt: skip
+            self.tasks.start(f"{RECONCILER}:{book.book_id}", _reconcile_step(book),
+                             lambda: RECONCILE_INTERVAL_S)  # fmt: skip
         announcements = self.announcements
         if announcements is not None:
             self.tasks.start(ANNOUNCEMENTS, self.announcements_step,
@@ -204,13 +267,19 @@ class Engine:
         if self.announcements is None:
             return
         events = await self.announcements.poll(force=force)
-        held = {p.instrument_key for p in open_positions(self.oms.book, self.clock.now())}
+        now = self.clock.now()
+        holders: dict[str, list[str]] = {}
+        for book in self.books.values():
+            for p in open_positions(book.oms.book, now):
+                holders.setdefault(p.instrument_key, []).append(book.book_id)
         for event in events:
-            if event.instrument_key in held and self.config.event_rules.is_held_alert(event):
+            books = holders.get(event.instrument_key)
+            if books and self.config.event_rules.is_held_alert(event):
                 self.sink.emit(
                     Alert(level="CRITICAL", key=f"held_adverse_event:{event.instrument_key}",
-                          message=f"held {event.instrument_key}: {event.direction} "
-                                  f"{event.materiality} event - {event.title[:160]}"),
+                          message=f"held {event.instrument_key} (books {', '.join(books)}): "
+                                  f"{event.direction} {event.materiality} event - "
+                                  f"{event.title[:160]}"),
                     source="engine",
                 )  # fmt: skip
 
@@ -231,24 +300,40 @@ class Engine:
         self.sink.emit(reading.event(self.lifecycle.schedule.day), source="engine")
         return reading.label
 
-    def _report(self) -> None:
-        marks = self.monitor.marks()
-        book = self.oms.book
+    def _report(self, book: Book) -> None:
+        marks = book.monitor.marks()
+        position_book = book.oms.book
         now = self.clock.now()
-        value = book.market_value(marks)
+        value = position_book.market_value(marks)
         unrealized = sum(
             ((marks[p.instrument_key] - (p.avg_price or Decimal(0))) * p.quantity
-             for p in open_positions(book, now)),
+             for p in open_positions(position_book, now)),
             Decimal(0),
         )  # fmt: skip
-        state = self.tracker.state
-        equity = book.cash + value
+        state = book.tracker.state
+        equity = position_book.cash + value
         self.sink.emit(
-            MarkToMarket(book_id=self.config.book_id, equity=equity, cash=book.cash,
+            MarkToMarket(book_id=book.book_id, equity=equity, cash=position_book.cash,
                          positions_value=value, unrealized_pnl=unrealized,
                          day_pnl=equity - state.sod_equity if state else Decimal(0)),
             source="engine",
         )  # fmt: skip
+
+
+def _monitor_step(book: Book) -> Callable[[], Awaitable[None]]:
+    async def step() -> None:
+        await book.oms.resolve_unknown()
+        await book.monitor.tick()
+
+    return step
+
+
+def _reconcile_step(book: Book) -> Callable[[], Awaitable[None]]:
+    async def step() -> None:
+        result = await book.oms.reconcile()
+        book.gate.flags.recon_drift = not result.in_sync
+
+    return step
 
 
 def build_engine(
@@ -263,21 +348,73 @@ def build_engine(
     limits: RiskLimits,
     strategies: Mapping[str, Strategy] | None = None,
     announcements: AnnouncementSource | None = None,
+    advisors: Mapping[str, Advisor | None] | None = None,
 ) -> Engine:
-    book_id = config.book_id
     sink = StoreSink(store, clock, "engine")
-    held = held_instruments(store, book_id)
+    held: dict[str, Instrument] = {}
+    for book_id in config.books:
+        held |= held_instruments(store, book_id)
     instruments = {i.key: i for i in universe} | held  # no position is ever unpriced
+    market = MarketService(instruments=instruments, quotes=quotes, history=history, sink=sink)
+
+    def stored_events() -> list[TypedEvent]:
+        rows = store.query("SELECT payload FROM typed_events")
+        return [TypedEvent.model_validate_json(r["payload"]) for r in rows]
+
+    books: dict[str, Book] = {}
+    for book_id in config.books:
+        books[book_id] = _build_book(
+            book_id, config=config, clock=clock, calendar=calendar, store=store, sink=sink,
+            market=market, instruments=instruments, limits=limits, events=stored_events,
+        )  # fmt: skip
+        if held:
+            logger.info("book %s restored; universe ∪ held = %d instruments", book_id,
+                        len(instruments))  # fmt: skip
+
+    chosen = dict(advisors or {})
+    decision_config = config.decision or DecisionConfig(
+        book_id=config.book_id, enabled=tuple(limits.enabled_strategies)
+    )
+    decision = DecisionEngine(
+        config=decision_config, market=market, policy=TradePolicy(config.policy), clock=clock,
+        sink=sink, strategies=strategies,
+        books=[BookTarget(b.book_id, b.oms, b.exits, chosen.get(b.book_id)) for b in books.values()],
+    )  # fmt: skip
+    engine = Engine(
+        config=config, clock=clock, calendar=calendar, store=store, sink=sink, market=market,
+        books=books, decision=decision, announcements=announcements,
+        lifecycle=SessionLifecycle(clock=clock, calendar=calendar, sink=sink,
+                                   config=config.lifecycle),
+        tasks=TaskGroup(clock, sink),
+    )  # fmt: skip
+    engine.lifecycle.hooks = LifecycleHooks(on_pre_open=engine.on_pre_open,
+                                            on_state=engine.on_state)  # fmt: skip
+    return engine
+
+
+def _build_book(
+    book_id: str,
+    *,
+    config: EngineConfig,
+    clock: Clock,
+    calendar: NSECalendar,
+    store: EventStore,
+    sink: StoreSink,
+    market: MarketService,
+    instruments: Mapping[str, Instrument],
+    limits: RiskLimits,
+    events: Callable[[], Iterable[TypedEvent]],
+) -> Book:
     broker = SimulatedBroker(
         book_id=book_id, instruments=instruments, clock=clock, calendar=calendar,
         costs=config.costs, starting_cash=config.starting_cash,
         state_store=KVRecordStore(store, f"broker:{book_id}"), config=config.fill_model,
     )  # fmt: skip
-    book = PositionBook(book_id, config.starting_cash)
-    oms = OMS(book_id=book_id, broker=broker, book=book, sink=sink, clock=clock)
+    position_book = PositionBook(book_id, config.starting_cash)
+    oms = OMS(book_id=book_id, broker=broker, book=position_book, sink=sink, clock=clock)
     restored = oms.restore(store.read(types=list(OMS_EVENTS), book_id=book_id))
     if restored:
-        logger.info("restored %d OMS events; holding %s", restored, sorted(held) or "nothing")
+        logger.info("book %s: restored %d OMS events", book_id, restored)
     tracker = DailyRiskTracker(book_id=book_id, limits=limits, clock=clock, sink=sink,
                                state_store=KVStateStore(store, book_id, "daily_risk"))  # fmt: skip
     switches = KillSwitchRegistry(book_id=book_id, limits=limits, clock=clock, sink=sink,
@@ -290,43 +427,21 @@ def build_engine(
     flattener = Flattener(oms=oms, clock=clock, sink=sink, limits=limits, exit_manager=exits,
                           instruments=instruments,
                           state_store=KVStateStore(store, book_id, "flatten"))  # fmt: skip
-    market = MarketService(instruments=instruments, quotes=quotes, history=history, sink=sink)
 
     async def to_broker(quote: Quote) -> None:
         broker.on_quote(quote)
 
-    market.add_listener(to_broker)
+    market.add_listener(to_broker)  # fills first, then this book's exits
     market.add_listener(exits.on_quote)
-
-    def stored_events() -> list[TypedEvent]:
-        rows = store.query("SELECT payload FROM typed_events")
-        return [TypedEvent.model_validate_json(r["payload"]) for r in rows]
-
     gate = RiskGate(engine=RiskEngine(limits), oms=oms, tracker=tracker, switches=switches,
                     calendar=calendar, clock=clock, sink=sink, market=market.facts,
                     environment=config.environment, lifecycle=config.lifecycle,
-                    instruments=instruments, events=stored_events,
+                    instruments=instruments, events=events,
                     event_rules=config.event_rules)  # fmt: skip
     oms.use_gate(gate)
-    monitor = RiskMonitor(book=book, tracker=tracker, switches=switches, flattener=flattener,
-                          marks=market.marks, clock=clock, sink=sink)  # fmt: skip
-    decision_config = config.decision or DecisionConfig(
-        book_id=book_id, enabled=tuple(limits.enabled_strategies)
-    )
-    decision = DecisionEngine(config=decision_config, market=market, oms=oms, exits=exits,
-                              policy=TradePolicy(config.policy), clock=clock, sink=sink,
-                              strategies=strategies)  # fmt: skip
-    engine = Engine(
-        config=config, clock=clock, calendar=calendar, store=store, sink=sink, market=market,
-        broker=broker, oms=oms, gate=gate, exits=exits, tracker=tracker, switches=switches,
-        monitor=monitor, decision=decision, announcements=announcements,
-        lifecycle=SessionLifecycle(clock=clock, calendar=calendar, sink=sink,
-                                   config=config.lifecycle),
-        tasks=TaskGroup(clock, sink),
-    )  # fmt: skip
-    engine.lifecycle.hooks = LifecycleHooks(on_pre_open=engine.on_pre_open,
-                                            on_state=engine.on_state)  # fmt: skip
-    return engine
+    monitor = RiskMonitor(book=position_book, tracker=tracker, switches=switches,
+                          flattener=flattener, marks=market.marks, clock=clock, sink=sink)  # fmt: skip
+    return Book(book_id, broker, oms, gate, exits, tracker, switches, monitor)
 
 
 def held_instruments(store: EventStore, book_id: str) -> dict[str, Instrument]:

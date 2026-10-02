@@ -8,8 +8,8 @@ Veto-only and fail-safe:
 * Any router failure (all providers down, timeout, budget, refusal, invalid output) → ABSTAIN,
   recorded as ``AdvisorFallback``: the deterministic decision stands, so with every provider down
   Book C trades exactly like Book A (rule 5).
-* A reason whose ``evidence_ref`` names nothing in the input (a hallucination), or a VETO with no
-  reasons, → ABSTAIN.
+* A reason whose ``evidence_ref`` names nothing in the input (a hallucination), a VETO with no
+  reasons, or a VETO less confident than the book's ``threshold`` → ABSTAIN.
 * The verdict can only remove a trade: the router's output has no size, price, stop or target,
   and an APPROVE never overrides the RiskEngine.
 """
@@ -57,11 +57,17 @@ class LLMVetoAdvisor:
         sink: EventSink,
         book_id: str,
         template: PromptTemplate = VETO_V1,
+        role: str = "veto",
+        threshold: float | None = None,
     ) -> None:
+        if threshold is not None and not 0 < threshold <= 1:
+            raise ValueError("threshold must be in (0, 1]")
         self._router = router
         self._sink = sink
         self.book_id = book_id
         self._template = template
+        self._role = role
+        self.threshold = threshold
 
     async def review(self, proposal: Proposal, features: Features) -> Verdict:
         decision_id = proposal.intent.decision_id
@@ -70,7 +76,7 @@ class LLMVetoAdvisor:
                                          advisor=KIND, signal_id=proposal.signal.signal_id),
                         source="advisor")  # fmt: skip
         result = await self._router.complete(
-            "veto",
+            self._role,
             self._template.render(data),
             VetoOutput,
             prompt_version=self._template.prompt_version,
@@ -85,6 +91,10 @@ class LLMVetoAdvisor:
             return self._abstain(decision_id, "hallucinated_evidence", ", ".join(missing)[:300])
         if out.verdict == "VETO" and not out.reasons:
             return self._abstain(decision_id, "veto_without_evidence", None)
+        if out.verdict == "VETO" and self.threshold is not None and out.confidence < self.threshold:
+            return self._abstain(
+                decision_id, "veto_below_threshold", f"confidence {out.confidence}"
+            )
         verdict = Verdict(out.verdict)
         provider, _, model = (result.model or "").partition(":")
         self._sink.emit(

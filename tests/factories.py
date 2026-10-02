@@ -275,6 +275,15 @@ def sample_payloads() -> list[EventPayload]:
             decision_id="d-0001", book_id="B", advisor=AdvisorKind.TYPED_VETO, reason="timeout"
         ),
         ev.OrderIntentProposed(intent=intent()),
+        ev.SignalDisposition(
+            signal_id="s-0001",
+            decision_id="d-0001",
+            book_id="B",
+            instrument_key=INFY.key,
+            strategy="momentum",
+            disposition=ev.Disposition.VETOED,
+            detail="typed veto p=0.72",
+        ),
         risk_decision(),
         ev.KillSwitchChanged(
             book_id="A",

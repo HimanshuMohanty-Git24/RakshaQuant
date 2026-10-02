@@ -3,9 +3,13 @@ Running the v2 engine behind a front end (plan M5.6): the CLI dashboard or the w
 through the existing :class:`~src.live.views.SessionView`, fed from the store's projections.
 
 * :func:`run_paper` - today's session on the wall clock with YFinance data (taped for replay),
-  the pinned NIFTY 50 universe and the simulated broker. **Paper only**: the v2 engine has no
-  live broker path; a live ``EXECUTION_MODE`` is ignored with a warning.
-* :func:`run_demo` - the same engine on a synthetic, paced day in the ``demo`` environment.
+  the pinned NIFTY 50 universe and the simulated broker, for every book of the experiment
+  (``src/config/experiment.yaml``: A deterministic, B typed veto, C LLM veto). **Paper only**:
+  the v2 engine has no live broker path; a live ``EXECUTION_MODE`` is ignored with a warning.
+* :func:`run_demo` - the same engine on a synthetic, paced day in the ``demo`` environment
+  (advisors abstain: no decision model or LLM is called in the demo).
+
+The CLI/web views show the primary book (A); the paired comparison is the daily report's.
 """
 
 from __future__ import annotations
@@ -14,11 +18,11 @@ import asyncio
 import contextlib
 import logging
 from datetime import date, datetime, time
-from decimal import Decimal
 
 from src.config.errors import ConfigError
 from src.config.limits import load_risk_limits
 from src.config.settings import Settings
+from src.decision_models.cascade import Cascade
 from src.decision_models.setup import build_cascade
 from src.decision_models.tasks.announcements import (
     AnnouncementPipeline,
@@ -30,10 +34,13 @@ from src.domain.clock import Clock, ReplayClock, WallClock, now_ist
 from src.domain.events import Alert, AnnouncementReceived
 from src.domain.types import Instrument
 from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
-from src.engine.runner import Engine, EngineConfig, build_engine, held_instruments
+from src.engine.runner import Engine, build_engine, held_instruments
 from src.engine.view_model import StatsProjector
+from src.evaluation.books import build_advisors, engine_config
+from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
 from src.live.views import SessionView
 from src.llm.registry import validate_roles
+from src.llm.setup import build_router
 from src.marketdata.announcements import AnnouncementIngestor, watermark
 from src.marketdata.history import YFinanceHistorySource
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
@@ -68,13 +75,20 @@ async def run_paper(
     clock = clock or WallClock()
     calendar = get_calendar()
     limits = load_risk_limits()
+    experiment = load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH)
+    config = engine_config(experiment, environment=settings.environment, limits=limits,
+                           halt_file=settings.halt_file)  # fmt: skip
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     with EventStore(settings.db_path) as store:
         sink = StoreSink(store, clock, "engine")
         reference = await refresh_reference(settings.reference_dir, now_ist(clock).date())
         alert_reference(reference, sink)
         universe = list(reference.instruments.by_symbol.values())
-        priced = {i.key: i for i in universe} | held_instruments(store, "A")
+        priced = {i.key: i for i in universe}
+        for book_id in config.books:
+            priced |= held_instruments(store, book_id)
+        cascade = build_cascade(settings, sink=sink)  # one Laya for the classifier and Book B
+        router = build_router(settings, clock=clock, sink=sink, store=store)
         tape = TapeWriter(settings.tape_dir)
         quotes = YFinanceQuoteSource(
             list(priced.values()), clock=clock, sink=sink, tape=tape,
@@ -82,10 +96,15 @@ async def run_paper(
             market_open=calendar.is_market_open,
         )  # fmt: skip
         engine = build_engine(
-            config=_config(settings), clock=clock, calendar=calendar, store=store,
-            quotes=quotes, history=YFinanceHistorySource(tape=tape), universe=universe,
-            limits=limits, announcements=_announcements(settings, store, clock, sink, priced),
+            config=config, clock=clock, calendar=calendar, store=store, quotes=quotes,
+            history=YFinanceHistorySource(tape=tape), universe=universe, limits=limits,
+            announcements=_announcements(settings, store, clock, sink, priced, cascade),
         )  # fmt: skip
+        advisors = build_advisors(experiment, sink=sink, clock=clock, calendar=calendar,
+                                  cascade=cascade, router=router, events=engine.events_for,
+                                  regime=lambda: engine.regime)  # fmt: skip
+        for book_id, advisor in advisors.items():
+            engine.set_advisor(book_id, advisor)
         return await _drive(engine, view, stop)
 
 
@@ -95,6 +114,7 @@ def _announcements(
     clock: Clock,
     sink: StoreSink,
     instruments: dict[str, Instrument],
+    cascade: Cascade | None,
 ) -> AnnouncementPipeline | None:
     if not settings.announcements_enabled:
         return None
@@ -105,7 +125,6 @@ def _announcements(
     ingestor = AnnouncementIngestor(instruments=equities, clock=clock, sink=sink,
                                     url=settings.announcements_url, seen=seen,
                                     last_newest=newest)  # fmt: skip
-    cascade = build_cascade(settings, sink=sink)
     if cascade is None:
         logger.warning("no decision model (laya not installed, no TYPESAFE_API_KEY): "
                        "announcements are stored but not classified")  # fmt: skip
@@ -140,13 +159,22 @@ async def run_demo(
     path = settings.state_dir / "demo.db"
     for stale in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
         stale.unlink(missing_ok=True)  # every demo starts from a clean book
+    limits = load_risk_limits()
+    experiment = load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH)
+    config = engine_config(experiment, environment=settings.environment, limits=limits,
+                           halt_file=settings.halt_file)  # fmt: skip
     with EventStore(path) as store:
         engine = build_engine(
-            config=_config(settings), clock=clock, calendar=calendar, store=store,
+            config=config, clock=clock, calendar=calendar, store=store,
             quotes=TapeQuoteSource(quotes, clock=clock), history=TapeHistorySource(bars),
-            universe=demo_instruments(),
-            limits=load_risk_limits(),
+            universe=demo_instruments(), limits=limits,
         )  # fmt: skip
+        sink = StoreSink(store, clock, "engine")
+        advisors = build_advisors(experiment, sink=sink, clock=clock, calendar=calendar,
+                                  cascade=None, router=None, events=engine.events_for,
+                                  regime=lambda: engine.regime)  # fmt: skip
+        for book_id, advisor in advisors.items():
+            engine.set_advisor(book_id, advisor)
         done = asyncio.Event()
         exit_at = datetime.combine(day, time(16, 0), IST)
         pacer = asyncio.create_task(pace(clock, exit_at, step_s=step_s, wall_s=wall_s, done=done))
@@ -155,14 +183,6 @@ async def run_demo(
         finally:
             done.set()
             await asyncio.gather(pacer, return_exceptions=True)
-
-
-def _config(settings: Settings) -> EngineConfig:
-    return EngineConfig(
-        environment=settings.environment,
-        starting_cash=Decimal(str(settings.paper_wallet_balance)),
-        halt_file=settings.halt_file,
-    )
 
 
 async def _drive(engine: Engine, view: SessionView, stop: asyncio.Event | None) -> int:
