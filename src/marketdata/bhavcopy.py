@@ -15,8 +15,8 @@ NSE capital-market bhavcopies (UDiFF) as a point-in-time daily dataset (plan M11
   dividends) parsed from NSE's corporate-actions CSV export (:func:`parse_corporate_actions`).
 
 Fetching is polite (a delay between requests, a browser-like User-Agent, no retries hammering)
-and resumable (sessions already on disk are skipped). Whether the NSE website's terms allow
-automated download is an owner decision (PROGRESS OQ-2): nothing here runs on its own.
+and resumable (sessions already on disk are skipped). The owner allows downloads for research
+at this rate (PROGRESS OD-10); nothing here runs on its own.
 """
 
 from __future__ import annotations

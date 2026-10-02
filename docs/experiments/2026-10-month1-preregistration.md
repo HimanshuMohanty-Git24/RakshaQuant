@@ -128,3 +128,18 @@ hidden.
 - The typed decision model (Laya) is uncalibrated until the owner-approved labelling run (PROGRESS
   OQ-3); until then most of Book B's answers abstain.
 - NSE announcements come from the public RSS feed (PROGRESS OQ-2); feed gaps are recorded.
+
+## 7. Amendments before the first session
+
+Recorded on 2026-10-02, before any session of the run, so they are part of the registered
+design. Sections 1-6 above are left as registered.
+
+- **Book B's model (PROGRESS OD-9, OD-11).** A TypeSafe (Jev) key is configured, and the
+  labelling run is skipped. Laya stays uncalibrated. Questions it is unsure of (inside the
+  escalation band), states too long for it and Laya failures go to Jev instead of
+  abstaining. Book B is therefore the Laya-plus-Jev cascade, and the limitation "most of
+  Book B's answers abstain" no longer applies. B's veto threshold (0.6) is unchanged.
+- **NSE data (OD-10).** The announcements RSS feed stays on, read as a polite subscriber.
+  Bulk bhavcopy downloads are allowed for research only and play no part in the run.
+- The frozen-config fingerprints recorded above are unchanged: neither amendment touches
+  `src/config/experiment.yaml` or the risk limits.

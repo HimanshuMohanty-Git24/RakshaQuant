@@ -97,8 +97,9 @@ to Jev to measure agreement, unused.
 
 - **Calibration:** `var/models/calibration.json`, fitted by
   `scripts/calibrate_decision_models.py` on a labelled set; see
-  [decision-model-benchmark](../plan/decision-model-benchmark.md) and open question OQ-3 in
-  [PROGRESS](../plan/PROGRESS.md).
+  [decision-model-benchmark](../plan/decision-model-benchmark.md). For the month run the owner
+  skipped it (decisions OD-9 and OD-11 in [PROGRESS](../plan/PROGRESS.md)): Laya stays
+  uncalibrated, and Jev answers the questions it is unsure of.
 - **Thresholds:** book B vetoes when the calibrated P(veto) reaches the book's threshold in
   `src/config/experiment.yaml` (0.6).
 - **Check:** the AI Desk shows each model's latency, escalation rate and calibration status.

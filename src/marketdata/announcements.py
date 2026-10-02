@@ -9,7 +9,8 @@ without a zone (``02-Oct-2026 00:55:31``). Only the RSS document is read - no pa
 
 * Polled every 5 min during the session plus once pre-open (backfill), never faster than the
   feed's own ``ttl``; conditional GET (``ETag`` / ``Last-Modified``) so an unchanged feed costs a
-  304. NSE's website terms restrict automated collection: see ``docs/plan/PROGRESS.md`` OQ-2.
+  304. NSE's website terms restrict automated collection; the owner keeps this polite
+  subscription on (``docs/plan/PROGRESS.md`` OD-10).
 * Filtered to the universe by normalised company name (``Ltd.`` = ``Limited``, ``&`` = ``and``).
 * Deduplicated by ``(instrument, published_at, title hash)`` - the ``announcement_id``.
 * Stored as ``AnnouncementReceived`` with the exchange's ``published_at`` and our

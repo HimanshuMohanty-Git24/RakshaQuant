@@ -201,8 +201,8 @@ The full list is in [docs/reference/packages.md](docs/reference/packages.md).
 
 - Yahoo's daily `Close` is already split-adjusted (adjust dividends only).
 - YFinance quotes are delayed.
-- NSE's website terms restrict automated collection. The announcements RSS and bulk
-  bhavcopy downloads are open question OQ-2: don't add new NSE scraping.
+- NSE's website terms restrict automated collection. The owner allows the announcements RSS
+  feed and polite bhavcopy downloads (OD-10); don't add any other NSE scraping.
 
 ### Process
 

@@ -3,7 +3,7 @@ The labelled announcement set for decision-model calibration (plan M7.5).
 
 1. **Collect** announcements: those our RSS reader stored (``AnnouncementReceived`` events), and a
    CSV the owner downloads by hand from NSE's corporate-announcements page (the RSS holds only
-   the latest items, and NSE's terms rule out scraping its announcement archive - OQ-2).
+   the latest items, and we never scrape NSE's announcement archive - PROGRESS OD-10).
 2. **Teacher-label** them with the LLM role ``label`` (prompt ``label_announcement_v1``) through
    the router - paid calls, so the script runs them only with an explicit confirmation and
    prints the estimated cost first.

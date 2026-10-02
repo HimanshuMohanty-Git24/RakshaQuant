@@ -9,7 +9,7 @@ a session NSE has no file for (a holiday) is noted and passed over. Files go to
 ``var/datasets/bhavcopy/<YYYY>/<YYYYMMDD>.parquet``; a corporate-actions CSV exported from NSE's
 website is converted to ``var/datasets/corporate_actions.parquet``.
 
-Before running a bulk download, check that NSE's terms of use allow it (PROGRESS OQ-2).
+The owner allows bulk downloads for research at this polite rate (PROGRESS OD-10).
 Limitation: historical NIFTY constituency is not in these files.
 """
 

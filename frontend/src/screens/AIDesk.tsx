@@ -169,7 +169,7 @@ export default function AIDesk() {
             </tbody>
           </table>
         ) : (
-          <Empty>Uncalibrated: the reliability diagram and Brier scores need the labelled set (owner decision OQ-3). Until then the typed veto abstains when unsure.</Empty>
+          <Empty>Uncalibrated: the reliability diagram and Brier scores need a labelled set, which the owner skipped for now (decision OD-11). Questions Laya is unsure of go to Jev when its key is set; otherwise the typed veto abstains.</Empty>
         )}
       </Panel>
       <Panel title="Veto precision (vetoed signals whose counterfactual lost)">
