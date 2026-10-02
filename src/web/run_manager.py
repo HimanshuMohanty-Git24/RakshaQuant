@@ -7,8 +7,8 @@ Responsibilities:
   environment the engine on a synthetic day, elsewhere an order-free UI demo generator).
 * Hold the web's **own read connection** to the environment's event store (WAL readers never
   block the engine) and the running engine, once a run has built it, for the API's live views.
-* Act as the :class:`~src.live.views.SnapshotSink`: cache the latest snapshot + recent cycle
-  traces and broadcast every update to subscribers.
+* Own the event-stream :class:`~src.web.stream.Hub` and act as the legacy console's
+  :class:`~src.live.views.SnapshotSink` (its snapshot is the stream's ``console`` slot).
 * A read-only deployment (``RAKSHAQUANT_WEB_READONLY``) disables run-control entirely.
 """
 
@@ -19,7 +19,6 @@ import logging
 import math
 import os
 import random
-from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +35,7 @@ from src.live.views import StreamSessionView
 from src.store.event_store import EventStore
 from src.web.models import ControlResult
 from src.web.queries import LiveView, Queries
+from src.web.stream import Hub
 
 if TYPE_CHECKING:
     from src.config.settings import Settings
@@ -66,7 +66,6 @@ class RunManager:
     """Owns the background session task and the WebSocket broadcast bus."""
 
     MAX_CYCLES_KEPT = 200
-    QUEUE_MAXSIZE = 2000
 
     def __init__(
         self,
@@ -82,9 +81,9 @@ class RunManager:
         self._queries: Queries | None = None
         self.engine: Engine | None = None
         self._starting: str | None = None  # a start to record once the engine exists
+        self.hub = Hub(self)
         self._snapshot: dict[str, Any] | None = None
         self._cycles: list[dict[str, Any]] = []
-        self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
         self._stats: Any = None
@@ -156,41 +155,18 @@ class RunManager:
 
     def set_snapshot(self, snapshot: dict[str, Any]) -> None:
         self._snapshot = snapshot
-        self._broadcast({"type": "snapshot", "data": snapshot})
+        self.hub.publish("console", snapshot)  # the legacy console's snapshot (until M10)
 
     def add_cycle(self, cycle: dict[str, Any]) -> None:
         self._cycles.append(cycle)
         if len(self._cycles) > self.MAX_CYCLES_KEPT:
             self._cycles = self._cycles[-self.MAX_CYCLES_KEPT :]
-        self._broadcast({"type": "cycle", "data": cycle})
 
-    # ── Broadcast bus ───────────────────────────────────────────────────────────────
+    # ── Broadcast (the event stream hub) ──────────────────────────────────────────
 
     def _broadcast(self, message: dict[str, Any]) -> None:
-        for q in list(self._subscribers):
-            try:
-                q.put_nowait(message)
-            except asyncio.QueueFull:  # pragma: no cover - slow consumer; drop rather than block
-                logger.debug("Dropping WS message for a slow subscriber")
-
-    async def subscribe(self) -> AsyncIterator[dict[str, Any]]:
-        """Async generator of messages for one WebSocket client (init snapshot first)."""
-        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self.QUEUE_MAXSIZE)
-        self._subscribers.add(q)
-        q.put_nowait(
-            {
-                "type": "init",
-                "snapshot": self._snapshot,
-                "cycles": self._cycles,
-                "running": self.is_running,
-                "demo": self._demo,
-            }
-        )
-        try:
-            while True:
-                yield await q.get()
-        finally:
-            self._subscribers.discard(q)
+        """A run notice (``stopped``, ``error``) to the stream's system subscribers."""
+        self.hub.announce(str(message["type"]), message.get("data") or {})
 
     # ── State accessors ─────────────────────────────────────────────────────────────
 

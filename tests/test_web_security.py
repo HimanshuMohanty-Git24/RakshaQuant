@@ -75,7 +75,8 @@ def test_the_websocket_needs_our_origin_and_the_token(app):
         WS_URL, subprotocols=PROTOCOLS, headers={"Origin": ORIGIN}
     ) as ws:
         assert ws.accepted_subprotocol == "rq.v1"  # never the token
-        assert ws.receive_json()["type"] == "init"
+        ws.send_json({"subscribe": ["system"]})
+        assert ws.receive_json()["type"] == "subscribed"
 
 
 def test_websocket_connections_are_capped():
@@ -83,9 +84,11 @@ def test_websocket_connections_are_capped():
                                                      max_websockets=1))  # fmt: skip
     client = TestClient(app, base_url=BASE)
     with client.websocket_connect(WS_URL, subprotocols=PROTOCOLS) as first:
+        first.send_json({"subscribe": ["system"]})
         first.receive_json()
         assert _ws_close_code(app, subprotocols=PROTOCOLS) == 1013
     with client.websocket_connect(WS_URL, subprotocols=PROTOCOLS) as again:  # slot released
+        again.send_json({"subscribe": ["system"]})
         again.receive_json()
 
 

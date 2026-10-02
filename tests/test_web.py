@@ -154,17 +154,6 @@ def test_stream_view_note_strips_rich_markup():
     assert not any("[" in m or "]" in m for m in messages)
 
 
-async def test_run_manager_subscribe_sends_init_frame():
-    m = RunManager()
-    gen = m.subscribe()
-    try:
-        msg = await anext(gen)
-        assert msg["type"] == "init"
-        assert msg["running"] is False
-    finally:
-        await gen.aclose()
-
-
 # ── FastAPI surface ─────────────────────────────────────────────────────────────
 
 
@@ -179,14 +168,14 @@ def test_rest_endpoints():
     assert cfg["mode"] == "paper" and "allowLiveOrders" not in cfg  # v2: no broker path
 
 
-def test_websocket_init_contract():
+def test_websocket_subscribe_contract():
     client = authed(create_app(security=SECURITY))
     with client.websocket_connect(WS_URL, subprotocols=PROTOCOLS) as ws:
         assert ws.accepted_subprotocol == "rq.v1"
+        ws.send_json({"subscribe": ["console", "system"], "since_seq": 0})
         msg = ws.receive_json()
-        assert msg["type"] == "init"
-        assert msg["running"] is False
-        assert msg["snapshot"] is None
+        assert msg["v"] == 1 and msg["type"] == "subscribed"
+        assert msg["data"]["topics"] == ["console", "system"]
 
 
 def test_run_stop_readonly_returns_403(monkeypatch):

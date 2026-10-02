@@ -15,7 +15,8 @@ state-changing request must come from the console's own origin (:mod:`src.web.se
 * ``POST /api/session/start|stop`` - start a paper (or demo) run; stop it cooperatively.
 * ``POST /api/risk/halt|resume|flatten`` - the books' kill switches (resume and flatten need
   ``confirm: true`` and the typed phrase; halt works even in read-only mode).
-* ``WS   /ws``                  - live stream (token as the ``rq.token.<token>`` subprotocol).
+* ``WS   /ws``                  - the event stream: replay from ``since_seq``, then tail
+  (token as the ``rq.token.<token>`` subprotocol).
 * ``/``                         - the built SPA (``frontend/dist``) when present.
 
 FastAPI / uvicorn are optional deps (the ``web`` extra); this module is only imported when
@@ -81,6 +82,7 @@ from src.web.security import (
     require_token,
     websocket_refusal,
 )
+from src.web.stream import serve
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,7 @@ def create_app(
                 logger.warning("Auto-start skipped: %s", exc)
         yield
         await run_manager.shutdown()
+        await run_manager.hub.stop()
 
     app = FastAPI(title="RakshaQuant Web Console", version="2.0.0", lifespan=lifespan)
     app.state.manager = run_manager
@@ -355,6 +358,8 @@ def create_app(
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
+        """The event stream (see :mod:`src.web.stream`): send ``{"subscribe": [topics],
+        "since_seq": n}``; stored events after ``n`` are replayed, then new ones follow."""
         refusal = websocket_refusal(websocket, app.state.websockets)
         if refusal is not None:  # accept only to deliver the close code; nothing is sent
             await websocket.accept()
@@ -362,14 +367,16 @@ def create_app(
             return
         await websocket.accept(subprotocol=accepted_subprotocol(websocket))
         app.state.websockets += 1
+        hub = mgr().hub
+        sub = hub.connect()
         try:
-            async for message in mgr().subscribe():
-                await websocket.send_json(message)
+            await serve(hub, sub, websocket)
         except WebSocketDisconnect:
             pass
         except Exception as exc:  # pragma: no cover - client vanished mid-send
             logger.debug("WebSocket closed: %s", type(exc).__name__)
         finally:
+            hub.disconnect(sub)
             app.state.websockets -= 1
 
     # Serve the built SPA (if present); otherwise a helpful placeholder.

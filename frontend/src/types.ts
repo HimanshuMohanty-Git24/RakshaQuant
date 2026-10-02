@@ -153,11 +153,13 @@ export interface AppConfig {
   read_only: boolean;
 }
 
+// The /ws event stream (plan M9.4); this console only uses the legacy `console` slot.
 export type WsMessage =
-  | { type: "init"; snapshot: Snapshot | null; cycles: CycleTrace[]; running: boolean; demo: boolean }
-  | { type: "snapshot"; data: Snapshot }
-  | { type: "cycle"; data: CycleTrace }
+  | { type: "subscribed"; data: { topics: string[]; since_seq: number; replay_to: number } }
+  | { type: "console"; data: Snapshot }
+  | { type: "summary"; data: { demo: boolean; running: boolean } }
   | { type: "stopped" }
-  | { type: "error"; data: { message: string } };
+  | { type: "error"; data: { message: string } }
+  | { type: "heartbeat" | "resync"; data: Record<string, unknown> };
 
 export type ConnState = "connecting" | "open" | "reconnecting" | "closed";

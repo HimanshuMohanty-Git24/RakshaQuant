@@ -11,14 +11,12 @@ interface LiveState {
   error: string | null;
 }
 
-const MAX_CYCLES = 300;
-
-// Subscribes to /ws, keeps the latest snapshot + a rolling list of cycle traces, and
-// reconnects with capped backoff. A disconnect surfaces as conn="reconnecting" (never a
-// silent stall); on reconnect the server replays an "init" frame so state resumes cleanly.
+// Subscribes to /ws (the console snapshot, the summary and run notices) and reconnects with
+// capped backoff. A disconnect surfaces as conn="reconnecting" (never a silent stall). Cycle
+// traces are gone with the legacy pipeline; the M10 console replaces this hook.
 export function useLiveState(): LiveState {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [cycles, setCycles] = useState<CycleTrace[]>([]);
+  const [cycles] = useState<CycleTrace[]>([]);
   const [running, setRunning] = useState(false);
   const [demo, setDemo] = useState(false);
   const [conn, setConn] = useState<ConnState>("connecting");
@@ -45,6 +43,10 @@ export function useLiveState(): LiveState {
       retryRef.current = 0;
       setConn("open");
       setError(null);
+      // Latest console snapshot + run notices; no replay of stored events (since_seq = max).
+      ws.send(
+        JSON.stringify({ subscribe: ["console", "summary", "system"], since_seq: Number.MAX_SAFE_INTEGER }),
+      );
     };
 
     ws.onmessage = (ev) => {
@@ -55,21 +57,13 @@ export function useLiveState(): LiveState {
         return;
       }
       switch (msg.type) {
-        case "init":
-          if (msg.snapshot) setSnapshot(msg.snapshot);
-          setCycles(msg.cycles ?? []);
-          setRunning(msg.running);
-          setDemo(msg.demo);
-          break;
-        case "snapshot":
+        case "console":
           setSnapshot(msg.data);
           setRunning(msg.data.run.status === "RUNNING");
           break;
-        case "cycle":
-          setCycles((prev) => {
-            const next = [...prev, msg.data];
-            return next.length > MAX_CYCLES ? next.slice(-MAX_CYCLES) : next;
-          });
+        case "summary":
+          setDemo(msg.data.demo);
+          setRunning(msg.data.running);
           break;
         case "stopped":
           setRunning(false);
