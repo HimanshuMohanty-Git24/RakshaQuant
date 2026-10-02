@@ -8,7 +8,7 @@ from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
-LINK = re.compile(r"\]\(([^)\s]+)\)")
+LINK = re.compile(r"\]\(([^)\s]+)\)|(?:src|href)=\"([^\"]+)\"")  # Markdown links, HTML src/href
 
 
 def gen_docs() -> ModuleType:
@@ -48,7 +48,8 @@ def test_relative_links_in_the_docs_resolve():
              *sorted((ROOT / "docs" / "reference").glob("*.md"))]  # fmt: skip
     broken = []
     for page in pages:
-        for target in LINK.findall(page.read_text(encoding="utf-8")):
+        for markdown, html in LINK.findall(page.read_text(encoding="utf-8")):
+            target = markdown or html
             if target.startswith(("http://", "https://", "mailto:", "#")):
                 continue
             path = (page.parent / target.split("#", 1)[0]).resolve()
