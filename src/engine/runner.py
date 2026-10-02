@@ -21,6 +21,8 @@ stateful component reloads its own kv state, so CNC books carry over from day to
 * **ENTRY_WINDOW** - one decision cycle (every book).
 * **CLOSE** - stop the loops, expire live DAY orders, a last risk tick per book.
 * **REPORT** - each book's mark-to-market (the full daily report: :mod:`src.evaluation`).
+
+The shadow ledger (:mod:`src.evaluation.shadow_ledger`) follows every signal on the shared tape.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol
@@ -52,7 +55,9 @@ from src.engine.tasks import (
     RECONCILER,
     TaskGroup,
 )
+from src.evaluation.shadow_ledger import ShadowLedger
 from src.features.regime import RegimeConfig, compute_regime
+from src.features.technical import as_date
 from src.oms.exit_manager import ExitManager
 from src.oms.oms import OMS
 from src.oms.position_book import PositionBook
@@ -136,6 +141,7 @@ class Engine:
     lifecycle: SessionLifecycle
     tasks: TaskGroup
     announcements: AnnouncementSource | None = None
+    ledger: ShadowLedger | None = None
     regime: Regime | None = None
     cycles: list[CycleResult] = field(default_factory=list)
     _session_started: bool = False
@@ -201,6 +207,8 @@ class Engine:
         previous = self.calendar.previous_trading_day(day)
         await self.market.load_history(day, previous)
         self.regime = self._compute_regime(day)
+        if self.ledger is not None:
+            self.ledger.settle_alpha(self._index_closes())
         for book in self.books.values():
             book.monitor.start_day()
             result = await book.oms.reconcile()
@@ -221,7 +229,14 @@ class Engine:
         if state is SessionState.ENTRY_WINDOW:
             await self.market.poll()  # fresh marks before deciding
             universe = [self.market.instruments[k] for k in sorted(self.market.instruments)]
-            self.cycles.append(await self.decision.run_cycle(universe, regime=self.regime))
+            cycle = await self.decision.run_cycle(universe, regime=self.regime)
+            self.cycles.append(cycle)
+            if self.ledger is not None:
+                atr = {}
+                for signal in cycle.signals:
+                    f = self.market.features(signal.instrument_key)
+                    atr[signal.instrument_key] = Decimal(str(f.atr_14)) if f and f.atr_14 else None
+                self.ledger.track(cycle.signals, atr)
         elif state is SessionState.CLOSE:
             await self.tasks.stop()
             for book in self.books.values():
@@ -247,6 +262,8 @@ class Engine:
             closes[key] = Decimal(str(f.close))
         for book in self.books.values():
             book.broker.set_market_context(contexts)
+        if self.ledger is not None:  # its time exits are due at the first quote of the day
+            self.ledger.on_session_start(schedule.day, closes=closes, atr=atr)
         await market.poll()  # the first quotes of the day, before any exit is re-placed
         for book in self.books.values():
             await book.exits.on_session_start(schedule.day, atr=atr, closes=closes)
@@ -282,6 +299,13 @@ class Engine:
                                   f"{event.title[:160]}"),
                     source="engine",
                 )  # fmt: skip
+
+    def _index_closes(self) -> dict[date, float]:
+        series = self.market.index_series()
+        if series is None:
+            return {}
+        frame = series.raw()
+        return {as_date(ts): float(c) for ts, c in zip(frame.index, frame["close"], strict=True)}
 
     def _compute_regime(self, day: object) -> Regime | None:
         series = self.market.index_series()
@@ -380,9 +404,15 @@ def build_engine(
         sink=sink, strategies=strategies,
         books=[BookTarget(b.book_id, b.oms, b.exits, chosen.get(b.book_id)) for b in books.values()],
     )  # fmt: skip
+    ledger = ShadowLedger(
+        policy=config.policy.exit_policy(), costs=config.costs, calendar=calendar, clock=clock,
+        sink=sink, notional=config.starting_cash * Decimal(str(limits.max_position_pct)),
+        state_store=KVStateStore(store, "ledger", "shadow"),
+    )  # fmt: skip
+    market.add_listener(ledger.on_quote)
     engine = Engine(
         config=config, clock=clock, calendar=calendar, store=store, sink=sink, market=market,
-        books=books, decision=decision, announcements=announcements,
+        books=books, decision=decision, announcements=announcements, ledger=ledger,
         lifecycle=SessionLifecycle(clock=clock, calendar=calendar, sink=sink,
                                    config=config.lifecycle),
         tasks=TaskGroup(clock, sink),

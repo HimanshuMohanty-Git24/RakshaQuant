@@ -316,6 +316,59 @@ class SignalDisposition(EventPayload):
     client_order_id: str | None = None
 
 
+class ShadowTradeOpened(EventPayload):
+    """The counterfactual of a signal entered on the live tape (plan M8.3)."""
+
+    event_type = "ShadowTradeOpened"
+    signal_id: NonEmptyStr
+    decision_id: NonEmptyStr
+    instrument_key: NonEmptyStr
+    strategy: NonEmptyStr
+    is_shadow_strategy: bool
+    entry_ts: AwareDatetime
+    entry_price: Price
+    quantity: NonNegInt
+    stop_price: Price
+    target_price: Price
+    atr: Price
+
+
+class ShadowTradeClosed(EventPayload):
+    """A counterfactual settled at its exit, net of modelled costs (plan M8.3)."""
+
+    event_type = "ShadowTradeClosed"
+    signal_id: NonEmptyStr
+    decision_id: NonEmptyStr
+    instrument_key: NonEmptyStr
+    strategy: NonEmptyStr
+    is_shadow_strategy: bool
+    entry_ts: AwareDatetime
+    entry_price: Price
+    exit_ts: AwareDatetime
+    exit_price: Price
+    exit_reason: NonEmptyStr  # stop, target, time
+    quantity: NonNegInt
+    gross_pnl: Money
+    charges: NonNegMoney
+    net_pnl: Money
+    net_return_pct: float
+    hold_sessions: NonNegInt
+
+
+class ShadowAlphaSettled(EventPayload):
+    """A counterfactual's excess return over NIFTY across its holding period (plan M8.3)."""
+
+    event_type = "ShadowAlphaSettled"
+    signal_id: NonEmptyStr
+    decision_id: NonEmptyStr
+    instrument_key: NonEmptyStr
+    entry_date: date
+    exit_date: date
+    net_return_pct: float
+    nifty_return_pct: float
+    alpha_pct: float
+
+
 class OrderIntentProposed(EventPayload):
     event_type = "OrderIntentProposed"
     intent: OrderIntent
@@ -631,6 +684,9 @@ _PAYLOADS: tuple[type[EventPayload], ...] = (
     AdvisorFallback,
     OrderIntentProposed,
     SignalDisposition,
+    ShadowTradeOpened,
+    ShadowTradeClosed,
+    ShadowAlphaSettled,
     # risk
     RiskDecision,
     KillSwitchChanged,
