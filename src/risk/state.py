@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 from src.config.limits import KillAction, RiskLimits
 from src.domain.base import EventPayload
@@ -74,6 +74,11 @@ class DailyRiskState(BaseModel):
     reject_ts: list[datetime] = []
     breaches: set[str] = set()  # "<code>:<name>" already raised today
     last_tick: datetime | None = None
+
+    @field_serializer("symbols_entered", "symbols_exited", "breaches")
+    def _sorted(self, values: set[str]) -> list[str]:
+        """Sets serialise in a fixed order, so recorded state is identical in every process."""
+        return sorted(values)
 
     @property
     def day_pnl_mtm(self) -> Decimal:

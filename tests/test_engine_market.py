@@ -139,6 +139,9 @@ async def test_the_market_service_feeds_listeners_in_order_and_isolates_failures
     f = service.features(INFY.key)
     assert f is not None and f.atr_14 is not None
     assert [a.key for a in sink.payloads(Alert)] == [f"history_missing:{INDEX_KEY}"]
+    series = service.daily(INFY.key)
+    assert series is not None  # before the first quote: marked at the last settled close
+    assert service.marks() == {INFY.key: Decimal(str(series.last_close))}
 
     seen: list[str] = []
 
