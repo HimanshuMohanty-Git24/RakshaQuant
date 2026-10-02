@@ -227,6 +227,17 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Corporate announcements (plan M7.6)
+    # ===========================================
+    announcements_enabled: bool = Field(
+        default=True, description="Poll NSE's announcements RSS feed during the session"
+    )
+    announcements_url: str = Field(
+        default="https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+        description="The RSS feed (polled no faster than its <ttl>)",
+    )
+
+    # ===========================================
     # Broker API - DhanHQ (Optional for free tier)
     # ===========================================
     dhan_client_id: str | None = Field(

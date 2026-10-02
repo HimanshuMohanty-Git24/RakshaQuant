@@ -11,9 +11,10 @@ logged and alerted (CRITICAL) and the loop carries on - one bad tick never kills
 | monitor      | 60 s                    | resolve UNKNOWN orders, risk tick (HALT file,   |
 |              |                         | MTM limits, kill switches, flatten)             |
 | reconciler   | 15 min                  | OMS vs broker; drift blocks new entries         |
+| announcements| the feed's ttl (5 min)  | new corporate announcements (+ classification)  |
 
 The decision cycle and the lifecycle are driven by the session state machine (see
-:mod:`src.engine.runner`). Announcements (every 5 min) arrive in M7.
+:mod:`src.engine.runner`).
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 MARKET_DATA = "market_data"
 MONITOR = "monitor"
 RECONCILER = "reconciler"
+ANNOUNCEMENTS = "announcements"
 MONITOR_INTERVAL_S = 60.0
 RECONCILE_INTERVAL_S = 15 * 60.0
 

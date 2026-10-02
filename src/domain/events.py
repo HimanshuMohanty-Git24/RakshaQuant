@@ -218,6 +218,33 @@ class HolidaySkipped(EventPayload):
 # ---------------------------------------------------------------------------
 
 
+class AnnouncementReceived(EventPayload):
+    """A corporate announcement for a universe instrument (plan M7.6), point in time: the
+    exchange's ``published_at`` and our ``received_at`` (what a replay may know, and when)."""
+
+    event_type = "AnnouncementReceived"
+    announcement_id: NonEmptyStr  # sha of (instrument, published_at, title)
+    instrument_key: NonEmptyStr
+    company: NonEmptyStr
+    published_at: AwareDatetime
+    received_at: AwareDatetime
+    title: NonEmptyStr  # the announcement text
+    subject: str = ""  # the exchange's category, e.g. "Financial Result Updates"
+    url: str | None = None
+    source: NonEmptyStr  # "nse_rss"
+
+
+class AnnouncementCoverageGap(EventPayload):
+    """Announcements between ``gap_from`` and ``gap_to`` may have been missed (feed outage, or
+    more announcements than the feed window holds). Downstream gates treat it as unknown."""
+
+    event_type = "AnnouncementCoverageGap"
+    source: NonEmptyStr
+    gap_from: AwareDatetime
+    gap_to: AwareDatetime
+    reason: NonEmptyStr
+
+
 class RegimeComputed(EventPayload):
     """The day's NIFTY regime, computed pre-open from settled bars (plan M5.3)."""
 
@@ -568,6 +595,9 @@ _PAYLOADS: tuple[type[EventPayload], ...] = (
     # session
     SessionStateChanged,
     HolidaySkipped,
+    # announcements
+    AnnouncementReceived,
+    AnnouncementCoverageGap,
     # decision
     RegimeComputed,
     SignalGenerated,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 import pytest
@@ -128,14 +128,32 @@ async def test_the_paper_run_wires_reference_data_yfinance_and_the_tape(
     monkeypatch.setattr(live, "refresh_reference", reference)
     monkeypatch.setattr(live, "YFinanceQuoteSource", quote_source)
     monkeypatch.setattr(live, "YFinanceHistorySource", lambda **kw: TapeHistorySource(bars))
-    paper = env(settings, "paper", tmp_path)
+    polls: list[tuple[datetime, bool]] = []
+
+    class FakeAnnouncements:
+        interval_s = 300.0
+
+        def __init__(self, *, instruments: Any, url: str, **kw: Any) -> None:
+            seen["announced"] = sorted(i.key for i in instruments)
+            seen["url"] = url
+
+        async def poll(self, *, force: bool = False) -> None:
+            polls.append((clock.now(), force))
+
+    monkeypatch.setattr(live, "AnnouncementIngestor", FakeAnnouncements)
+    paper = env(settings, "paper", tmp_path).model_copy(update={"announcements_enabled": True})
     view = RecordingView()
     task = asyncio.create_task(live.run_paper(paper, view, clock=clock))
     await pace(clock, datetime.combine(day, time(16, 0), IST), step_s=60.0, wall_s=0.0)
     assert await asyncio.wait_for(task, 60) == 0
     assert seen["reference_day"] == day
     assert seen["priced"] == sorted(f"NSE:EQ:{s}" for s, *_ in DEMO_SYMBOLS)
+    assert seen["announced"] == seen["priced"] and seen["url"].endswith("Online_announcements.xml")
     assert paper.db_path.exists() and view.stats.trades_approved >= 1
+    assert polls[0][1] is True and polls[0][0] < datetime.combine(day, time(9, 15), IST)  # backfill
+    in_session = [t for t, force in polls if not force]
+    assert len(in_session) >= 70  # every 5 minutes from the open to the close
+    assert all(b - a >= timedelta(minutes=5) for a, b in zip(in_session, in_session[1:]))
 
 
 def test_demo_day_picks_the_next_session():

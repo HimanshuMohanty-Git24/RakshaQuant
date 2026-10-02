@@ -21,11 +21,14 @@ from src.config.limits import load_risk_limits
 from src.config.settings import Settings
 from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, ReplayClock, WallClock, now_ist
+from src.domain.events import AnnouncementReceived
+from src.domain.types import Instrument
 from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
 from src.engine.runner import Engine, EngineConfig, build_engine, held_instruments
 from src.engine.view_model import StatsProjector
 from src.live.views import SessionView
 from src.llm.registry import validate_roles
+from src.marketdata.announcements import AnnouncementIngestor, watermark
 from src.marketdata.history import YFinanceHistorySource
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
 from src.marketdata.validation import QuoteValidator, band_lookup
@@ -75,9 +78,25 @@ async def run_paper(
         engine = build_engine(
             config=_config(settings), clock=clock, calendar=calendar, store=store,
             quotes=quotes, history=YFinanceHistorySource(tape=tape), universe=universe,
-            limits=limits,
+            limits=limits, announcements=_announcements(settings, store, clock, sink, priced),
         )  # fmt: skip
         return await _drive(engine, view, stop)
+
+
+def _announcements(
+    settings: Settings,
+    store: EventStore,
+    clock: Clock,
+    sink: StoreSink,
+    instruments: dict[str, Instrument],
+) -> AnnouncementIngestor | None:
+    if not settings.announcements_enabled:
+        return None
+    stored = [e.payload for e in store.read(types=["AnnouncementReceived"])]
+    seen, newest = watermark(p for p in stored if isinstance(p, AnnouncementReceived))
+    equities = [i for i in instruments.values() if i.series == "EQ"]
+    return AnnouncementIngestor(instruments=equities, clock=clock, sink=sink,
+                                url=settings.announcements_url, seen=seen, last_newest=newest)  # fmt: skip
 
 
 async def run_demo(

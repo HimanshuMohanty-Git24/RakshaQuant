@@ -218,6 +218,20 @@ def sample_payloads() -> list[EventPayload]:
             current=SessionState.ENTRY_WINDOW,
         ),
         ev.HolidaySkipped(session_date=date(2026, 10, 2), reason="Mahatma Gandhi Jayanti"),
+        ev.AnnouncementReceived(
+            announcement_id="a-0001",
+            instrument_key=INFY.key,
+            company="Infosys Ltd.",
+            published_at=T0,
+            received_at=T0,
+            title="Infosys Limited has informed the Exchange about the outcome of the Board Meeting",
+            subject="Outcome of Board Meeting",
+            url="https://nsearchives.nseindia.com/corporate/INFY_example.pdf",
+            source="nse_rss",
+        ),
+        ev.AnnouncementCoverageGap(
+            source="nse_rss", gap_from=T0, gap_to=T0, reason="feed_window_exceeded"
+        ),
         ev.RegimeComputed(
             session_date=date(2026, 10, 5),
             bar_date=date(2026, 10, 1),

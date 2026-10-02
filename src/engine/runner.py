@@ -28,6 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from typing import Protocol
 
 from src.brokers.simulated.broker import SimulatedBroker
 from src.brokers.simulated.costs import NSECostSchedule
@@ -41,6 +42,7 @@ from src.domain.types import Instrument, Quote, Regime, SessionState
 from src.engine.lifecycle import LifecycleConfig, LifecycleHooks, Schedule, SessionLifecycle
 from src.engine.market import HistorySource, MarketService, QuoteSource
 from src.engine.tasks import (
+    ANNOUNCEMENTS,
     MARKET_DATA,
     MONITOR,
     MONITOR_INTERVAL_S,
@@ -71,6 +73,15 @@ OMS_EVENTS = (
     "OrderExpired", "FillReceived",
 )  # fmt: skip
 _IN_SESSION = frozenset({SessionState.OPEN, SessionState.ENTRY_WINDOW, SessionState.MONITOR})
+
+
+class AnnouncementSource(Protocol):
+    """Polls corporate announcements (and, from M7.7, classifies them)."""
+
+    @property
+    def interval_s(self) -> float: ...
+
+    async def poll(self, *, force: bool = False) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -105,6 +116,7 @@ class Engine:
     decision: DecisionEngine
     lifecycle: SessionLifecycle
     tasks: TaskGroup
+    announcements: AnnouncementSource | None = None
     regime: Regime | None = None
     cycles: list[CycleResult] = field(default_factory=list)
     _session_started: bool = False
@@ -127,6 +139,14 @@ class Engine:
         self.monitor.start_day()
         result = await self.oms.reconcile()
         self.gate.flags.recon_drift = not result.in_sync
+        if self.announcements is not None:
+            try:  # the overnight backfill; a feed outage never blocks the session
+                await self.announcements.poll(force=True)
+            except Exception as exc:
+                logger.exception("announcement backfill failed")
+                self.sink.emit(Alert(level="WARNING", key="announcements_backfill_failed",
+                                     message=f"{type(exc).__name__}: {exc}"),
+                               source="engine")  # fmt: skip
 
     async def on_state(self, state: SessionState, schedule: Schedule) -> None:
         if state in _IN_SESSION and not self._session_started:
@@ -172,6 +192,9 @@ class Engine:
         self.tasks.start(MARKET_DATA, market.poll, lambda: market.next_delay_s)
         self.tasks.start(MONITOR, monitor_step, lambda: MONITOR_INTERVAL_S)
         self.tasks.start(RECONCILER, reconcile_step, lambda: RECONCILE_INTERVAL_S)
+        announcements = self.announcements
+        if announcements is not None:
+            self.tasks.start(ANNOUNCEMENTS, announcements.poll, lambda: announcements.interval_s)
 
     def _compute_regime(self, day: object) -> Regime | None:
         series = self.market.index_series()
@@ -221,6 +244,7 @@ def build_engine(
     universe: Sequence[Instrument],
     limits: RiskLimits,
     strategies: Mapping[str, Strategy] | None = None,
+    announcements: AnnouncementSource | None = None,
 ) -> Engine:
     book_id = config.book_id
     sink = StoreSink(store, clock, "engine")
@@ -271,7 +295,7 @@ def build_engine(
     engine = Engine(
         config=config, clock=clock, calendar=calendar, store=store, sink=sink, market=market,
         broker=broker, oms=oms, gate=gate, exits=exits, tracker=tracker, switches=switches,
-        monitor=monitor, decision=decision,
+        monitor=monitor, decision=decision, announcements=announcements,
         lifecycle=SessionLifecycle(clock=clock, calendar=calendar, sink=sink,
                                    config=config.lifecycle),
         tasks=TaskGroup(clock, sink),

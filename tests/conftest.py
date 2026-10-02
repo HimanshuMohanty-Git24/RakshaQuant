@@ -50,6 +50,7 @@ PLACEHOLDER_ENV = {
     "ENVIRONMENT": "test",
     "GROQ_API_KEY": "test-groq-key",
     "DATABASE_URL": "sqlite:///:memory:",
+    "ANNOUNCEMENTS_ENABLED": "false",  # no test polls NSE; wiring tests opt in with a fake
 }
 
 
