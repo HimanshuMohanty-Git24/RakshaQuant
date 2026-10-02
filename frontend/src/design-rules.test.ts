@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const ROOT = join(__dirname);
+const ROOT = import.meta.dirname;
 const BANNED: [string, RegExp][] = [
   ["gradients", /gradient/i],
   ["glass / blur", /backdrop-blur|backdrop-filter/],

@@ -131,6 +131,7 @@ jobs:
       # The API contract (plan M9.5): regenerate the types from the committed OpenAPI document
       # (itself checked against the code by tests/test_api_contract.py); a diff fails below.
       - run: npm run gen:api
+      - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
