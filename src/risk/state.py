@@ -231,6 +231,22 @@ class DailyRiskTracker:
                 day.consecutive_losses = 0
         self._save()
 
+    def acknowledge_streak(self, strategy: str) -> bool:
+        """An operator re-armed ``strategy`` after a losing streak: count it from zero. (The
+        streak only resets on a win, which a halted strategy cannot have, and the breach is
+        raised afresh every day - so without this a resume would be re-tripped at the next
+        session's first tick, before the strategy could trade.)"""
+        state = self._state
+        day = state.strategies.get(strategy) if state is not None else None
+        if state is None or day is None or day.consecutive_losses == 0:
+            return False
+        logger.info("book %s: %s's streak of %d losses acknowledged", self.book_id, strategy,
+                    day.consecutive_losses)  # fmt: skip
+        day.consecutive_losses = 0
+        state.breaches.discard(f"{R.STR_CONSEC_LOSSES}:{strategy}")
+        self._save()
+        return True
+
     # -- the monitor tick ------------------------------------------------------------------------------
 
     def risk_tick(

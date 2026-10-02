@@ -20,13 +20,13 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 
-from src.backtesting.bars import LEGS, day_quotes, previous_closes, sessions
+from src.backtesting.bars import LEGS, calendar_from_bars, day_quotes, previous_closes, sessions
 from src.config.limits import RiskLimits, load_risk_limits
 from src.decision.engine import Advisor
-from src.domain.calendar import NSECalendar, get_calendar
+from src.domain.calendar import NSECalendar
 from src.domain.clock import ReplayClock
 from src.domain.events import MarkToMarket, TradeClosed
-from src.domain.types import Bar, Instrument
+from src.domain.types import Bar, Instrument, KillScope, KillSwitchState
 from src.engine.runner import EngineConfig, build_engine
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
 from src.store.event_store import EventStore
@@ -53,15 +53,22 @@ class Backtest:
 
     bars: Sequence[Bar]
     universe: Sequence[Instrument]
-    config: EngineConfig = field(default_factory=lambda: EngineConfig(environment=ENVIRONMENT))
+    config: EngineConfig = field(
+        default_factory=lambda: EngineConfig(environment=ENVIRONMENT, heartbeat=False)
+    )
     limits: RiskLimits = field(default_factory=load_risk_limits)
-    calendar: NSECalendar = field(default_factory=get_calendar)
+    calendar: NSECalendar | None = None  # default: the sessions the bars traded
     advisors: Mapping[str, Advisor | None] | None = None
     step_s: float = 300.0  # the replay clock's step; path quotes are ~15 minutes apart
     legs: int = LEGS
+    # Research only: re-arm halted *strategy* switches before each session, as an operator who
+    # reviews and resumes every morning would (they latch otherwise: one losing streak would
+    # stop a strategy for the rest of the period). Global halts are never touched.
+    rearm_strategies: bool = False
 
     def __post_init__(self) -> None:
         self._sessions = sessions(self.bars)
+        self.trading_calendar = self.calendar or calendar_from_bars(self.bars)
 
     async def run_session(self, store: EventStore, day: date) -> bool:
         """One paper session on ``day``; False when the bars have nothing for it."""
@@ -72,10 +79,16 @@ class Backtest:
         quotes = day_quotes(today, previous_closes(self.bars, day), legs=self.legs)
         clock = ReplayClock(datetime.combine(day, START, IST))
         engine = build_engine(
-            config=self.config, clock=clock, calendar=self.calendar, store=store,
+            config=self.config, clock=clock, calendar=self.trading_calendar, store=store,
             quotes=TapeQuoteSource(quotes, clock=clock), history=TapeHistorySource(history),
             universe=self.universe, limits=self.limits, advisors=self.advisors,
         )  # fmt: skip
+        if self.rearm_strategies:
+            for book in engine.books.values():
+                for name, state in book.switches.kill_state().strategies.items():
+                    if state is not KillSwitchState.ARMED:
+                        book.switches.resume(KillScope.STRATEGY, name=name, actor="backtest",
+                                             reason="re-armed for the next session (research)")  # fmt: skip
         run = asyncio.create_task(engine.run())
         while not run.done():
             await clock.advance(self.step_s)
@@ -83,7 +96,7 @@ class Backtest:
         return True
 
     async def run(self, store_path: Path, start: date, end: date) -> BacktestResult:
-        days = self.calendar.trading_days(start, end)
+        days = self.trading_calendar.trading_days(start, end)
         ran, skipped = [], []
         with EventStore(store_path) as store:
             for day in days:

@@ -19,7 +19,7 @@ FLATTEN intents, retried every tick until flat and escalated to a CRITICAL alert
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -88,8 +88,10 @@ class KillSwitchRegistry:
         sink: EventSink,
         state_store: StateStore | None = None,
         halt_file: Path | None = None,
+        on_resume: Callable[[KillScope, str], object] | None = None,
     ) -> None:
         self.book_id = book_id
+        self._on_resume = on_resume  # e.g. the risk tracker acknowledging a strategy's streak
         self.limits = limits
         self.halt_file = halt_file
         self._clock = clock
@@ -158,6 +160,8 @@ class KillSwitchRegistry:
         if scope is KillScope.GLOBAL and self.halt_file is not None and self.halt_file.exists():
             raise RuntimeError(f"remove {self.halt_file} before resuming the global switch")
         self._set(scope, name, current, ARMED, reason=reason, actor=actor, code=None)
+        if self._on_resume is not None:
+            self._on_resume(scope, name)
         return True
 
     def apply(self, breaches: Iterable[Breach]) -> list[Breach]:

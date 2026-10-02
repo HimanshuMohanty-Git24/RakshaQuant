@@ -44,7 +44,7 @@ from src.decision.engine import Advisor, BookTarget, CycleResult, DecisionConfig
 from src.domain.calendar import NSECalendar
 from src.domain.clock import Clock
 from src.domain.events import Alert, MarkToMarket, OrderSubmitted
-from src.domain.types import Instrument, Quote, Regime, SessionState, TypedEvent
+from src.domain.types import Instrument, KillScope, Quote, Regime, SessionState, TypedEvent
 from src.engine.lifecycle import LifecycleConfig, LifecycleHooks, Schedule, SessionLifecycle
 from src.engine.market import HistorySource, MarketService, QuoteSource
 from src.engine.tasks import (
@@ -109,6 +109,7 @@ class EngineConfig:
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     decision: DecisionConfig | None = None  # default: enabled = the risk limits' strategies
     event_rules: EventRules = field(default_factory=EventRules.from_yaml)
+    heartbeat: bool = True  # process health; a backtest has no process to watch
 
     def __post_init__(self) -> None:
         if not self.books or len(set(self.books)) != len(self.books):
@@ -289,8 +290,9 @@ class Engine:
             await book.exits.on_session_start(schedule.day, atr=atr, closes=closes)
 
         self.tasks.start(MARKET_DATA, market.poll, lambda: market.next_delay_s)
-        self.tasks.start(HEARTBEAT, heartbeat(self.sink, self._started),
-                         lambda: HEARTBEAT_INTERVAL_S)  # fmt: skip
+        if self.config.heartbeat:
+            self.tasks.start(HEARTBEAT, heartbeat(self.sink, self._started),
+                             lambda: HEARTBEAT_INTERVAL_S)  # fmt: skip
         for book in self.books.values():
             self.tasks.start(f"{MONITOR}:{book.book_id}", _monitor_step(book),
                              lambda: MONITOR_INTERVAL_S)  # fmt: skip
@@ -483,7 +485,8 @@ def _build_book(
                                state_store=KVStateStore(store, book_id, "daily_risk"))  # fmt: skip
     switches = KillSwitchRegistry(book_id=book_id, limits=limits, clock=clock, sink=sink,
                                   state_store=KVStateStore(store, book_id, "kill_switches"),
-                                  halt_file=config.halt_file)  # fmt: skip
+                                  halt_file=config.halt_file,
+                                  on_resume=acknowledging(tracker))  # fmt: skip
     oms.add_event_listener(tracker.on_event)
     exits = ExitManager(oms=oms, clock=clock, calendar=calendar, sink=sink,
                         policy=config.policy.exit_policy(),
@@ -506,6 +509,15 @@ def _build_book(
     monitor = RiskMonitor(book=position_book, tracker=tracker, switches=switches,
                           flattener=flattener, marks=market.marks, clock=clock, sink=sink)  # fmt: skip
     return Book(book_id, broker, oms, gate, exits, tracker, switches, monitor)
+
+
+def acknowledging(tracker: DailyRiskTracker) -> Callable[[KillScope, str], object]:
+    """Re-arming a strategy's switch acknowledges its losing streak (see the tracker)."""
+
+    def on_resume(scope: KillScope, name: str) -> bool:
+        return scope is KillScope.STRATEGY and tracker.acknowledge_streak(name)
+
+    return on_resume
 
 
 def held_instruments(store: EventStore, book_id: str) -> dict[str, Instrument]:

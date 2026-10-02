@@ -234,3 +234,40 @@ async def test_a_failing_listener_never_breaks_the_oms(tmp_path):
         result = await h.oms.submit(oms_intent(Side.BUY, 10))
         assert result.status == "SUBMITTED"
         assert any(a.key == "oms_listener_failed" for a in h.events("Alert"))
+
+
+async def test_an_operator_resume_acknowledges_the_losing_streak():
+    """Without it the streak (reset only by a win) re-trips the strategy every morning."""
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+
+    from src.config.limits import load_risk_limits
+    from src.domain.clock import ReplayClock
+    from src.domain.events import TradeClosed
+    from src.domain.sink import RecordingSink
+    from src.domain.types import KillScope, KillSwitchState, Side
+    from src.engine.runner import acknowledging
+    from src.risk.kill_switch import KillSwitchRegistry
+    from src.risk.state import DailyRiskTracker
+
+    clock = ReplayClock(datetime(2026, 10, 5, 4, 0, tzinfo=UTC))
+    sink = RecordingSink(clock)
+    limits = load_risk_limits()
+    tracker = DailyRiskTracker(book_id="A", limits=limits, clock=clock, sink=sink)
+    switches = KillSwitchRegistry(book_id="A", limits=limits, clock=clock, sink=sink,
+                                  on_resume=acknowledging(tracker))  # fmt: skip
+    tracker.start_day(Decimal(1_000_000))
+    for i in range(limits.strategy_max_consec_losses):
+        tracker.record_trade(TradeClosed(
+            trade_id=f"t{i}", book_id="A", decision_id=f"d{i}", instrument_key="NSE:EQ:INFY",
+            strategy="momentum", side=Side.BUY, quantity=1, entry_price=Decimal(100),
+            exit_price=Decimal(99), entry_ts=clock.now(), exit_ts=clock.now(),
+            gross_pnl=Decimal(-1), charges=Decimal(0), net_pnl=Decimal(-1), exit_reason="stop"))  # fmt: skip
+    assert switches.apply(tracker.risk_tick(Decimal(999_995)))
+    assert switches.state(KillScope.STRATEGY, "momentum") is KillSwitchState.HALT_NEW
+
+    assert switches.resume(KillScope.STRATEGY, name="momentum", actor="web", reason="reviewed")
+    await clock.advance(timedelta(days=1).total_seconds())  # the next session
+    tracker.start_day(Decimal(999_995))
+    assert not switches.apply(tracker.risk_tick(Decimal(999_995)))  # not re-tripped
+    assert switches.state(KillScope.STRATEGY, "momentum") is KillSwitchState.ARMED

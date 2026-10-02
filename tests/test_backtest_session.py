@@ -86,7 +86,7 @@ async def test_a_backtest_session_fills_exactly_like_a_paper_session_on_the_same
     result = await bt.run(tmp_path / "bt.db", START, END)
     stop_day = next(t.exit_ts.astimezone(IST).date() for t in result.trades
                     if t.instrument_key == SBIN)  # fmt: skip
-    days = bt.calendar.trading_days(START, stop_day)
+    days = bt.trading_calendar.trading_days(START, stop_day)
     await bt.run(tmp_path / "before.db", START, days[-2])
     for suffix in ("", "-wal", "-shm"):
         src = tmp_path / f"before.db{suffix}"
@@ -99,7 +99,7 @@ async def test_a_backtest_session_fills_exactly_like_a_paper_session_on_the_same
         clock = ReplayClock(datetime.combine(stop_day, time(8, 50), IST))
         quotes = day_quotes(sessions(bars)[stop_day], previous_closes(bars, stop_day))
         engine = build_engine(
-            config=EngineConfig(environment="paper"), clock=clock, calendar=bt.calendar,
+            config=EngineConfig(environment="paper"), clock=clock, calendar=bt.trading_calendar,
             store=store, quotes=TapeQuoteSource(quotes, clock=clock),
             history=TapeHistorySource([b for b in bars if b.session_date < stop_day]),
             universe=universe(), limits=bt.limits,
@@ -139,3 +139,29 @@ async def test_a_gap_through_a_stop_fills_at_the_open(tmp_path):
     assert float(exit_.exit_price) <= gap_open  # the gap, not the stop price
     assert float(exit_.exit_price) > gap_open * 0.99  # only the fill model's spread/impact
     assert float(stop.exit_price) > gap_open  # without the gap it filled near its stop
+
+
+async def test_research_backtests_can_rearm_halted_strategies_each_morning(tmp_path):
+    from src.domain.clock import ReplayClock
+    from src.domain.sink import RecordingSink
+    from src.domain.types import KillScope, KillSwitchState
+    from src.risk.kill_switch import KillSwitchRegistry
+    from src.store.kv import KVStateStore
+
+    bars = fixture_bars()
+    with EventStore(tmp_path / "bt.db") as store:  # momentum halted before the period starts
+        clock = ReplayClock(datetime.combine(START, time(8, 0), IST))
+        KillSwitchRegistry(book_id="A", limits=Backtest(bars, universe()).limits, clock=clock,
+                           sink=RecordingSink(clock),
+                           state_store=KVStateStore(store, "A", "kill_switches")).trip(
+            KillScope.STRATEGY, KillSwitchState.HALT_NEW, reason="streak", actor="monitor",
+            name="momentum")  # fmt: skip
+        strict = Backtest(bars, universe())
+        assert await strict.run_session(store, START)
+        states = KVStateStore(store, "A", "kill_switches").load() or ""
+        assert '"HALT_NEW"' in states  # latched: nobody resumed it
+        research = Backtest(bars, universe(), rearm_strategies=True)
+        assert await research.run_session(store, START)
+        resumed = [e.payload for e in store.read(types=["KillSwitchChanged"])
+                   if e.payload.actor == "backtest"]  # fmt: skip
+        assert [(r.name, r.current) for r in resumed] == [("momentum", KillSwitchState.ARMED)]

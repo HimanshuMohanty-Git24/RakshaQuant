@@ -70,6 +70,7 @@ class MarketService:
         self._history_source = history
         self._sink = sink
         self._history: HistoryResult = HistoryResult(series={})
+        self._closes: dict[str, Decimal] = {}  # the last settled close per instrument
         self._features: dict[str, Features] = {}
         self._listeners: list[QuoteListener] = []
 
@@ -87,6 +88,8 @@ class MarketService:
         )
         alert_failures(result, self._sink)
         self._history = result
+        self._closes = {k: Decimal(str(s.last_close)) for k, s in result.series.items()
+                        if k != INDEX_KEY}  # fmt: skip
         self._features = {}
         for key, series in result.series.items():
             if key == INDEX_KEY:
@@ -153,8 +156,7 @@ class MarketService:
         """The latest quotes; an instrument not quoted yet today is marked at its last settled
         close - before the open that is yesterday's close, the right start-of-day value (a held
         position must never start the risk day valued at cost)."""
-        marks = {k: Decimal(str(s.last_close)) for k, s in self._history.series.items()
-                 if k != INDEX_KEY}  # fmt: skip
+        marks = dict(self._closes)
         marks.update({k: Decimal(str(q.ltp)) for k, q in self._quotes.last_quotes.items()})
         return marks
 

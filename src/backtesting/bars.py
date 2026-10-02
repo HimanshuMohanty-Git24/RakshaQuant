@@ -20,9 +20,12 @@ This is an approximation of the day, documented as such: the true intraday path 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
+from typing import Any
 
+from src.domain.calendar import NSECalendar
 from src.domain.types import Bar, MarketDataSource, Quote
+from src.marketdata.history import HistoryResult
 from src.utils.market_time import IST
 
 OPEN = time(9, 15)
@@ -91,3 +94,27 @@ def previous_closes(bars: Sequence[Bar], day: date) -> dict[str, float]:
             if seen is None or b.session_date > seen.session_date:
                 latest[b.instrument_key] = b
     return {k: b.close for k, b in latest.items()}
+
+
+def calendar_from_bars(bars: Iterable[Bar]) -> NSECalendar:
+    """A calendar whose sessions are the days the data traded (standard hours), for backtests
+    over years the NSE calendar file does not cover: every other weekday is a holiday."""
+    days = {b.session_date for b in bars}
+    years = sorted({d.year for d in days})
+    spec: dict[str, Any] = {}
+    for year in years:
+        weekday = date(year, 1, 1)
+        holidays = []
+        while weekday.year == year:
+            if weekday.weekday() < 5 and weekday not in days:
+                holidays.append({"date": weekday.isoformat(), "name": "no session in the data"})
+            weekday += timedelta(days=1)
+        spec[str(year)] = {"holidays": holidays}
+    session = {"pre_open": "09:00", "open": "09:15", "close": "15:30"}
+    return NSECalendar({"schema_version": 1, "default_session": session, "years": spec})
+
+
+def bars_from_history(result: HistoryResult) -> list[Bar]:
+    """Fetched history (``HistoryResult``) as the bars a backtest replays: raw and adjusted."""
+    return [bar for series in result.series.values()
+            for adjusted in (False, True) for bar in series.bars(adjusted=adjusted)]  # fmt: skip

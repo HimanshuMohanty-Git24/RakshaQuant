@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, Literal
 from src.domain.events import ControlCommand
 from src.domain.sink import EventSink
 from src.domain.types import KillScope, KillSwitchState
+from src.engine.runner import acknowledging
 from src.risk.kill_switch import KillSwitchRegistry
+from src.risk.state import DailyRiskTracker
 from src.store.kv import KVStateStore
 from src.store.sink import StoreSink
 from src.web.models import ControlResult
@@ -62,6 +64,15 @@ class Controls:
                 sink=sink,
                 state_store=KVStateStore(q.store, b, "kill_switches"),
                 halt_file=self.manager.settings.halt_file,
+                on_resume=acknowledging(
+                    DailyRiskTracker(
+                        book_id=b,
+                        limits=q.limits,
+                        clock=q.clock,
+                        sink=sink,
+                        state_store=KVStateStore(q.store, b, "daily_risk"),
+                    )
+                ),
             )  # fmt: skip
             for b in q.books
         }
