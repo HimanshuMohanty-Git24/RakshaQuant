@@ -40,7 +40,6 @@ def main() -> int:
 
     # Runtime
     print(f"\nEnvironment:      {s.environment}  (state: {s.state_dir})")
-    print(f"Data Source:      {s.market_data_source}")
     print(f"Execution Mode:   {s.execution_mode}  (v2 trades on the simulated broker only)")
 
     # Telegram
@@ -49,7 +48,7 @@ def main() -> int:
     )
     print(f"Telegram Alerts:  {'[OK]' if telegram_ok else '[Not configured - optional]'}")
 
-    # Cross-field validation warnings (live-mode creds, Telegram token/chat pairing)
+    # Cross-field validation warnings (an ignored broker venue, Telegram token/chat pairing)
     config_warnings = getattr(s, "config_warnings", [])
     if config_warnings:
         print(f"\nConfiguration Warnings ({len(config_warnings)}):")

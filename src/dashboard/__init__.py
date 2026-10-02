@@ -1,9 +1,5 @@
-"""
-Dashboard Module
+"""The terminal dashboard (``--mode cli``): the engine's state in ``rich``, from the projections."""
 
-CLI-based trading dashboard for real-time monitoring.
-"""
+from src.dashboard.cli import TerminalView
 
-from .cli import TradingDashboard, TradingStats
-
-__all__ = ["TradingDashboard", "TradingStats"]
+__all__ = ["TerminalView"]

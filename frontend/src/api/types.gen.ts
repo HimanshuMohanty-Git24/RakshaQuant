@@ -503,23 +503,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/state": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** State */
-        get: operations["state_api_state_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/summary": {
         parameters: {
             query?: never;
@@ -802,8 +785,6 @@ export interface components {
             llm_roles: {
                 [key: string]: string[];
             };
-            /** Market Data Source */
-            market_data_source: string;
             /**
              * Mode
              * @default paper
@@ -1409,8 +1390,7 @@ export interface components {
         /**
          * StreamEnvelope
          * @description Server → client. ``seq`` is set for stored events; ``type`` is the event type, or one of
-         *     ``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``console``, ``stopped``,
-         *     ``error``.
+         *     ``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``stopped``, ``error``.
          */
         StreamEnvelope: {
             /** Book Id */
@@ -1449,7 +1429,7 @@ export interface components {
              */
             since_seq?: number;
             /** Subscribe */
-            subscribe: ("orders" | "positions" | "decisions" | "risk" | "ai" | "market" | "system" | "summary" | "quotes" | "console" | "events")[];
+            subscribe: ("orders" | "positions" | "decisions" | "risk" | "ai" | "market" | "system" | "summary" | "quotes" | "events")[];
         };
         /** Summary */
         Summary: {
@@ -3537,73 +3517,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlResult"];
-                };
-            };
-            /** @description Missing or wrong token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Invalid request */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    state_api_state_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
             /** @description Missing or wrong token */

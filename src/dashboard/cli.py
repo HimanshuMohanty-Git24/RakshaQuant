@@ -1,739 +1,292 @@
 """
-RakshaQuant Professional Trading Dashboard
+The terminal dashboard (plan M12.2): the running engine in ``rich``, read from the same
+projections as the web console (:mod:`src.web.queries`, which never imports FastAPI) - every
+book's summary, the risk strip, open positions, the last decisions and warnings.
 
-A feature-rich CLI dashboard for live trading monitoring with:
-- Real-time market overview with all stocks
-- Decision reasoning transparency
-- Professional P&L tracking
-- Visual indicators and progress bars
+:class:`TerminalView` is the :class:`~src.engine.live.EngineView` the CLI hands to
+``run_paper``/``run_demo``: painted every second on the alternate screen, and printed once more
+on the normal screen when the session ends, so its final state stays visible.
 """
 
-import time
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from rich import box
-from rich.console import Console
-from rich.layout import Layout
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from src.utils.market_time import is_market_hours, now_ist
+from src.domain.events import Disposition
+from src.store.event_store import EventStore
+from src.utils.market_time import IST
+from src.web.models import AlertRow, BookRisk, DecisionRow, PositionRow, RiskView, Summary
+from src.web.queries import LiveView, Queries, build_queries, live_view
 
-console = Console()
+if TYPE_CHECKING:
+    from src.config.settings import Settings
+    from src.engine.runner import Engine
 
-
-def _bar(fraction: float, width: int = 16, fill: str = "█", empty: str = "░") -> str:
-    """Render a simple text progress bar for a 0..1 fraction."""
-    fraction = max(0.0, min(1.0, fraction))
-    filled = int(round(fraction * width))
-    return fill * filled + empty * (width - filled)
-
-
-@dataclass
-class TradingStats:
-    """Real-time trading statistics."""
-
-    # Session info
-    session_start: datetime = field(default_factory=datetime.now)
-    trading_mode: str = "paper"
-    data_source: str = "simulated"
-
-    # Account
-    starting_balance: float = 1000000.0
-    current_balance: float = 1000000.0
-
-    # Trades
-    total_trades: int = 0
-    winning_trades: int = 0
-    losing_trades: int = 0
-
-    # P&L
-    realized_pnl: float = 0.0
-    unrealized_pnl: float = 0.0
-    best_trade: float = 0.0
-    worst_trade: float = 0.0
-
-    # Open positions
-    open_positions: list = field(default_factory=list)
-
-    # Agent activity
-    cycles_run: int = 0
-    signals_generated: int = 0
-    signals_validated: int = 0
-    signals_rejected: int = 0
-    trades_approved: int = 0
-    trades_risk_rejected: int = 0
-
-    # Current regime
-    current_regime: str = "unknown"
-    regime_confidence: float = 0.0
-    active_strategies: list = field(default_factory=list)
-
-    # FinOps (LLM cost tracking, today / IST)
-    llm_calls: int = 0
-    llm_tokens: int = 0
-    llm_cost_usd: float = 0.0
-
-    # Profit-target goal (month-to-date pace)
-    goal_enabled: bool = False
-    goal_feasible: bool = True
-    goal_target_amount: float = 0.0
-    goal_mtd_pnl: float = 0.0
-    goal_expected_to_date: float = 0.0
-    goal_on_pace: bool = True
-    goal_status: str = ""
-
-    # Market data
-    market_quotes: dict = field(default_factory=dict)  # symbol -> quote dict
-    top_movers: list = field(default_factory=list)
-
-    # Decision info
-    last_decision_reason: str = ""
-    current_signal: dict = field(default_factory=dict)
-
-    # Recent activity log
-    activity_log: list = field(default_factory=list)
-
-    @property
-    def win_rate(self) -> float:
-        if self.total_trades == 0:
-            return 0.0
-        return (self.winning_trades / self.total_trades) * 100
-
-    @property
-    def total_pnl(self) -> float:
-        return self.realized_pnl + self.unrealized_pnl
-
-    @property
-    def pnl_percent(self) -> float:
-        if self.starting_balance == 0:
-            return 0.0
-        return (self.total_pnl / self.starting_balance) * 100
-
-    def log_activity(self, message: str, level: str = "INFO"):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.activity_log.append(
-            {
-                "time": timestamp,
-                "level": level,
-                "message": message,
-            }
-        )
-        # Keep last 12 entries
-        if len(self.activity_log) > 12:
-            self.activity_log = self.activity_log[-12:]
+DECISIONS_SHOWN = 10
+ALERTS_SHOWN = 4
+WARN_AT = 0.8  # a limit this used turns amber; at 1.0, red
+DETAIL_WIDTH = 64
 
 
-def create_header(stats: TradingStats) -> Panel:
-    """Create the header status bar: branding + mode/data/market badges + IST clock."""
+@dataclass(frozen=True)
+class Frame:
+    """Everything one paint shows: read in a worker thread, rendered on the event loop."""
 
-    # Mode badge (paper = safe/green, live = red).
-    mode_color = "green" if stats.trading_mode == "paper" else "red"
-    mode_text = f"[bold {mode_color}]\\[{stats.trading_mode.upper()}][/]"
+    summary: Summary
+    risk: RiskView
+    positions: list[PositionRow]
+    decisions: list[DecisionRow]
+    alerts: list[AlertRow]
+    quote_age_s: Mapping[str, float]
+    tasks: tuple[str, ...]
+    halt_file: str
 
-    # Data source badge.
-    is_live_data = "live" in stats.data_source.lower() or "websocket" in stats.data_source.lower()
-    data_color = "cyan" if is_live_data else "yellow"
-    data_text = f"[{data_color}]\\[{stats.data_source.upper()}][/]"
 
-    # Market open/closed (IST) + clock.
-    market_open = is_market_hours()
-    market_badge = "[bold green]● NSE OPEN[/]" if market_open else "[dim]○ NSE CLOSED[/]"
-    clock = now_ist().strftime("%H:%M:%S IST")
-
-    # Session time.
-    elapsed = datetime.now() - stats.session_start
-    hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    elapsed_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-    grid = Table.grid(expand=True)
-    grid.add_column(justify="left", ratio=2)
-    grid.add_column(justify="center", ratio=3)
-    grid.add_column(justify="right", ratio=2)
-
-    grid.add_row(
-        f"{mode_text} {data_text}  {market_badge}",
-        "[bold white on blue] 🛡️  RakshaQuant — Agentic NSE Trading [/]",
-        f"[white]{clock}[/]  [dim]· up {elapsed_str}[/]",
+def read_frame(q: Queries, live: LiveView | None, *, halt_file: str) -> Frame:
+    """One consistent read of the projections (synchronous: run it off the event loop)."""
+    today = q.today()
+    warnings = [a for a in q.alerts(level=None, day=today, limit=50)
+                if a.level in ("WARNING", "CRITICAL")]  # fmt: skip
+    return Frame(
+        summary=q.summary(live, running=bool(live and live.tasks)),
+        risk=q.risk(book=None, live=live),
+        positions=q.positions(live, book=None),
+        decisions=q.decisions(
+            book=None, symbol=None, strategy=None, outcome=None, day=today, limit=DECISIONS_SHOWN
+        ),
+        alerts=warnings[:ALERTS_SHOWN],
+        quote_age_s=dict(live.quote_age_s) if live else {},
+        tasks=live.tasks if live else (),
+        halt_file=halt_file,
     )
 
-    return Panel(grid, style="bold", box=box.DOUBLE_EDGE, border_style="blue")
+
+# -- rendering (pure: a Frame in, a renderable out) ----------------------------------------------
 
 
-def create_account_panel(stats: TradingStats) -> Panel:
-    """Create the account summary panel with visual indicators."""
-
-    content = Text()
-
-    # Balance with color
-    balance_color = "green" if stats.current_balance >= stats.starting_balance else "red"
-    content.append("\n  Balance: ", style="dim")
-    content.append(f"Rs. {stats.current_balance:,.2f}\n", style=f"bold {balance_color}")
-
-    # P&L with arrow indicator
-    pnl_color = "green" if stats.total_pnl >= 0 else "red"
-    pnl_arrow = "▲" if stats.total_pnl >= 0 else "▼"
-    pnl_sign = "+" if stats.total_pnl >= 0 else ""
-
-    content.append("  P&L: ", style="dim")
-    content.append(f"{pnl_arrow} ", style=pnl_color)
-    content.append(f"{pnl_sign}Rs. {stats.total_pnl:,.2f} ", style=f"bold {pnl_color}")
-    content.append(f"({pnl_sign}{stats.pnl_percent:.2f}%)\n", style=pnl_color)
-
-    content.append("\n")
-
-    # Realized/Unrealized breakdown
-    content.append("  Realized:   ", style="dim")
-    r_color = "green" if stats.realized_pnl >= 0 else "red"
-    content.append(f"Rs. {stats.realized_pnl:>10,.2f}\n", style=r_color)
-
-    content.append("  Unrealized: ", style="dim")
-    u_color = "green" if stats.unrealized_pnl >= 0 else "red"
-    content.append(f"Rs. {stats.unrealized_pnl:>10,.2f}\n", style=u_color)
-
-    # Best/Worst trade
-    if stats.total_trades > 0:
-        content.append("\n")
-        content.append("  Best Trade:  ", style="dim")
-        content.append(f"+Rs. {stats.best_trade:,.2f}\n", style="green")
-        content.append("  Worst Trade: ", style="dim")
-        content.append(f"Rs. {stats.worst_trade:,.2f}\n", style="red")
-
-    # Profit-target goal pace
-    if stats.goal_enabled:
-        content.append("\n")
-        content.append("  Monthly Goal: ", style="dim")
-        content.append(f"Rs. {stats.goal_target_amount:,.0f}\n", style="bold white")
-        if not stats.goal_feasible:
-            content.append("  Pace: ", style="dim")
-            content.append("⚠ target exceeds risk budget\n", style="bold yellow")
-        else:
-            pace_color = "green" if stats.goal_on_pace else "yellow"
-            pace_icon = "▲" if stats.goal_on_pace else "▼"
-            content.append("  Pace: ", style="dim")
-            content.append(
-                f"{pace_icon} Rs. {stats.goal_mtd_pnl:,.0f} / {stats.goal_expected_to_date:,.0f}\n",
-                style=f"bold {pace_color}",
-            )
-
-    return Panel(content, title="[bold white]💰 Account[/]", border_style="blue", box=box.ROUNDED)
+def money(value: Decimal | None, *, signed: bool = False) -> Text:
+    if value is None:
+        return Text("-", style="dim")
+    text = f"{value:+,.2f}" if signed else f"{value:,.2f}"
+    style = "" if not signed or value == 0 else ("green" if value > 0 else "red")
+    return Text(text, style=style)
 
 
-def create_trades_panel(stats: TradingStats) -> Panel:
-    """Create the trades summary panel with visual win rate."""
-
-    content = Text()
-
-    # Trade counts
-    content.append("\n  Total Trades: ", style="dim")
-    content.append(f"{stats.total_trades}\n", style="bold white")
-
-    content.append("  Winners:      ", style="dim")
-    content.append(f"{stats.winning_trades}\n", style="bold green")
-
-    content.append("  Losers:       ", style="dim")
-    content.append(f"{stats.losing_trades}\n", style="bold red")
-
-    content.append("\n")
-
-    # Win rate with visual bar
-    content.append("  Win Rate: ", style="dim")
-    wr = stats.win_rate
-    wr_color = "green" if wr >= 50 else "yellow" if wr >= 40 else "red"
-    content.append(f"{wr:.1f}%\n", style=f"bold {wr_color}")
-
-    # Visual win rate bar
-    bar_width = 20
-    filled = int((wr / 100) * bar_width)
-    content.append("  [", style="dim")
-    content.append("█" * filled, style="green")
-    content.append("░" * (bar_width - filled), style="dim")
-    content.append("]\n", style="dim")
-
-    return Panel(content, title="[bold white]📊 Trades[/]", border_style="green", box=box.ROUNDED)
+def percent(value: float | None) -> Text:
+    if value is None:
+        return Text("-", style="dim")
+    return Text(f"{value:+.2f}%", style="" if value == 0 else ("green" if value > 0 else "red"))
 
 
-def create_regime_panel(stats: TradingStats) -> Panel:
-    """Create the market regime panel with visual indicators."""
+def clock_ist(ts: datetime) -> str:
+    return ts.astimezone(IST).strftime("%H:%M:%S")
 
-    regime_styles = {
-        "trending_up": ("green", "🟢", "BULL"),
-        "trending_down": ("red", "🔴", "BEAR"),
-        "ranging": ("yellow", "🟡", "RANGE"),
-        "volatile": ("magenta", "🟣", "VOLATILE"),
-        "unknown": ("dim", "⚪", "UNKNOWN"),
-    }
 
-    color, icon, label = regime_styles.get(stats.current_regime, ("dim", "⚪", "UNKNOWN"))
+def switch_style(state: str) -> str:
+    return "green" if state == "ARMED" else "bold red"
 
-    content = Text()
-    content.append(f"\n  {icon} ", style=color)
-    content.append(f"{label}\n", style=f"bold {color}")
 
-    # Confidence bar
-    conf = stats.regime_confidence
-    conf_color = "green" if conf >= 0.7 else "yellow" if conf >= 0.5 else "red"
-    bar_width = 15
-    filled = int(conf * bar_width)
-
-    content.append("\n  Confidence: ", style="dim")
-    content.append(f"{conf:.0%}\n", style=f"bold {conf_color}")
-    content.append("  [", style="dim")
-    content.append("█" * filled, style=conf_color)
-    content.append("░" * (bar_width - filled), style="dim")
-    content.append("]\n", style="dim")
-
-    # Active strategies
-    content.append("\n  Strategies:\n", style="dim")
-    if stats.active_strategies:
-        for strat in stats.active_strategies[:3]:
-            content.append(f"    • {strat}\n", style="cyan")
+def header(frame: Frame) -> Text:
+    s = frame.summary
+    out = Text()
+    out.append(" RakshaQuant ", style="bold black on cyan")
+    out.append("  ")
+    out.append(" DEMO " if s.demo else " PAPER ", style="bold black on yellow" if s.demo
+               else "bold black on green")  # fmt: skip
+    out.append(f"  {s.experiment}  env {s.environment}  ")
+    if s.session is not None:
+        out.append(f"session {s.session.date} ")
+        out.append(s.session.state, style="bold")
     else:
-        content.append("    (none active)\n", style="dim italic")
+        out.append("no session yet", style="dim")
+    out.append(f"  {clock_ist(s.now)} IST  ")
+    out.append("market open" if s.market_open else "market closed",
+               style="green" if s.market_open else "dim")  # fmt: skip
+    upcoming = [step for step in s.schedule if step.at > s.now]
+    if upcoming:
+        out.append(f"  next {upcoming[0].state} {clock_ist(upcoming[0].at)}", style="dim")
+    out.append(f"  seq {s.last_seq}", style="dim")
+    out.append("  running" if s.running else "  stopped", style="cyan" if s.running else "dim")
+    return out
 
-    return Panel(
-        content, title="[bold white]📈 Market Regime[/]", border_style="cyan", box=box.ROUNDED
-    )
 
-
-def create_market_overview(stats: TradingStats) -> Panel:
-    """Create market overview showing all monitored stocks."""
-
-    if not stats.market_quotes:
-        content = Text("\n  Waiting for market data...\n", style="dim italic")
-        return Panel(
-            content,
-            title="[bold white]🌐 Market Overview[/]",
-            border_style="yellow",
-            box=box.ROUNDED,
-        )
-
-    table = Table(box=box.SIMPLE, show_header=True, expand=True, padding=(0, 1))
-    table.add_column("Symbol", style="bold", width=10)
-    table.add_column("LTP", justify="right", width=10)
-    table.add_column("Chg%", justify="right", width=8)
-    table.add_column("", width=4)  # Trend indicator
-
-    # Sort by change percent
-    sorted_quotes = sorted(
-        stats.market_quotes.items(),
-        key=lambda x: x[1].get("change_percent", 0),
-        reverse=True,
-    )
-
-    for symbol, quote in sorted_quotes[:8]:  # Top 8 stocks
-        ltp = quote.get("last_price", 0)
-        chg = quote.get("change_percent", 0)
-
-        chg_color = "green" if chg > 0 else "red" if chg < 0 else "white"
-        trend = "▲" if chg > 0 else "▼" if chg < 0 else "─"
-
+def books_table(summary: Summary) -> Table:
+    table = Table(title="Books", title_justify="left", box=box.SIMPLE_HEAD, expand=True)
+    for name in ("Book", "Advisor", "Equity", "Day P&L", "Day %", "Realized", "Unrealized"):
+        table.add_column(name, justify="left" if name in ("Book", "Advisor") else "right")
+    for name in ("Pos", "Orders", "Trades"):
+        table.add_column(name, justify="right")
+    table.add_column("Kill switch")
+    table.add_column("Valued", style="dim")
+    for b in summary.books:
         table.add_row(
-            symbol,
-            f"Rs.{ltp:,.0f}",
-            f"[{chg_color}]{chg:+.2f}%[/]",
-            f"[{chg_color}]{trend}[/]",
-        )
-
-    return Panel(
-        table, title="[bold white]🌐 Market Overview[/]", border_style="yellow", box=box.ROUNDED
-    )
+            Text(b.book_id, style="bold"), b.advisor, money(b.equity),
+            money(b.day_pnl, signed=True), percent(b.day_return_pct),
+            money(b.realized_pnl_today, signed=True), money(b.unrealized_pnl, signed=True),
+            str(b.open_positions), str(b.open_orders), str(b.trades_today),
+            Text(b.kill_switch, style=switch_style(b.kill_switch)), b.valuation.replace("_", " "),
+        )  # fmt: skip
+    return table
 
 
-def create_decision_panel(stats: TradingStats) -> Panel:
-    """Create panel showing current decision reasoning."""
-
-    content = Text()
-
-    if stats.current_signal:
-        sig = stats.current_signal
-        signal_type = sig.get("signal_type", "N/A")
-        symbol = sig.get("symbol", "N/A")
-        strategy = sig.get("strategy", "N/A")
-        confidence = sig.get("confidence", 0)
-
-        signal_color = "green" if signal_type == "BUY" else "red"
-
-        content.append("\n  Current Signal:\n", style="dim")
-        content.append(f"    {signal_type} ", style=f"bold {signal_color}")
-        content.append(f"{symbol}\n", style="bold white")
-
-        content.append("    Strategy: ", style="dim")
-        content.append(f"{strategy}\n", style="cyan")
-
-        content.append("    Confidence: ", style="dim")
-        content.append(f"{confidence:.0%}\n", style="bold")
-    else:
-        content.append("\n  No active signal\n", style="dim italic")
-
-    if stats.last_decision_reason:
-        content.append("\n  Decision Reason:\n", style="dim")
-        # Wrap long text
-        reason = stats.last_decision_reason[:100]
-        content.append(f"    {reason}\n", style="italic")
-
-    return Panel(
-        content, title="[bold white]🧠 AI Decision[/]", border_style="magenta", box=box.ROUNDED
-    )
+def _usage(book: BookRisk) -> Text:
+    out = Text()
+    for u in book.utilisation:
+        if out:
+            out.append("  ")
+        used = f"{u.used:,.0f}/{u.limit:,.0f}" if u.unit == "count" else (
+            f"{u.fraction:.0%}" if u.fraction is not None else "-")  # fmt: skip
+        fraction = u.fraction or 0.0
+        style = "red" if fraction >= 1 else ("yellow" if fraction >= WARN_AT else "")
+        out.append(f"{u.label} ", style="dim")
+        out.append(used, style=style)
+    return out
 
 
-def create_agent_panel(stats: TradingStats) -> Panel:
-    """Create the agent activity panel."""
-
-    table = Table(box=box.SIMPLE, show_header=False, expand=True, padding=(0, 1))
-    table.add_column("Metric", style="dim", width=16)
-    table.add_column("Value", justify="right", width=6)
-
-    table.add_row("Cycles Run", f"[bold]{stats.cycles_run}[/]")
-    table.add_row("Signals Gen", f"[white]{stats.signals_generated}[/]")
-    table.add_row("Validated", f"[green]{stats.signals_validated}[/]")
-    table.add_row("Rejected", f"[red]{stats.signals_rejected}[/]")
-    table.add_row("Risk Blocked", f"[yellow]{stats.trades_risk_rejected}[/]")
-
-    # Approval rate
-    if stats.signals_generated > 0:
-        approval_rate = (stats.signals_validated / stats.signals_generated) * 100
-        table.add_row("Approval Rate", f"[cyan]{approval_rate:.0f}%[/]")
-
-    return Panel(
-        table, title="[bold white]🤖 Agent Activity[/]", border_style="magenta", box=box.ROUNDED
-    )
+def risk_strip(risk: RiskView) -> Table:
+    table = Table(title="Risk", title_justify="left", box=box.SIMPLE_HEAD, expand=True)
+    table.add_column("Book", style="bold")
+    table.add_column("Switches")
+    table.add_column("Limits used")
+    table.add_column("Blocked today")
+    for book in risk.books:
+        tripped = [f"{k.scope.lower()}:{k.name} {k.state}" for k in book.kill_switches
+                   if k.state != "ARMED"]  # fmt: skip
+        switches = Text(", ".join(tripped), style="bold red") if tripped else Text(
+            "ARMED", style="green")  # fmt: skip
+        most = sorted(book.rejections_today.items(), key=lambda kv: -kv[1])[:3]
+        blocked = Text(", ".join(f"{code} x{n}" for code, n in most) or "-",
+                       style="yellow" if most else "dim")  # fmt: skip
+        table.add_row(book.book_id, switches, _usage(book), blocked)
+    return table
 
 
-def create_status_panel(stats: TradingStats) -> Panel:
-    """Session footer: today's LLM spend (FinOps) + profit-goal pace + controls."""
-
-    content = Text()
-
-    content.append("\n  LLM today (FinOps)\n", style="bold")
-    content.append(f"    Calls:  {stats.llm_calls}\n", style="dim")
-    content.append(f"    Tokens: {stats.llm_tokens:,}\n", style="dim")
-    content.append("    Cost:   ", style="dim")
-    content.append(f"${stats.llm_cost_usd:.4f}\n", style="cyan")
-
-    if stats.goal_enabled:
-        content.append("\n  Profit goal\n", style="bold")
-        if not stats.goal_feasible:
-            content.append("    ⚠ target exceeds risk budget\n", style="yellow")
-        else:
-            target = stats.goal_expected_to_date or 0.0
-            frac = (stats.goal_mtd_pnl / target) if target > 0 else 0.0
-            pace_color = "green" if stats.goal_on_pace else "yellow"
-            content.append(
-                f"    Rs.{stats.goal_mtd_pnl:,.0f} / {stats.goal_expected_to_date:,.0f}\n",
-                style=pace_color,
-            )
-            content.append(f"    {_bar(max(0.0, frac), width=14)}\n", style=pace_color)
-            content.append(
-                f"    {'▲ on pace' if stats.goal_on_pace else '▼ behind pace'}\n",
-                style=pace_color,
-            )
-
-    content.append("\n  Ctrl+C to stop\n", style="dim italic")
-
-    return Panel(
-        content, title="[bold white]⚙️  Session & Cost[/]", border_style="cyan", box=box.ROUNDED
-    )
-
-
-def create_positions_panel(stats: TradingStats) -> Panel:
-    """Create the open positions panel."""
-
-    if not stats.open_positions:
-        content = Text("\n  No open positions\n", style="dim italic")
-        return Panel(
-            content, title="[bold white]📋 Open Positions[/]", border_style="white", box=box.ROUNDED
-        )
-
-    table = Table(box=box.SIMPLE, expand=True, show_header=True, padding=(0, 1))
-    table.add_column("Symbol", style="bold", width=10)
-    table.add_column("Side", width=5)
-    table.add_column("Qty", justify="right", width=5)
-    table.add_column("Entry", justify="right", width=12)
-    table.add_column("P&L", justify="right", width=12)
-
-    for pos in stats.open_positions[:5]:
-        pnl = pos.get("pnl", 0)
-        pnl_color = "green" if pnl >= 0 else "red"
-        pnl_sign = "+" if pnl >= 0 else ""
-
-        side = pos.get("side", "N/A")
-        side_color = "green" if side == "BUY" else "red"
-
+def positions_table(positions: Sequence[PositionRow]) -> Table:
+    table = Table(title=f"Open positions ({len(positions)})", title_justify="left",
+                  box=box.SIMPLE_HEAD, expand=True)  # fmt: skip
+    for name in ("Book", "Symbol", "Qty", "Avg", "Mark", "Unrealized", "Stop", "Target",
+                 "Strategy", "Held"):  # fmt: skip
+        right = name in ("Qty", "Avg", "Mark", "Unrealized", "Stop", "Target", "Held")
+        table.add_column(name, justify="right" if right else "left")
+    for p in positions:
         table.add_row(
-            pos.get("symbol", "N/A"),
-            f"[{side_color}]{side}[/]",
-            str(pos.get("qty", 0)),
-            f"Rs.{pos.get('entry', 0):,.2f}",
-            f"[{pnl_color}]{pnl_sign}Rs.{pnl:,.2f}[/]",
-        )
+            p.book_id, Text(p.symbol, style="bold"), str(p.quantity), money(p.avg_price),
+            money(p.mark), money(p.unrealized_pnl, signed=True), money(p.stop_price),
+            money(p.target_price), p.strategy or "-",
+            "-" if p.held_sessions is None else str(p.held_sessions),
+        )  # fmt: skip
+    if not positions:
+        table.add_row(*(["-"] + [""] * 9))
+    return table
 
-    return Panel(
-        table, title="[bold white]📋 Open Positions[/]", border_style="white", box=box.ROUNDED
+
+def disposition_style(disposition: str) -> str:
+    if disposition == Disposition.SUBMITTED:
+        return "green"
+    if disposition in (Disposition.VETOED, Disposition.RISK_REJECTED, Disposition.BROKER_REJECTED):
+        return "red"
+    if disposition == Disposition.UNKNOWN:
+        return "yellow"
+    return "dim"  # recorded, not traded: shadow strategies, regime gate, policy skips
+
+
+def decisions_table(decisions: Sequence[DecisionRow]) -> Table:
+    table = Table(title="Last decisions", title_justify="left", box=box.SIMPLE_HEAD,
+                  expand=True)  # fmt: skip
+    for name in ("Time", "Book", "Symbol", "Strategy", "Disposition", "Detail"):
+        table.add_column(name)
+    for d in decisions:
+        table.add_row(clock_ist(d.ts), d.book_id, d.symbol, d.strategy,
+                      Text(d.disposition, style=disposition_style(d.disposition)),
+                      Text(d.detail[:DETAIL_WIDTH], style="dim"))  # fmt: skip
+    if not decisions:
+        table.add_row("-", "", "", "", "", "")
+    return table
+
+
+def alerts_table(alerts: Sequence[AlertRow]) -> Table:
+    table = Table(title="Warnings today", title_justify="left", box=box.SIMPLE_HEAD,
+                  expand=True, show_header=False)  # fmt: skip
+    table.add_column("Time")
+    table.add_column("Level")
+    table.add_column("Message")
+    for a in alerts:
+        table.add_row(clock_ist(a.ts), Text(a.level, style="red" if a.level == "CRITICAL"
+                                            else "yellow"), a.message[:120])  # fmt: skip
+    if not alerts:
+        table.add_row("-", "", Text("none", style="dim"))
+    return table
+
+
+def footer(frame: Frame) -> Text:
+    ages = ", ".join(
+        f"{source} {age:.0f}s old" for source, age in sorted(frame.quote_age_s.items())
     )
+    out = Text(style="dim")
+    out.append(f"quotes: {ages or '-'}   tasks: {', '.join(frame.tasks) or '-'}\n")
+    out.append(f"Ctrl-C stops the session.  Halt every book: create {frame.halt_file} "
+               "(content FLATTEN to also flatten).")  # fmt: skip
+    return out
 
 
-def create_activity_panel(stats: TradingStats) -> Panel:
-    """Create the activity log panel."""
-
-    if not stats.activity_log:
-        content = Text("\n  Waiting for activity...\n", style="dim italic")
-        return Panel(
-            content, title="[bold white]📜 Activity Log[/]", border_style="white", box=box.ROUNDED
-        )
-
-    lines = []
-    level_styles = {
-        "INFO": ("blue", "ℹ"),
-        "SUCCESS": ("green", "✓"),
-        "WARNING": ("yellow", "⚠"),
-        "ERROR": ("red", "✗"),
-        "TRADE": ("cyan", "💹"),
-    }
-
-    for entry in stats.activity_log[-10:]:
-        color, icon = level_styles.get(entry["level"], ("white", "•"))
-        lines.append(f"[dim]{entry['time']}[/] [{color}]{icon}[/] {entry['message']}")
-
-    content = "\n".join(lines)
-
-    return Panel(
-        content, title="[bold white]📜 Activity Log[/]", border_style="white", box=box.ROUNDED
-    )
+def render(frame: Frame) -> RenderableType:
+    return Group(header(frame), books_table(frame.summary), risk_strip(frame.risk),
+                 positions_table(frame.positions), decisions_table(frame.decisions),
+                 alerts_table(frame.alerts), footer(frame))  # fmt: skip
 
 
-def create_dashboard_layout(stats: TradingStats) -> Layout:
-    """Create the full professional dashboard layout."""
-
-    layout = Layout()
-
-    # Main structure
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="body"),
-        Layout(name="footer", size=14),
-    )
-
-    # Body split into 3 columns
-    layout["body"].split_row(
-        Layout(name="left", ratio=1),
-        Layout(name="center", ratio=1),
-        Layout(name="right", ratio=1),
-    )
-
-    # Left column: Account + Trades
-    layout["left"].split_column(
-        Layout(name="account"),
-        Layout(name="trades"),
-    )
-
-    # Center column: Market Overview + Positions
-    layout["center"].split_column(
-        Layout(name="market"),
-        Layout(name="positions"),
-    )
-
-    # Right column: Regime + Decision + Agent
-    layout["right"].split_column(
-        Layout(name="regime"),
-        Layout(name="decision"),
-        Layout(name="agent"),
-    )
-
-    # Footer: activity log (wide) + a session/cost/goal status panel (narrow)
-    layout["footer"].split_row(
-        Layout(name="activity", ratio=3),
-        Layout(name="status", ratio=1),
-    )
-
-    # Populate panels
-    layout["header"].update(create_header(stats))
-    layout["account"].update(create_account_panel(stats))
-    layout["trades"].update(create_trades_panel(stats))
-    layout["market"].update(create_market_overview(stats))
-    layout["positions"].update(create_positions_panel(stats))
-    layout["regime"].update(create_regime_panel(stats))
-    layout["decision"].update(create_decision_panel(stats))
-    layout["agent"].update(create_agent_panel(stats))
-    layout["activity"].update(create_activity_panel(stats))
-    layout["status"].update(create_status_panel(stats))
-
-    return layout
+# -- the view ------------------------------------------------------------------------------------
 
 
-class TradingDashboard:
-    """Live trading dashboard manager."""
+class TerminalView:
+    """Paints the engine once a second (see ``src.engine.live._drive``) on its own read
+    connection to the engine's store, like the web console."""
 
-    def __init__(self):
-        self.stats = TradingStats()
-        self.live = None
-        self.running = False
+    def __init__(
+        self, settings: Settings, *, console: Console | None = None, screen: bool = True
+    ) -> None:
+        self.settings = settings
+        self.console = console or Console()
+        self.screen = screen
+        self.frame: Frame | None = None
+        self._live: Live | None = None
+        self._reader: EventStore | None = None
+        self._queries: Queries | None = None
 
-    def start(
-        self, balance: float = 1000000.0, mode: str = "paper", data_source: str = "simulated"
-    ):
-        """Start the dashboard."""
-        self.stats.starting_balance = balance
-        self.stats.current_balance = balance
-        self.stats.trading_mode = mode
-        self.stats.data_source = data_source
-        self.stats.session_start = datetime.now()
-        self.running = True
+    async def __aenter__(self) -> TerminalView:
+        # Transient: the live render is cleared at the end; __aexit__ prints the final state once.
+        self._live = Live(Text("RakshaQuant: starting the session..."), console=self.console,
+                          screen=self.screen, refresh_per_second=4, transient=True)  # fmt: skip
+        self._live.start()
+        return self
 
-        self.stats.log_activity("Dashboard started", "INFO")
-        self.stats.log_activity(f"Mode: {mode.upper()}", "INFO")
-        self.stats.log_activity(f"Data: {data_source.upper()}", "INFO")
+    async def __aexit__(self, *exc: object) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+        if self.frame is not None:
+            self.console.print(render(self.frame))  # the final state, on the normal screen
+        if self._reader is not None:
+            self._reader.close()
+        self._reader, self._queries = None, None
 
-    def update_regime(self, regime: str, confidence: float, strategies: list):
-        """Update market regime info."""
-        self.stats.current_regime = regime
-        self.stats.regime_confidence = confidence
-        self.stats.active_strategies = strategies
-        self.stats.log_activity(f"Regime: {regime} ({confidence:.0%})", "INFO")
-
-    def update_market_data(self, quotes: dict):
-        """Update market quotes."""
-        self.stats.market_quotes = quotes
-
-    def set_current_signal(self, signal_type: str, symbol: str, strategy: str, confidence: float):
-        """Set the current trading signal."""
-        self.stats.current_signal = {
-            "signal_type": signal_type,
-            "symbol": symbol,
-            "strategy": strategy,
-            "confidence": confidence,
-        }
-
-    def set_decision_reason(self, reason: str):
-        """Set the decision reasoning."""
-        self.stats.last_decision_reason = reason
-
-    def log_signal(self, symbol: str, signal_type: str, strategy: str, validated: bool):
-        """Log a signal."""
-        self.stats.signals_generated += 1
-        if validated:
-            self.stats.signals_validated += 1
-            self.stats.log_activity(f"✓ {signal_type} {symbol} [{strategy}]", "SUCCESS")
-        else:
-            self.stats.signals_rejected += 1
-            self.stats.log_activity(f"✗ {signal_type} {symbol} rejected", "WARNING")
-
-    def log_trade(self, symbol: str, side: str, qty: int, price: float, approved: bool):
-        """Log a trade decision."""
-        if approved:
-            self.stats.trades_approved += 1
-            self.stats.log_activity(f"TRADE: {side} {qty}x {symbol} @ Rs.{price:,.2f}", "TRADE")
-        else:
-            self.stats.trades_risk_rejected += 1
-            self.stats.log_activity(f"BLOCKED: {side} {symbol} by risk", "WARNING")
-
-    def add_position(self, symbol: str, side: str, qty: int, entry_price: float):
-        """Add an open position."""
-        self.stats.open_positions.append(
-            {
-                "symbol": symbol,
-                "side": side,
-                "qty": qty,
-                "entry": entry_price,
-                "pnl": 0.0,
-            }
-        )
-
-    def close_trade(self, pnl: float):
-        """Record a closed trade."""
-        self.stats.total_trades += 1
-        self.stats.realized_pnl += pnl
-        self.stats.current_balance += pnl
-
-        # Track best/worst
-        if pnl > self.stats.best_trade:
-            self.stats.best_trade = pnl
-        if pnl < self.stats.worst_trade:
-            self.stats.worst_trade = pnl
-
-        if pnl >= 0:
-            self.stats.winning_trades += 1
-            self.stats.log_activity(f"Trade closed: +Rs.{pnl:,.2f}", "SUCCESS")
-        else:
-            self.stats.losing_trades += 1
-            self.stats.log_activity(f"Trade closed: Rs.{pnl:,.2f}", "ERROR")
-
-    def increment_cycle(self):
-        """Increment cycle counter."""
-        self.stats.cycles_run += 1
-        self.stats.log_activity(f"Cycle #{self.stats.cycles_run} complete", "INFO")
-
-    def render(self) -> Layout:
-        """Render the dashboard."""
-        return create_dashboard_layout(self.stats)
-
-
-def demo_dashboard():
-    """Demo the dashboard with simulated data."""
-
-    dashboard = TradingDashboard()
-    dashboard.start(balance=1000000.0, mode="paper", data_source="simulated")
-
-    # Sample market data
-    sample_quotes = {
-        "RELIANCE": {"last_price": 2485.50, "change_percent": 1.25},
-        "TCS": {"last_price": 4150.00, "change_percent": -0.85},
-        "HDFCBANK": {"last_price": 1680.25, "change_percent": 0.45},
-        "INFY": {"last_price": 1845.00, "change_percent": -1.20},
-        "SBIN": {"last_price": 785.50, "change_percent": 2.15},
-        "ITC": {"last_price": 465.00, "change_percent": 0.65},
-        "ICICIBANK": {"last_price": 1275.00, "change_percent": -0.35},
-        "BHARTIARTL": {"last_price": 1620.00, "change_percent": -1.75},
-    }
-
-    console.print("[bold green]Starting Professional Dashboard Demo...[/]\n")
-    console.print("[dim]Press Ctrl+C to exit[/]\n")
-    time.sleep(1)
-
-    with Live(dashboard.render(), console=console, refresh_per_second=2) as live:
-        try:
-            dashboard.update_market_data(sample_quotes)
-
-            time.sleep(2)
-            dashboard.update_regime("trending_up", 0.72, ["momentum", "trend_following"])
-            live.update(dashboard.render())
-
-            time.sleep(2)
-            dashboard.set_current_signal("BUY", "SBIN", "momentum", 0.68)
-            dashboard.set_decision_reason(
-                "Strong upward momentum (+2.15%) with RSI oversold bounce"
-            )
-            live.update(dashboard.render())
-
-            time.sleep(2)
-            dashboard.log_signal("SBIN", "BUY", "momentum", True)
-            live.update(dashboard.render())
-
-            time.sleep(2)
-            dashboard.log_trade("SBIN", "BUY", 50, 785.50, True)
-            dashboard.add_position("SBIN", "BUY", 50, 785.50)
-            live.update(dashboard.render())
-
-            time.sleep(2)
-            dashboard.increment_cycle()
-            live.update(dashboard.render())
-
-            time.sleep(3)
-            dashboard.close_trade(750.0)
-            dashboard.stats.open_positions = []
-            live.update(dashboard.render())
-
-            while True:
-                time.sleep(0.5)
-                live.update(dashboard.render())
-
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Dashboard stopped[/]")
-
-
-if __name__ == "__main__":
-    demo_dashboard()
+    async def paint(self, engine: Engine) -> None:
+        if self._queries is None:
+            self._reader = EventStore(engine.store.path)
+            self._queries = build_queries(self._reader, self.settings, clock=engine.clock)
+        live = live_view(engine)  # on the event loop: the engine's in-memory state
+        self.frame = await asyncio.to_thread(read_frame, self._queries, live,
+                                             halt_file=str(self.settings.halt_file))  # fmt: skip
+        if self._live is not None:
+            self._live.update(render(self.frame), refresh=True)

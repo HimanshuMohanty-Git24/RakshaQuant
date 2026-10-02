@@ -89,7 +89,7 @@ export function reduce(state: StreamState, batch: Envelope[], now = Date.now()):
       case "error":
         notices.push(message);
         break;
-      default: // heartbeat, console (legacy)
+      default: // heartbeat
         break;
     }
   }

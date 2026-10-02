@@ -35,7 +35,6 @@ def test_dhan_connection():
     base_url = settings.dhan_base_url
 
     print("\n[CONFIG] Configuration:")
-    print(f"   Trading Mode: {settings.trading_mode}")
     print(f"   Client ID: {settings.dhan_client_id}")
     print(f"   API Base: {base_url}")
 

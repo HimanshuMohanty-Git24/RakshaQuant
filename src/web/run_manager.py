@@ -1,6 +1,5 @@
 """
-Run manager — owns the live trading session as a background task and fans state out to
-connected WebSocket clients.
+Run manager — owns the trading session as a background task for the web console.
 
 Responsibilities:
 * Start/stop a single trading run of the v2 engine (:mod:`src.engine.live`): paper, or - in
@@ -8,8 +7,7 @@ Responsibilities:
   Nothing is ever fabricated for the UI.
 * Hold the web's **own read connection** to the environment's event store (WAL readers never
   block the engine) and the running engine, once a run has built it, for the API's live views.
-* Own the event-stream :class:`~src.web.stream.Hub` and act as the legacy console's
-  :class:`~src.live.views.SnapshotSink` (its snapshot is the stream's ``console`` slot).
+* Own the event-stream :class:`~src.web.stream.Hub`.
 * A read-only deployment (``RAKSHAQUANT_WEB_READONLY``) disables run-control entirely.
 """
 
@@ -17,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import os
 import sqlite3
 from collections.abc import Callable
@@ -25,18 +22,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from src.config import get_settings
-from src.config.limits import load_risk_limits
-from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, ReplayClock, WallClock
 from src.domain.events import ControlCommand
-from src.engine.demo import DEMO_TAPE
 from src.engine.live import STOP_GRACE_S, demo_store_path
-from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
-from src.live.recorder import env_badge
-from src.live.views import StreamSessionView
 from src.store.event_store import EventStore
 from src.web.models import ControlResult
-from src.web.queries import LiveView, Queries
+from src.web.queries import LiveView, Queries, build_queries, live_view
 from src.web.stream import Hub
 
 if TYPE_CHECKING:
@@ -48,21 +39,7 @@ T = TypeVar("T")
 
 
 class RunControlError(RuntimeError):
-    """Raised when a run cannot be started (already running, live-unconfirmed, read-only)."""
-
-
-def resolve_effective_mode(settings: Any) -> str:
-    """
-    Best-effort resolution of the effective execution mode for the *pre-run* badge.
-
-    Mirrors ``ExecutionService``: a ``live``/``dhan_paper`` request without the master
-    ``allow_live_orders`` gate resolves to ``shadow``. The authoritative value is set on the
-    view once the session builds the real ExecutionService.
-    """
-    mode = str(getattr(settings, "execution_mode", "local_paper"))
-    if mode in ("live", "dhan_paper") and not bool(getattr(settings, "allow_live_orders", False)):
-        return "shadow"
-    return mode
+    """Raised when a run cannot be started (already running, wrong environment, read-only)."""
 
 
 def _stopped_clock(store: EventStore) -> Clock | None:
@@ -73,9 +50,7 @@ def _stopped_clock(store: EventStore) -> Clock | None:
 
 
 class RunManager:
-    """Owns the background session task and the WebSocket broadcast bus."""
-
-    MAX_CYCLES_KEPT = 200
+    """Owns the background session task, the web's read connection and the stream hub."""
 
     def __init__(
         self,
@@ -92,12 +67,8 @@ class RunManager:
         self.engine: Engine | None = None
         self._starting: str | None = None  # a start to record once the engine exists
         self.hub = Hub(self)
-        self._snapshot: dict[str, Any] | None = None
-        self._cycles: list[dict[str, Any]] = []
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
-        self._stats: Any = None
-        self._demo = False
 
     # ── The store and the engine ──────────────────────────────────────────────────────
 
@@ -117,15 +88,8 @@ class RunManager:
             clock = engine.clock if engine else self._clock
             if engine is None and demo:  # a finished demo: its clock stopped on the tape's day
                 clock = _stopped_clock(self._reader) or clock
-            self._queries = Queries(
-                self._reader, settings=settings,
-                experiment=load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH),
-                limits=load_risk_limits(), calendar=get_calendar(),
-                clock=clock,
-                reports_dir=settings.state_dir / "reports" if demo else settings.reports_dir,
-                demo=demo, read_only=self._read_only(),
-                tape_dir=DEMO_TAPE if demo else settings.tape_dir,  # what the demo replays
-            )  # fmt: skip
+            self._queries = build_queries(self._reader, settings, clock=clock,
+                                          read_only=self._read_only())  # fmt: skip
         return self._queries
 
     def attach(self, engine: Engine) -> None:
@@ -164,40 +128,7 @@ class RunManager:
 
     def live_view(self) -> LiveView | None:
         """The engine's in-memory state; call on the event loop (the engine's thread)."""
-        engine = self.engine
-        if engine is None:
-            return None
-        now = engine.clock.now()
-        ages: dict[str, float] = {}
-        for quote in engine.market.quotes().values():
-            source = quote.source.value
-            ages[source] = round(min(ages.get(source, math.inf), quote.age_seconds(now)), 1)
-        valuations, risk = {}, {}
-        for book_id, book in engine.books.items():
-            try:
-                valuations[book_id] = engine.valuation(book_id)
-            except KeyError:  # a position without a mark yet (before the first poll)
-                pass
-            try:
-                risk[book_id] = book.gate.book_snapshot()
-            except Exception:  # a view must never fail on the engine's account
-                logger.exception("risk snapshot for book %s failed", book_id)
-        return LiveView(valuations=valuations, marks=engine.market.marks(),
-                        tasks=tuple(engine.tasks.running), quote_age_s=ages, risk=risk,
-                        managed={b: book.exits.positions for b, book in engine.books.items()},
-                        instruments=dict(engine.market.instruments),
-                        quotes=engine.market.quotes(), index_closes=engine.index_closes())  # fmt: skip
-
-    # ── SnapshotSink interface (called from StreamSessionView) ──────────────────────
-
-    def set_snapshot(self, snapshot: dict[str, Any]) -> None:
-        self._snapshot = snapshot
-        self.hub.publish("console", snapshot)  # the legacy console's snapshot (until M10)
-
-    def add_cycle(self, cycle: dict[str, Any]) -> None:
-        self._cycles.append(cycle)
-        if len(self._cycles) > self.MAX_CYCLES_KEPT:
-            self._cycles = self._cycles[-self.MAX_CYCLES_KEPT :]
+        return live_view(self.engine) if self.engine is not None else None
 
     # ── Broadcast (the event stream hub) ──────────────────────────────────────────
 
@@ -205,24 +136,11 @@ class RunManager:
         """A run notice (``stopped``, ``error``) to the stream's system subscribers."""
         self.hub.announce(str(message["type"]), message.get("data") or {})
 
-    # ── State accessors ─────────────────────────────────────────────────────────────
+    # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
-
-    def state(self) -> dict[str, Any]:
-        return {
-            "snapshot": self._snapshot,
-            "cycles": self._cycles,
-            "running": self.is_running,
-            "demo": self._demo,
-        }
-
-    def cycle(self, cycle_id: str) -> dict[str, Any] | None:
-        return next((c for c in self._cycles if c.get("id") == cycle_id), None)
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _read_only() -> bool:
@@ -245,22 +163,11 @@ class RunManager:
                                   "with --demo.")  # fmt: skip
         if in_demo and not demo:
             raise RunControlError("This console runs the demo environment: start a demo run.")
-
-        effective = resolve_effective_mode(self.settings)
-
-        from src.dashboard.cli import TradingStats
-
-        self._stats = TradingStats()
-        self._cycles = []
-        self._demo = demo
         self._starting = "demo" if demo else "paper"
         self._stop_event = asyncio.Event()
-        view = StreamSessionView(self._stats, self, effective_mode=effective)
-
-        coro = self._run_demo(view) if demo else self._run_real(view)
-        self._task = asyncio.create_task(coro, name="rakshaquant-run")
-        logger.info("Started %s run (effective mode=%s)", "demo" if demo else "live", effective)
-        return {"running": True, "demo": demo, "env": env_badge(effective)}
+        self._task = asyncio.create_task(self._run(demo), name="rakshaquant-run")
+        logger.info("Started a %s run", self._starting)
+        return {"running": True, "demo": demo}
 
     async def stop(self) -> dict[str, Any]:
         # Read-only deployments disable run-control entirely — stopping a run is a control
@@ -301,34 +208,23 @@ class RunManager:
         self._broadcast({"type": "stopped"})
         return {"running": False}
 
-    async def _run_real(self, view: StreamSessionView) -> None:
-        assert self._stop_event is not None
-        from src.engine.live import run_paper
+    async def _run(self, demo: bool) -> None:
+        """The paper session, or the bundled fixture tape through the real engine (demo
+        environment only). The console paints nothing: it reads the store and the engine."""
+        from src.engine.live import run_demo, run_paper
 
+        assert self._stop_event is not None
         try:
-            await run_paper(self.settings, view, stop=self._stop_event, on_engine=self.attach)
+            if demo:
+                self.close_reader()  # the demo starts from a fresh store file
+                await run_demo(self.settings, stop=self._stop_event, on_engine=self.attach)
+            else:
+                await run_paper(self.settings, stop=self._stop_event, on_engine=self.attach)
         except asyncio.CancelledError:
             raise
-        except Exception:  # pragma: no cover - surfaced to the UI, never crashes server
-            logger.exception("Trading session crashed")
+        except Exception:  # pragma: no cover - surfaced to the UI, never crashes the server
+            logger.exception("The %s run crashed", "demo" if demo else "paper")
             self._broadcast({"type": "error", "data": {"message": "the run stopped on an error "
-                                                                  "(see the logs)"}})  # fmt: skip
-        finally:
-            self.detach()
-
-    async def _run_demo(self, view: StreamSessionView) -> None:
-        """The bundled fixture tape through the real engine (demo environment only)."""
-        from src.engine.live import run_demo
-
-        assert self._stop_event is not None
-        try:
-            self.close_reader()  # the demo starts from a fresh store file
-            await run_demo(self.settings, view, stop=self._stop_event, on_engine=self.attach)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # pragma: no cover - demo must never crash the server
-            logger.exception("Demo session crashed")
-            self._broadcast({"type": "error", "data": {"message": "the demo stopped on an error "
                                                                   "(see the logs)"}})  # fmt: skip
         finally:
             self.detach()

@@ -21,7 +21,7 @@ from tests.web_helpers import SECURITY, anonymous, authed
 GETS = ["/api/summary", "/api/positions", "/api/orders", "/api/fills", "/api/trades",
         "/api/decisions", "/api/risk", "/api/books", "/api/ai/calls", "/api/ai/spend",
         "/api/ai/models", "/api/ai/decision-models", "/api/market/INFY/bars",
-        "/api/events/typed", "/api/system", "/api/config", "/api/state"]  # fmt: skip
+        "/api/events/typed", "/api/system", "/api/config"]  # fmt: skip
 
 
 @pytest.fixture

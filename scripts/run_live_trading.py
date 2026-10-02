@@ -1,14 +1,14 @@
 """
 RakshaQuant — main entry point.
 
-Runs the v2 trading engine (``src.engine.live``: one paper book on the simulated broker,
-YFinance data, the RiskEngine on every order) behind one of two front ends, selected with
-``--mode``:
+Runs the v2 trading engine (``src.engine.live``: the experiment's paper books on the simulated
+broker, YFinance data, the RiskEngine on every order) behind one of two front ends, selected
+with ``--mode``:
 
-* ``cli``  (default) — the ``rich`` terminal dashboard.
+* ``cli``  (default) — the ``rich`` terminal dashboard (``src/dashboard/cli.py``).
 * ``web``           — a FastAPI + WebSocket server driving the browser console.
 
-Both modes drive the same engine; the views are fed from the event store's projections.
+Both modes drive the same engine and read the same projections (``src/web/queries.py``).
 ``--demo`` replays the bundled fixture tape (one synthetic session) through the same engine in
 the ``demo`` environment.
 
@@ -31,9 +31,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from rich.console import Console
 
 from src.config.settings import get_settings
-from src.dashboard.cli import TradingStats
+from src.dashboard.cli import TerminalView
 from src.engine.live import run_demo, run_paper
-from src.live.views import RichSessionView
 from src.ops.exit_codes import ExitCode
 from src.ops.process import run_entry_point
 
@@ -43,8 +42,8 @@ logger = logging.getLogger(__name__)
 
 async def _run_cli(demo: bool) -> int:
     """CLI mode: the engine behind the rich terminal dashboard."""
-    view = RichSessionView(TradingStats())
     settings = get_settings()
+    view = TerminalView(settings)
     return await (run_demo(settings, view) if demo else run_paper(settings, view))
 
 
@@ -72,9 +71,7 @@ def _run_web(args: argparse.Namespace) -> int:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="RakshaQuant — agentic NSE paper-trading (CLI or web)."
-    )
+    parser = argparse.ArgumentParser(description="RakshaQuant — NSE paper trading (CLI or web).")
     parser.add_argument(
         "--mode",
         choices=["cli", "web"],
@@ -86,8 +83,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Demo: simulated data in the separate 'demo' environment (own state, wallet and "
-        "lock). The only way simulated prices may create orders.",
+        help="Demo: simulated data in the separate 'demo' environment (own state and lock). "
+        "The only way simulated prices may create orders.",
     )
     parser.add_argument(
         "--dev",

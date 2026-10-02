@@ -11,7 +11,7 @@ sends ``{"subscribe": [topics], "since_seq": n}``; the server **replays** the st
   holds exactly what came after;
 * a queue that overflows is dropped for a ``resync`` message carrying the last ``seq`` sent; the
   client re-subscribes from there;
-* ``summary``, ``quotes`` and ``console`` are **latest-wins slots**, not queued: a slow client
+* ``summary`` and ``quotes`` are **latest-wins slots**, not queued: a slow client
   gets the newest value, never a backlog (quotes conflated to at most 1 Hz);
 * an idle connection gets a ``heartbeat`` every 15 s.
 """
@@ -59,7 +59,7 @@ for _topic, _types in {
         _TOPIC_OF[_type] = _topic
 
 EVENT_TOPICS = frozenset(_TOPIC_OF.values())
-SLOT_TOPICS = frozenset({"summary", "quotes", "console"})
+SLOT_TOPICS = frozenset({"summary", "quotes"})
 TOPICS = EVENT_TOPICS | SLOT_TOPICS
 assert set(_TOPIC_OF) == set(EVENT_TYPES), "every event type needs a topic"
 
@@ -184,7 +184,7 @@ class Hub:
         return self.tail_seq
 
     def publish(self, topic: str, data: Mapping[str, Any]) -> None:
-        """Latest-wins slot (``console``, ``summary``, ``quotes``)."""
+        """Latest-wins slot (``summary``, ``quotes``)."""
         message = notice(topic, data, topic=topic)
         for sub in self.subscribers:
             sub.put_slot(topic, message)

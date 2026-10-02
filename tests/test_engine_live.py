@@ -1,4 +1,4 @@
-"""Plan M5.6 (part 3): the front ends drive the v2 engine; views are fed from projections."""
+"""Plan M5.6 (part 3), M12.2: the front ends drive the v2 engine; a view only paints it."""
 
 from __future__ import annotations
 
@@ -10,11 +10,10 @@ import pytest
 
 import src.engine.live as live
 from src.config.errors import ConfigError
-from src.dashboard.cli import TradingStats
 from src.domain.clock import ReplayClock
 from src.domain.types import MarketDataSource
 from src.engine.demo import DEMO_SYMBOLS, demo_instruments, pace, synthetic_day
-from src.live.views import SessionView
+from src.engine.runner import Engine
 from src.marketdata.announcements import PollStats
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
 from src.reference.instruments import InstrumentSet
@@ -23,33 +22,34 @@ from src.store.event_store import EventStore
 from src.utils.market_time import IST
 
 
-class RecordingView(SessionView):
+class RecordingView:
+    """An :class:`~src.engine.live.EngineView` that counts its paints."""
+
     def __init__(self) -> None:
-        self.stats = TradingStats()
-        self.renders = 0
-        self.mode = ""
+        self.paints = 0
         self.opened = self.closed = False
+        self.engine: Engine | None = None
 
-    async def open(self) -> None:
+    async def __aenter__(self) -> RecordingView:
         self.opened = True
+        return self
 
-    async def close(self) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         self.closed = True
 
-    async def render(self) -> None:
-        self.renders += 1
+    async def paint(self, engine: Engine) -> None:
+        assert self.opened and not self.closed  # painted only while entered
+        self.paints += 1
+        self.engine = engine
 
-    async def wait(self, seconds: int) -> None:
-        await asyncio.sleep(0)
 
-    def note(self, message: str) -> None:
-        pass
+APPROVED_ENTRIES = ("SELECT COUNT(*) AS n FROM decisions WHERE kind IN ('open', 'increase') "
+                    "AND outcome IN ('APPROVED', 'RESIZED')")  # fmt: skip
 
-    def set_effective_mode(self, mode: str) -> None:
-        self.mode = mode
 
-    async def emit_cycle(self, trace: Any) -> None:
-        pass
+def approved_entries(path: Any) -> int:
+    with EventStore(path) as store:
+        return int(store.query(APPROVED_ENTRIES)[0]["n"])
 
 
 def env(settings: Any, environment: str, tmp_path: Any) -> Any:
@@ -58,28 +58,31 @@ def env(settings: Any, environment: str, tmp_path: Any) -> Any:
     )
 
 
-async def test_the_demo_trades_a_synthetic_day_and_the_view_shows_it(settings, tmp_path):
+async def test_the_demo_trades_a_synthetic_day_and_the_view_is_painted(settings, tmp_path):
     view = RecordingView()
     demo = env(settings, "demo", tmp_path)
     code = await live.run_demo(demo, view, step_s=60.0, wall_s=0.0)
-    assert code == 0 and view.opened and view.closed and view.renders >= 2
-    assert view.mode == "local_paper"
-    stats = view.stats
-    assert stats.signals_generated > 0 and stats.trades_approved >= 1
-    assert stats.total_trades >= 1 or stats.open_positions  # it traded
-    assert stats.data_source == MarketDataSource.SIMULATED.value
-    assert any(e["message"].startswith("Session") for e in stats.activity_log)
-    assert live.demo_store_path(demo).exists()
+    assert code == 0 and view.opened and view.closed and view.paints >= 2
+    assert view.engine is not None
+    assert {q.source for q in view.engine.market.quotes().values()} == {MarketDataSource.SIMULATED}
+    assert approved_entries(live.demo_store_path(demo)) >= 1
     with EventStore(live.demo_store_path(demo)) as store:
-        assert store.query("SELECT COUNT(*) AS n FROM decisions")[0]["n"] >= 1
+        assert store.read(types=["SignalGenerated"], limit=1)
+        traded = store.query("SELECT COUNT(*) AS n FROM fills")[0]["n"]
+        assert traded >= 1
+
+
+async def test_a_run_needs_no_view(settings, tmp_path):
+    demo = env(settings, "demo", tmp_path)
+    assert await live.run_demo(demo, step_s=120.0, wall_s=0.0) == 0  # the web console's way
+    assert approved_entries(live.demo_store_path(demo)) >= 1
 
 
 async def test_each_demo_starts_from_a_clean_book(settings, tmp_path):
     demo = env(settings, "demo", tmp_path)
     await live.run_demo(demo, RecordingView(), step_s=120.0, wall_s=0.0)
-    view = RecordingView()
-    await live.run_demo(demo, view, step_s=120.0, wall_s=0.0)
-    assert view.stats.trades_approved >= 1  # not blocked as duplicates of the first run
+    await live.run_demo(demo, RecordingView(), step_s=120.0, wall_s=0.0)
+    assert approved_entries(live.demo_store_path(demo)) >= 1  # not duplicates of the first run
 
 
 async def test_environments_are_never_mixed(settings, tmp_path):
@@ -147,7 +150,7 @@ async def test_the_paper_run_wires_reference_data_yfinance_and_the_tape(
     assert seen["reference_day"] == day
     assert seen["priced"] == sorted(f"NSE:EQ:{s}" for s, *_ in DEMO_SYMBOLS)
     assert seen["announced"] == seen["priced"] and seen["url"].endswith("Online_announcements.xml")
-    assert paper.db_path.exists() and view.stats.trades_approved >= 1
+    assert paper.db_path.exists() and approved_entries(paper.db_path) >= 1 and view.paints >= 1
     assert polls[0][1] is True and polls[0][0] < datetime.combine(day, time(9, 15), IST)  # backfill
     in_session = [t for t, force in polls if not force]
     assert len(in_session) >= 70  # every 5 minutes from the open to the close

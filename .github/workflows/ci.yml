@@ -17,7 +17,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
   # Global strict-mypy error ceiling (ratchet). Lower it whenever the count drops; never raise it.
-  MYPY_MAX_ERRORS: "32"
+  MYPY_MAX_ERRORS: "7"
 
 defaults:
   run:
@@ -92,7 +92,8 @@ jobs:
           pkgs=()
           for d in src/domain src/store src/ops src/marketdata src/reference src/brokers \
                    src/oms src/risk src/strategies src/features src/decision \
-                   src/decision_models src/llm src/evaluation src/engine src/web; do
+                   src/decision_models src/llm src/evaluation src/engine src/web \
+                   src/dashboard; do
             if [ -d "$d" ]; then pkgs+=("$d"); fi
           done
           echo "strict packages: ${pkgs[*]}"

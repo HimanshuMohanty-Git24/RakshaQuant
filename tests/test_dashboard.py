@@ -1,195 +1,142 @@
-import pytest
+"""Plan M12.2: the CLI dashboard renders the projections - books, risk, positions, decisions."""
 
-from src.dashboard.cli import (
-    TradingDashboard,
-    TradingStats,
-    create_account_panel,
-    create_activity_panel,
-    create_agent_panel,
-    create_dashboard_layout,
-    create_decision_panel,
-    create_header,
-    create_market_overview,
-    create_positions_panel,
-    create_regime_panel,
-    create_status_panel,
-    create_trades_panel,
+from __future__ import annotations
+
+import io
+import os
+import subprocess
+import sys
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
+
+from rich.console import Console
+
+import src.engine.live as live
+from src.dashboard.cli import Frame, TerminalView, read_frame, render
+from src.store.event_store import EventStore
+from src.web.models import (
+    AlertRow,
+    BookRisk,
+    BookSummary,
+    DecisionRow,
+    KillSwitchRow,
+    PositionRow,
+    RiskView,
+    ScheduleStep,
+    SessionInfo,
+    Summary,
+    Utilisation,
 )
+from src.web.queries import build_queries, live_view
+from tests.test_books import run as run_day
+from tests.test_books import three_books
 
-# --- TradingStats Tests ---
-
-
-@pytest.fixture
-def stats():
-    return TradingStats()
+NOW = datetime(2026, 10, 5, 5, 0, tzinfo=UTC)  # 10:30 IST
 
 
-def test_trading_stats_init(stats):
-    assert stats.starting_balance == 1000000.0
-    assert stats.total_trades == 0
-    assert stats.win_rate == 0.0
+def text_of(frame: Frame) -> str:
+    console = Console(file=io.StringIO(), width=220, record=True)
+    console.print(render(frame))
+    return console.export_text()
 
 
-def test_trading_stats_pnl(stats):
-    stats.realized_pnl = 100
-    stats.unrealized_pnl = 50
-    assert stats.total_pnl == 150
-    assert stats.pnl_percent == 0.015
+def book(book_id: str, advisor: str, switch: str = "ARMED") -> BookSummary:
+    return BookSummary(
+        book_id=book_id, advisor=advisor, equity=Decimal("1003825.41"), cash=Decimal("900000"),
+        unrealized_pnl=Decimal("-1200.5"), day_pnl=Decimal("3825.41"), valued_at=NOW,
+        valuation="live", realized_pnl_today=Decimal("5025.91"), open_positions=1,
+        open_orders=1, trades_today=2, kill_switch=switch, day_return_pct=0.38,
+    )  # fmt: skip
 
 
-def test_trading_stats_log_activity(stats):
-    stats.log_activity("Test message", "INFO")
-    assert len(stats.activity_log) == 1
-    assert stats.activity_log[0]["message"] == "Test message"
-
-    # Test capping
-    for i in range(20):
-        stats.log_activity(f"Msg {i}")
-    assert len(stats.activity_log) == 12  # Cap size
-
-
-# --- TradingDashboard Tests ---
-
-
-@pytest.fixture
-def dashboard():
-    return TradingDashboard()
+def risk_of(book_id: str, *, tripped: bool = False, used: str = "0.25") -> BookRisk:
+    switches = [KillSwitchRow(scope="GLOBAL", name="global", state="HALT_NEW", reason="operator",
+                              actor="web", since=NOW)] if tripped else []  # fmt: skip
+    return BookRisk(
+        book_id=book_id, kill_switches=switches, daily_state=None,
+        rejections_today={"MAX_POSITIONS": 3} if tripped else {}, equity=None, valuation="live",
+        utilisation=[
+            Utilisation(key="GROSS", label="gross", used=Decimal(used) * 100, limit=Decimal(100),
+                        unit="ratio", fraction=float(used)),
+            Utilisation(key="POS", label="positions", used=Decimal(1), limit=Decimal(10),
+                        unit="count", fraction=0.1),
+        ], sectors=[], event_blocks=[],
+    )  # fmt: skip
 
 
-def test_dashboard_start(dashboard):
-    dashboard.start(balance=500000.0, mode="live", data_source="dhan")
-    assert dashboard.stats.starting_balance == 500000.0
-    assert dashboard.stats.trading_mode == "live"
-    assert dashboard.running is True
-    assert len(dashboard.stats.activity_log) == 3
+def a_frame() -> Frame:
+    summary = Summary(
+        environment="paper", demo=False, running=True, experiment="month1-2026-10",
+        session=SessionInfo(date=date(2026, 10, 5), state="MONITOR"), market_open=True, now=NOW,
+        last_seq=1234, books=[book("A", "none"), book("B", "typed_veto", switch="HALT_NEW")],
+        schedule=[ScheduleStep(state="CLOSE", at=datetime(2026, 10, 5, 10, 0, tzinfo=UTC))],
+    )  # fmt: skip
+    risk = RiskView(limits_hash="abc", limits={},
+                    books=[risk_of("A"), risk_of("B", tripped=True, used="1.0")])  # fmt: skip
+    position = PositionRow(
+        book_id="A", instrument_key="NSE:EQ:INFY", symbol="INFY", product="CNC", quantity=60,
+        avg_price=Decimal("1500.10"), realized_pnl=Decimal(0), mark=Decimal("1480.09"),
+        unrealized_pnl=Decimal("-1200.5"), updated_ts=NOW, strategy="momentum",
+        entry_decision_id="d1", stop_price=Decimal("1440"), target_price=Decimal("1590"),
+        entered_on=date(2026, 10, 1), held_sessions=2,
+    )  # fmt: skip
+    decision = DecisionRow(seq=9, ts=NOW, decision_id="d2", signal_id="s2", book_id="B",
+                           instrument_key="NSE:EQ:TCS", symbol="TCS", strategy="mean_reversion",
+                           disposition="vetoed", detail="typed_veto 0.71 >= 0.6",
+                           client_order_id=None)  # fmt: skip
+    alert = AlertRow(seq=7, ts=NOW, level="WARNING", key="stale", message="quotes are 95 s old",
+                     book_id=None)  # fmt: skip
+    return Frame(summary=summary, risk=risk, positions=[position], decisions=[decision],
+                 alerts=[alert], quote_age_s={"yfinance": 2.4}, tasks=("market", "monitor"),
+                 halt_file="var/paper/HALT")  # fmt: skip
 
 
-def test_dashboard_update_regime(dashboard):
-    dashboard.update_regime("bull", 0.9, ["strat1"])
-    assert dashboard.stats.current_regime == "bull"
-    assert dashboard.stats.regime_confidence == 0.9
-    assert dashboard.stats.active_strategies == ["strat1"]
+def test_a_frame_shows_the_books_risk_positions_decisions_and_warnings():
+    text = text_of(a_frame())
+    assert "PAPER" in text and "month1-2026-10" in text and "MONITOR" in text
+    assert "10:30:00 IST" in text and "next CLOSE 15:30:00" in text and "running" in text
+    assert "1,003,825.41" in text and "+3,825.41" in text and "+0.38%" in text
+    assert "typed_veto" in text and "HALT_NEW" in text
+    assert "global:global HALT_NEW" in text and "MAX_POSITIONS x3" in text
+    assert "gross 25%" in text and "gross 100%" in text and "positions 1/10" in text
+    assert "INFY" in text and "1,440.00" in text and "1,590.00" in text and "-1,200.50" in text
+    assert "TCS" in text and "vetoed" in text and "typed_veto 0.71 >= 0.6" in text
+    assert "quotes are 95 s old" in text and "yfinance 2s old" in text
+    assert "var/paper/HALT" in text
 
 
-def test_dashboard_update_market_data(dashboard):
-    quotes = {"A": 100}
-    dashboard.update_market_data(quotes)
-    assert dashboard.stats.market_quotes == quotes
+async def test_a_recorded_session_reads_and_renders_from_the_projections(settings, tmp_path):
+    with three_books(tmp_path) as (engine, clock):
+        assert await run_day(engine, clock) == 0
+        local = settings.model_copy(update={"var_dir": tmp_path})
+        with EventStore(engine.store.path) as reader:
+            frame = read_frame(build_queries(reader, local, clock=clock), live_view(engine),
+                               halt_file="HALT")  # fmt: skip
+    assert [b.book_id for b in frame.summary.books] == ["A", "B", "C"]
+    assert frame.summary.session is not None and frame.summary.session.state == "EXIT"
+    assert not frame.summary.running  # the engine has stopped: no tasks
+    assert any(d.disposition == "vetoed" and d.book_id == "B" for d in frame.decisions)
+    text = text_of(frame)
+    assert "stopped" in text and "EXIT" in text and "typed_veto" in text and "vetoed" in text
 
 
-def test_dashboard_set_current_signal(dashboard):
-    dashboard.set_current_signal("BUY", "AAPL", "strat1", 0.8)
-    assert dashboard.stats.current_signal["symbol"] == "AAPL"
+def test_the_cli_never_needs_the_web_extra():
+    """The read model is shared, but FastAPI stays optional: the CLI must not import it."""
+    code = "import sys, src.dashboard.cli; sys.exit('fastapi' in sys.modules)"
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "RAKSHAQUANT_ENV_FILE": "none"}
+    assert subprocess.run([sys.executable, "-c", code], cwd=root, env=env).returncode == 0
 
 
-def test_dashboard_set_decision_reason(dashboard):
-    dashboard.set_decision_reason("Reason")
-    assert dashboard.stats.last_decision_reason == "Reason"
-
-
-def test_dashboard_log_signal(dashboard):
-    dashboard.log_signal("AAPL", "BUY", "strat1", True)
-    assert dashboard.stats.signals_generated == 1
-    assert dashboard.stats.signals_validated == 1
-
-    dashboard.log_signal("AAPL", "BUY", "strat1", False)
-    assert dashboard.stats.signals_generated == 2
-    assert dashboard.stats.signals_rejected == 1
-
-
-def test_dashboard_log_trade(dashboard):
-    dashboard.log_trade("AAPL", "BUY", 10, 100, True)
-    assert dashboard.stats.trades_approved == 1
-
-    dashboard.log_trade("AAPL", "BUY", 10, 100, False)
-    assert dashboard.stats.trades_risk_rejected == 1
-
-
-def test_dashboard_add_position(dashboard):
-    dashboard.add_position("AAPL", "BUY", 10, 100)
-    assert len(dashboard.stats.open_positions) == 1
-    assert dashboard.stats.open_positions[0]["symbol"] == "AAPL"
-
-
-def test_dashboard_close_trade(dashboard):
-    dashboard.start()
-    dashboard.close_trade(100.0)
-    assert dashboard.stats.total_trades == 1
-    assert dashboard.stats.winning_trades == 1
-    assert dashboard.stats.realized_pnl == 100.0
-    assert dashboard.stats.current_balance == 1000100.0
-
-    dashboard.close_trade(-50.0)
-    assert dashboard.stats.losing_trades == 1
-    assert dashboard.stats.realized_pnl == 50.0
-
-
-def test_dashboard_increment_cycle(dashboard):
-    dashboard.increment_cycle()
-    assert dashboard.stats.cycles_run == 1
-
-
-# --- Panel Creation Tests ---
-# These tests verify that panel creation functions run without error.
-# Checking the visual output content is less critical than ensuring they don't crash.
-
-
-def test_create_panels(stats):
-    # Populate stats with some data
-    stats.current_balance = 1100000
-    stats.total_trades = 10
-    stats.winning_trades = 6
-    stats.losing_trades = 4
-    stats.current_regime = "trending_up"
-    stats.regime_confidence = 0.8
-    stats.active_strategies = ["momentum"]
-    stats.market_quotes = {"AAPL": {"last_price": 150, "change_percent": 1.5}}
-    stats.current_signal = {
-        "signal_type": "BUY",
-        "symbol": "AAPL",
-        "strategy": "momentum",
-        "confidence": 0.9,
-    }
-    stats.last_decision_reason = "Reason"
-    stats.open_positions = [{"symbol": "AAPL", "side": "BUY", "qty": 10, "entry": 140, "pnl": 100}]
-    stats.log_activity("Test")
-
-    # Check panels
-    assert create_header(stats) is not None
-    assert create_account_panel(stats) is not None
-    assert create_trades_panel(stats) is not None
-    assert create_regime_panel(stats) is not None
-    assert create_market_overview(stats) is not None
-    assert create_decision_panel(stats) is not None
-    assert create_agent_panel(stats) is not None
-    assert create_positions_panel(stats) is not None
-    assert create_activity_panel(stats) is not None
-
-    # Check layout
-    layout = create_dashboard_layout(stats)
-    assert layout is not None
-
-
-def test_dashboard_render(dashboard):
-    dashboard.start()
-    layout = dashboard.render()
-    assert layout is not None
-
-
-def test_create_status_panel_with_finops_and_goal(stats):
-    # Status panel renders FinOps spend + profit-goal pace without crashing.
-    stats.llm_calls = 12
-    stats.llm_tokens = 34567
-    stats.llm_cost_usd = 0.0123
-    stats.goal_enabled = True
-    stats.goal_feasible = True
-    stats.goal_on_pace = False
-    stats.goal_mtd_pnl = 5000.0
-    stats.goal_expected_to_date = 8000.0
-    assert create_status_panel(stats) is not None
-
-
-def test_create_status_panel_goal_disabled(stats):
-    # Goal section is simply omitted when disabled.
-    stats.goal_enabled = False
-    assert create_status_panel(stats) is not None
+async def test_the_cli_paints_a_demo_and_leaves_its_final_state_on_screen(settings, tmp_path):
+    demo = settings.model_copy(update={"environment": "demo",
+                                       "state_dir": tmp_path / "var" / "demo"})  # fmt: skip
+    out = io.StringIO()
+    view = TerminalView(demo, console=Console(file=out, width=220), screen=False)
+    assert await live.run_demo(demo, view, step_s=60.0, wall_s=0.0) == 0
+    assert view.frame is not None and view.frame.summary.demo
+    text = out.getvalue()
+    assert text.count("RakshaQuant") == 1  # the final state, printed once (the live one cleared)
+    assert "DEMO" in text and "EXIT" in text
+    assert all(f" {b} " in text for b in ("A", "B", "C"))

@@ -5,7 +5,6 @@ Every ``/api/*`` route except ``/api/health`` needs the per-launch bearer token,
 state-changing request must come from the console's own origin (:mod:`src.web.security`).
 
 * ``GET  /api/health``          - liveness only (public, no state).
-* ``GET  /api/state``           - the legacy console snapshot (until M10).
 * ``GET  /api/summary|positions|orders|fills|trades`` - the books and the blotter.
 * ``GET  /api/decisions`` (filters) and ``/api/decisions/{id}`` - a decision's full lineage.
 * ``GET  /api/risk|books`` - limits, kill switches, rejections; the paired-book comparison.
@@ -200,10 +199,6 @@ def create_app(
     async def read(fn: Callable[[Queries], T]) -> T:
         """Run a store query in a worker thread on the web's own read connection."""
         return await mgr().read(fn)
-
-    @api.get("/state")
-    async def state() -> dict[str, Any]:
-        return mgr().state()
 
     @api.get("/summary")
     async def summary() -> Summary:

@@ -1,15 +1,17 @@
 """
-Running the v2 engine behind a front end (plan M5.6): the CLI dashboard or the web console, both
-through the existing :class:`~src.live.views.SessionView`, fed from the store's projections.
+Running the v2 engine behind a front end (plan M5.6, M12.2): the CLI paints it through an
+:class:`EngineView` (``src/dashboard/cli.py``); the web console needs none - it reads the
+store's projections and the engine's live state itself (``src/web/``).
 
 * :func:`run_paper` - today's session on the wall clock with YFinance data (taped for replay),
   the pinned NIFTY 50 universe and the simulated broker, for every book of the experiment
   (``src/config/experiment.yaml``: A deterministic, B typed veto, C LLM veto). **Paper only**:
   the v2 engine has no live broker path; a live ``EXECUTION_MODE`` is ignored with a warning.
-* :func:`run_demo` - the same engine on a synthetic, paced day in the ``demo`` environment
-  (advisors abstain: no decision model or LLM is called in the demo).
+* :func:`run_demo` - the same engine on the bundled tape, paced, in the ``demo`` environment
+  (no decision model or LLM is called: book B's veto is scripted, C's advisor abstains).
 
-The CLI/web views show the primary book (A); the paired comparison is the daily report's.
+Both front ends show every book of the experiment from the same read model
+(``src/web/queries.py``); the paired comparison is the daily report's.
 """
 
 from __future__ import annotations
@@ -18,8 +20,10 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import date, datetime, time
 from pathlib import Path
+from typing import Protocol
 
 from src.config.errors import ConfigError
 from src.config.limits import load_risk_limits
@@ -37,7 +41,6 @@ from src.domain.events import Alert, AnnouncementReceived
 from src.domain.types import Instrument
 from src.engine.demo import DEMO_DAY, DEMO_TAPE, ScriptedVeto, demo_instruments, pace
 from src.engine.runner import Engine, build_engine, held_instruments
-from src.engine.view_model import StatsProjector
 from src.evaluation.books import build_advisors, engine_config
 from src.evaluation.daily_report import (
     ReportInputs,
@@ -48,7 +51,6 @@ from src.evaluation.daily_report import (
 )
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, ExperimentConfig, load_experiment
 from src.evaluation.review import review_day
-from src.live.views import SessionView
 from src.llm.registry import validate_roles
 from src.llm.router import LLMRouter, StoreResponseCache
 from src.llm.setup import build_router
@@ -70,11 +72,19 @@ PAPER_MODES = frozenset({"local_paper", "shadow"})
 DM_CACHE = "dm_cache"  # decision-model answers, by state and questions
 DEMO = "demo"
 STOP_GRACE_S = 30.0  # plan M9.3: a cooperative stop, then cancellation
+PAINT_EVERY_S = 1.0
+
+
+class EngineView(AbstractAsyncContextManager[object], Protocol):
+    """A front end that paints the running engine (the CLI dashboard): entered for the run,
+    painted every second and once more when the engine has stopped."""
+
+    async def paint(self, engine: Engine) -> None: ...
 
 
 async def run_paper(
     settings: Settings,
-    view: SessionView,
+    view: EngineView | None = None,
     *,
     stop: asyncio.Event | None = None,
     clock: Clock | None = None,
@@ -159,7 +169,7 @@ def _announcements(
 
 async def run_demo(
     settings: Settings,
-    view: SessionView,
+    view: EngineView | None = None,
     *,
     stop: asyncio.Event | None = None,
     step_s: float = 30.0,
@@ -271,34 +281,35 @@ def make_reporter(
     return report
 
 
+async def _paint(view: EngineView | None, engine: Engine) -> None:
+    if view is None:
+        return
+    try:
+        await view.paint(engine)
+    except Exception:  # the view never stops trading
+        logger.exception("view refresh failed")
+
+
 async def _drive(
     engine: Engine,
-    view: SessionView,
+    view: EngineView | None,
     stop: asyncio.Event | None,
     *,
     grace_s: float = STOP_GRACE_S,
 ) -> int:
-    """Run the engine; refresh the view every second. When ``stop`` is set the engine stops
+    """Run the engine; paint the view every second. When ``stop`` is set the engine stops
     cooperatively at its next state boundary; only after ``grace_s`` is it cancelled (and an
     order submission in flight still completes: ``OMS.submit`` is shielded)."""
-    stats = getattr(view, "stats", None)
-    projector = StatsProjector(stats, engine) if stats is not None else None
-    view.set_effective_mode("local_paper")
-    run = asyncio.create_task(engine.run(), name="engine")
+    async with view if view is not None else contextlib.nullcontext():
+        run = asyncio.create_task(engine.run(), name="engine")
 
-    async def refresh() -> None:
-        while not run.done():
-            if projector is not None:
-                try:
-                    projector.refresh()
-                except Exception:  # the view never stops trading
-                    logger.exception("view refresh failed")
-            await view.render()
-            await asyncio.sleep(1.0)
+        async def refresh() -> None:
+            while not run.done():
+                await _paint(view, engine)
+                await asyncio.sleep(PAINT_EVERY_S)
 
-    painter = asyncio.create_task(refresh(), name="view")
-    stopper = asyncio.create_task(stop.wait() if stop else asyncio.Event().wait())
-    async with view:
+        painter = asyncio.create_task(refresh(), name="view")
+        stopper = asyncio.create_task(stop.wait() if stop else asyncio.Event().wait())
         await asyncio.wait({run, stopper}, return_when=asyncio.FIRST_COMPLETED)
         if not run.done():  # asked to stop
             engine.request_stop()
@@ -311,9 +322,7 @@ async def _drive(
         painter.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await painter
-        if projector is not None:
-            projector.refresh()
-        await view.render()
+        await _paint(view, engine)
     outcome = results[0]
     if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
         raise outcome

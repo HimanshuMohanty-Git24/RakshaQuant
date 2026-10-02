@@ -1,17 +1,19 @@
 """
-The web API's read side (plan M9.2): projections and events from the event store, turned into
-:mod:`src.web.models`. Everything here is synchronous and side-effect free, so the server runs
-it in a worker thread on its own read connection (WAL readers never block the engine).
+The read side of both front ends (plan M9.2; the CLI too since M12.2): projections and events
+from the event store, turned into :mod:`src.web.models`. Everything here is synchronous and
+side-effect free, so callers run it in a worker thread on their own read connection (WAL readers
+never block the engine). Nothing here imports FastAPI: the CLI-only install uses it as well.
 
 What only the running engine knows (live marks, valuations, its tasks, quote ages) is captured
-on the event loop as a :class:`LiveView` first and passed in; without an engine the views fall
-back to the last recorded ``MarkToMarket``.
+on the event loop as a :class:`LiveView` first (:func:`live_view`) and passed in; without an
+engine the views fall back to the last recorded ``MarkToMarket``.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 import json
+import logging
 import math
 import os
 import platform
@@ -21,11 +23,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from src.config.limits import RiskLimits
+from src.config.limits import RiskLimits, load_risk_limits
 from src.decision_models.calibration import CalibrationMap
-from src.domain.calendar import CalendarCoverageError, NSECalendar
+from src.domain.calendar import CalendarCoverageError, NSECalendar, get_calendar
 from src.domain.clock import Clock, now_ist
 from src.domain.events import (
     Alert,
@@ -53,10 +55,11 @@ from src.domain.types import (
     RiskOutcome,
     TypedEvent,
 )
+from src.engine.demo import DEMO_TAPE
 from src.engine.lifecycle import LifecycleConfig, build_schedule
 from src.engine.market import INDEX_KEY
 from src.evaluation.daily_report import resting, slippage_bps, veto_precision_of
-from src.evaluation.experiment import ExperimentConfig
+from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, ExperimentConfig, load_experiment
 from src.llm.prompts import templates
 from src.llm.registry import role_configs
 from src.oms.exit_manager import ManagedPosition
@@ -125,6 +128,13 @@ _PROMPTS = {t.name: t for t in (templates.VETO_V1, templates.REVIEW_V1, template
                                 templates.LABEL_ANNOUNCEMENT_V1)}  # fmt: skip
 
 
+if TYPE_CHECKING:
+    from src.config.settings import Settings
+    from src.engine.runner import Engine
+
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class LiveView:
     """The running engine's in-memory state, captured on the event loop."""
@@ -138,6 +148,45 @@ class LiveView:
     instruments: Mapping[str, Instrument] = field(default_factory=dict)
     quotes: Mapping[str, Quote] = field(default_factory=dict)
     index_closes: Mapping[date, float] = field(default_factory=dict)
+
+
+def live_view(engine: Engine) -> LiveView:
+    """The engine's in-memory state; call on the event loop (the engine's thread)."""
+    now = engine.clock.now()
+    ages: dict[str, float] = {}
+    for quote in engine.market.quotes().values():
+        source = quote.source.value
+        ages[source] = round(min(ages.get(source, math.inf), quote.age_seconds(now)), 1)
+    valuations, risk = {}, {}
+    for book_id, book in engine.books.items():
+        try:
+            valuations[book_id] = engine.valuation(book_id)
+        except KeyError:  # a position without a mark yet (before the first poll)
+            pass
+        try:
+            risk[book_id] = book.gate.book_snapshot()
+        except Exception:  # a view must never fail on the engine's account
+            logger.exception("risk snapshot for book %s failed", book_id)
+    return LiveView(valuations=valuations, marks=engine.market.marks(),
+                    tasks=tuple(engine.tasks.running), quote_age_s=ages, risk=risk,
+                    managed={b: book.exits.positions for b, book in engine.books.items()},
+                    instruments=dict(engine.market.instruments),
+                    quotes=engine.market.quotes(), index_closes=engine.index_closes())  # fmt: skip
+
+
+def build_queries(
+    store: EventStore, settings: Settings, *, clock: Clock, read_only: bool = False
+) -> Queries:
+    """The read side over ``store`` for this environment (the demo reads its own reports and
+    the tape it replays)."""
+    demo = settings.environment == "demo"
+    return Queries(
+        store, settings=settings,
+        experiment=load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH),
+        limits=load_risk_limits(), calendar=get_calendar(), clock=clock,
+        reports_dir=settings.state_dir / "reports" if demo else settings.reports_dir,
+        demo=demo, read_only=read_only, tape_dir=DEMO_TAPE if demo else settings.tape_dir,
+    )  # fmt: skip
 
 
 def symbol_of(instrument_key: str) -> str:
@@ -810,7 +859,7 @@ class Queries:
         e = self.experiment
         return ConfigView(
             environment=s.environment, execution_mode_requested=requested,
-            execution_mode_note=note, market_data_source=str(s.market_data_source),
+            execution_mode_note=note,
             experiment={
                 "experiment": e.experiment, "capital_inr": str(e.capital_inr),
                 "entry_window": e.entry_window, "product": e.product,

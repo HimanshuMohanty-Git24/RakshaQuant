@@ -1,11 +1,11 @@
 """
-Web console for RakshaQuant — the browser front end of the dual-mode CLI/web app.
+Web console for RakshaQuant - the browser front end (``--mode web``).
 
-This package is a thin presentation + control layer over the existing engine: it runs the
-*same* :func:`src.live.session.run_trading_session` loop inside the server process and
-streams the shared :class:`TradingStats` snapshot (plus per-cycle observability traces) to
-the browser over a WebSocket. It never re-implements trading logic.
+A thin presentation + control layer over the engine: the server runs the same v2 engine
+(:mod:`src.engine.live`) in its process, serves REST projections and a WebSocket event stream
+from its own read connection to the event store, and never re-implements trading logic.
 
-FastAPI/uvicorn are optional (``pip install .[web]`` / ``uv sync --extra web``); this module
-is only imported when the app is launched with ``--mode web``.
+FastAPI/uvicorn are optional (``uv sync --extra web``) and only :mod:`src.web.server` imports
+them. The read model (:mod:`src.web.queries`, :mod:`src.web.models`) is FastAPI-free: the CLI
+dashboard uses it too.
 """

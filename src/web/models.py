@@ -427,7 +427,6 @@ class ConfigView(ApiModel):
     mode: Literal["paper"] = "paper"
     execution_mode_requested: str
     execution_mode_note: str | None
-    market_data_source: str
     experiment: dict[str, Any]
     llm_roles: dict[str, list[str]]
     decision_models: dict[str, Any]
@@ -498,7 +497,7 @@ class FlattenBody(_Confirmed):
 # -- the WebSocket stream (plan M9.4; in the OpenAPI components for the generated types) --------
 
 StreamTopic = Literal["orders", "positions", "decisions", "risk", "ai", "market", "system",
-                      "summary", "quotes", "console", "events"]  # fmt: skip
+                      "summary", "quotes", "events"]  # fmt: skip
 
 
 class StreamSubscribe(StrictBody):
@@ -510,8 +509,7 @@ class StreamSubscribe(StrictBody):
 
 class StreamEnvelope(ApiModel):
     """Server → client. ``seq`` is set for stored events; ``type`` is the event type, or one of
-    ``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``console``, ``stopped``,
-    ``error``."""
+    ``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``stopped``, ``error``."""
 
     v: Literal[1]
     seq: int | None

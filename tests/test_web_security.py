@@ -38,22 +38,22 @@ def test_a_cross_origin_post_is_forbidden_even_with_the_token(app):
 
 
 def test_a_missing_or_wrong_token_is_unauthorized(app):
-    assert anonymous(app).get("/api/state").status_code == 401
+    assert anonymous(app).get("/api/summary").status_code == 401
     assert anonymous(app).post("/api/session/stop", headers={"Origin": ORIGIN}).status_code == 401
-    wrong = anonymous(app).get("/api/state", headers={"Authorization": "Bearer nope"})
+    wrong = anonymous(app).get("/api/summary", headers={"Authorization": "Bearer nope"})
     assert wrong.status_code == 401 and wrong.headers["www-authenticate"] == "Bearer"
-    basic = anonymous(app).get("/api/state", headers={"Authorization": f"Basic {TOKEN}"})
+    basic = anonymous(app).get("/api/summary", headers={"Authorization": f"Basic {TOKEN}"})
     assert basic.status_code == 401
     assert anonymous(app).get("/api/health").json() == {"status": "ok"}  # liveness is public
 
 
 def test_a_foreign_host_header_is_rejected(app):
     """DNS rebinding: a page on attacker.example resolving to 127.0.0.1."""
-    res = TestClient(app, base_url="http://attacker.example:8000", headers=AUTH).get("/api/state")
+    res = TestClient(app, base_url="http://attacker.example:8000", headers=AUTH).get("/api/summary")
     assert res.status_code == 400
     assert (
         TestClient(app, base_url="http://localhost:8000", headers=AUTH)
-        .get("/api/state")
+        .get("/api/summary")
         .status_code
         == 200
     )
@@ -104,12 +104,12 @@ def test_bodies_are_strict_and_errors_do_not_echo_input(app):
 
 def test_an_internal_error_is_generic():
     class Exploding(RunManager):
-        def state(self):
+        def live_view(self):
             raise RuntimeError("C:/Users/someone/.env could not be parsed")
 
     client = TestClient(create_app(manager=Exploding(), security=SECURITY), base_url=BASE,
                         headers=AUTH, raise_server_exceptions=False)  # fmt: skip
-    res = client.get("/api/state")
+    res = client.get("/api/summary")
     assert res.status_code == 500 and res.json() == {"error": "internal error"}
 
 

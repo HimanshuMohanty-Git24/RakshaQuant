@@ -646,10 +646,6 @@
             "title": "Llm Roles",
             "type": "object"
           },
-          "market_data_source": {
-            "title": "Market Data Source",
-            "type": "string"
-          },
           "mode": {
             "const": "paper",
             "default": "paper",
@@ -670,7 +666,6 @@
           "mode",
           "execution_mode_requested",
           "execution_mode_note",
-          "market_data_source",
           "experiment",
           "llm_roles",
           "decision_models",
@@ -2380,7 +2375,7 @@
         "type": "object"
       },
       "StreamEnvelope": {
-        "description": "Server → client. ``seq`` is set for stored events; ``type`` is the event type, or one of\n``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``console``, ``stopped``,\n``error``.",
+        "description": "Server → client. ``seq`` is set for stored events; ``type`` is the event type, or one of\n``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``stopped``, ``error``.",
         "properties": {
           "book_id": {
             "anyOf": [
@@ -2473,7 +2468,6 @@
                 "system",
                 "summary",
                 "quotes",
-                "console",
                 "events"
               ],
               "type": "string"
@@ -5807,76 +5801,6 @@
           }
         },
         "summary": "Session Stop"
-      }
-    },
-    "/api/state": {
-      "get": {
-        "operationId": "state_api_state_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response State Api State Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Missing or wrong token"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Invalid request"
-          }
-        },
-        "summary": "State"
       }
     },
     "/api/summary": {

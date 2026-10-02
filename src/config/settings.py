@@ -260,29 +260,12 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
-    # Legacy console (retired with it in plan M12.2)
+    # Execution venue
     # ===========================================
-    trading_mode: Literal["paper", "live"] = Field(
-        default="paper",
-        description="Trading mode - paper for simulation, live for real trading",
-    )
-    market_data_source: Literal["yfinance", "dhan"] = Field(
-        default="yfinance",
-        description="Market data source: yfinance (free) or dhan (requires account)",
-    )
     execution_mode: Literal["local_paper", "shadow", "dhan_paper", "live"] = Field(
         default="local_paper",
-        description="Execution mode: local_paper (free), shadow (mirror live, send nothing), "
-        "dhan_paper (sandbox), or live",
-    )
-    allow_live_orders: bool = Field(
-        default=False,
-        description="Master safety gate: real broker orders are only ever sent when this is "
-        "True. With live/dhan_paper but this False, execution runs in SHADOW (no orders sent).",
-    )
-    paper_wallet_balance: float = Field(
-        default=1000000.0,
-        description="Starting balance for local paper trading (INR)",
+        description="The requested venue. The v2 engine trades on the simulated broker only: "
+        "anything but local_paper/shadow is ignored, with a warning.",
     )
 
     # ===========================================
@@ -310,17 +293,11 @@ class Settings(BaseSettings):
         """Validate configuration consistency."""
         errors = []
 
-        # Live trading requires broker credentials
-        if self.trading_mode == "live":
-            if not self.dhan_client_id or not self.dhan_access_token:
-                errors.append(
-                    "Live trading requires Dhan credentials (DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)"
-                )
-
-        # Dhan execution modes require Dhan data source
-        if self.execution_mode in ["dhan_paper", "live"] and self.market_data_source == "yfinance":
+        # The v2 engine has no broker path: a broker venue is ignored, never honoured
+        if self.execution_mode not in ("local_paper", "shadow"):
             errors.append(
-                "Dhan execution modes should use 'dhan' market_data_source for consistency"
+                f"EXECUTION_MODE={self.execution_mode} is ignored: the v2 engine trades on the "
+                "simulated broker only (paper)"
             )
 
         # Telegram requires both token and chat_id
