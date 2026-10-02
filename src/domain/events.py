@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import AwareDatetime, Field, JsonValue
 
 from src.domain.base import (
+    DomainModel,
     EventPayload,
     Money,
     NonEmptyStr,
@@ -527,6 +528,30 @@ class TradeClosed(EventPayload):
     exit_reason: NonEmptyStr
 
 
+class ReviewLesson(DomainModel):
+    claim: NonEmptyStr
+    evidence_ref: NonEmptyStr
+
+
+class TradeReview(EventPayload):
+    """The nightly review of one closed trade (plan M8.7), stored point in time. **Never fed back
+    into any book during month 1** (audit F-20): no decision or risk code reads it."""
+
+    event_type = "TradeReview"
+    trade_id: NonEmptyStr
+    book_id: NonEmptyStr
+    decision_id: NonEmptyStr
+    instrument_key: NonEmptyStr
+    summary: str
+    what_worked: tuple[str, ...] = ()
+    what_failed: tuple[str, ...] = ()
+    lessons: tuple[ReviewLesson, ...] = ()
+    dropped_lessons: NonNegInt = 0  # lessons citing nothing in the input (hallucinations)
+    model: NonEmptyStr
+    prompt_version: NonEmptyStr
+    resolved_at: AwareDatetime
+
+
 class MarkToMarket(EventPayload):
     event_type = "MarkToMarket"
     book_id: NonEmptyStr
@@ -703,6 +728,7 @@ _PAYLOADS: tuple[type[EventPayload], ...] = (
     # portfolio
     PositionChanged,
     TradeClosed,
+    TradeReview,
     MarkToMarket,
     ReconciliationResult,
     # typed events, economics, ops

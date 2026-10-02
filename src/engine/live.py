@@ -47,9 +47,10 @@ from src.evaluation.daily_report import (
     write_report,
 )
 from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, ExperimentConfig, load_experiment
+from src.evaluation.review import review_day
 from src.live.views import SessionView
 from src.llm.registry import validate_roles
-from src.llm.router import StoreResponseCache
+from src.llm.router import LLMRouter, StoreResponseCache
 from src.llm.setup import build_router
 from src.marketdata.announcements import AnnouncementIngestor, watermark
 from src.marketdata.history import YFinanceHistorySource
@@ -119,7 +120,7 @@ async def run_paper(
         for book_id, advisor in advisors.items():
             engine.set_advisor(book_id, advisor)
         engine.reporter = make_reporter(engine, experiment, settings, settings.reports_dir,
-                                    notify=True)  # fmt: skip
+                                    notify=True, router=router)  # fmt: skip
         return await _drive(engine, view, stop)
 
 
@@ -212,9 +213,11 @@ def make_reporter(
     reports_dir: Path,
     *,
     notify: bool,
+    router: LLMRouter | None = None,
 ) -> Callable[[date], Awaitable[None]]:
-    """The REPORT step: the daily report to ``reports_dir`` and a Telegram summary (5 s timeout,
-    fire-and-forget: the report is on disk whether or not the message goes out)."""
+    """The REPORT step: the daily report to ``reports_dir``, a Telegram summary (5 s timeout,
+    fire-and-forget: the report is on disk whether or not the message goes out), then the nightly
+    review when a ``router`` is given (role ``review``; a no-op when the role is not configured)."""
 
     async def report(day: date) -> None:
         lows = {b: float(book.tracker.state.low_equity) for b, book in engine.books.items()
@@ -237,6 +240,14 @@ def make_reporter(
                                                         notifier.send_message))  # fmt: skip
                 _PENDING.add(task)
                 task.add_done_callback(_PENDING.discard)
+        if router is not None:
+            try:
+                await review_day(engine.store, router, day, clock=engine.clock, sink=engine.sink)
+            except Exception as exc:  # the review is advisory: never fails the report
+                logger.exception("nightly review failed")
+                engine.sink.emit(Alert(level="WARNING", key="nightly_review_failed",
+                                       message=f"{type(exc).__name__}: {exc}"),
+                                 source="engine")  # fmt: skip
 
     return report
 

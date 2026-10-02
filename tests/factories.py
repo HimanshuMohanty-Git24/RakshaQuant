@@ -275,6 +275,19 @@ def sample_payloads() -> list[EventPayload]:
             decision_id="d-0001", book_id="B", advisor=AdvisorKind.TYPED_VETO, reason="timeout"
         ),
         ev.OrderIntentProposed(intent=intent()),
+        ev.TradeReview(
+            trade_id="t-0001",
+            book_id="A",
+            decision_id="d-0001",
+            instrument_key=INFY.key,
+            summary="Momentum entry stopped out the day after a results announcement.",
+            what_worked=("the stop limited the loss to 1R",),
+            what_failed=("entered one session before results",),
+            lessons=(ev.ReviewLesson(claim="results risk", evidence_ref="events[0]"),),
+            model="anthropic:claude-sonnet-5-5",
+            prompt_version="review_v1@abc123def456",
+            resolved_at=T0,
+        ),
         ev.ShadowTradeOpened(
             signal_id="s-0001",
             decision_id="d-0001",
