@@ -5,3 +5,9 @@ dist/
 
 # TypeScript incremental build artifacts (machine-specific; churn in diffs).
 *.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+e2e/.auth/

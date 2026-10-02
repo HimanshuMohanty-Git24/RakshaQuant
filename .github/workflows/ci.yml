@@ -131,7 +131,11 @@ jobs:
       # The API contract (plan M9.5): regenerate the types from the committed OpenAPI document
       # (itself checked against the code by tests/test_api_contract.py); a diff fails below.
       - run: npm run gen:api
+      - run: npm run lint
+      - run: npm test
       - run: npm run build
+      - name: Initial-route JS within 250 KB gzipped (plan §6.7)
+        run: npm run check:bundle
       - run: npm audit --omit=dev
       - name: The build must not modify the repo (incl. stale generated API types)
         run: |

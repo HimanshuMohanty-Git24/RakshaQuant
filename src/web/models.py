@@ -15,7 +15,9 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StringConstraints, model
 
 
 class ApiModel(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    # Responses always carry every field, defaults included: say so in the schema, so the
+    # generated TypeScript types are exact (request bodies keep their defaults optional).
+    model_config = ConfigDict(frozen=True, json_schema_serialization_defaults_required=True)
 
 
 # -- summary ---------------------------------------------------------------------------------

@@ -686,7 +686,7 @@ export interface components {
             /** Error */
             error: string;
             /** Fields */
-            fields?: string[] | null;
+            fields: string[] | null;
         };
         /** FillRow */
         FillRow: {
@@ -953,7 +953,7 @@ export interface components {
              * @default global
              * @enum {string}
              */
-            scope: "global" | "strategy" | "broker";
+            scope?: "global" | "strategy" | "broker";
         };
         /** RiskView */
         RiskView: {
@@ -993,7 +993,7 @@ export interface components {
              * Demo
              * @default false
              */
-            demo: boolean;
+            demo?: boolean;
         };
         /** SessionStopBody */
         SessionStopBody: Record<string, never>;
@@ -1065,7 +1065,7 @@ export interface components {
              * Since Seq
              * @default 0
              */
-            since_seq: number;
+            since_seq?: number;
             /** Subscribe */
             subscribe: ("orders" | "positions" | "decisions" | "risk" | "ai" | "market" | "system" | "summary" | "quotes" | "console" | "events")[];
         };

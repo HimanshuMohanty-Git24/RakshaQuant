@@ -1,8 +1,9 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// base: "./" so the built asset URLs are relative and work when FastAPI serves the SPA at "/".
-// The dev server proxies the API + WebSocket to the FastAPI backend (run with `--mode web --dev`).
+// base "./": FastAPI serves the built SPA at "/". The dev server proxies the API and the event
+// stream to the backend (start it with `--mode web --dev`; it allows the Vite origin).
 export default defineConfig({
   plugins: [react()],
   base: "./",
@@ -16,5 +17,12 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    manifest: true, // scripts/check-bundle.mjs measures the initial route from it
+    target: "es2022",
+  },
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.{ts,tsx}"],
+    restoreMocks: true,
   },
 });

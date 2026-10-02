@@ -469,6 +469,7 @@
         },
         "required": [
           "environment",
+          "mode",
           "execution_mode_requested",
           "execution_mode_note",
           "market_data_source",
@@ -718,7 +719,8 @@
           }
         },
         "required": [
-          "error"
+          "error",
+          "fields"
         ],
         "title": "ErrorBody",
         "type": "object"
@@ -1814,6 +1816,7 @@
         },
         "required": [
           "environment",
+          "mode",
           "demo",
           "running",
           "experiment",

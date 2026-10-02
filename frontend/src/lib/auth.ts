@@ -4,9 +4,9 @@
 const KEY = "rq.token";
 
 export function bootstrapToken(): void {
-  const match = window.location.hash.match(/token=([A-Za-z0-9_-]+)/);
-  if (match) {
-    sessionStorage.setItem(KEY, match[1]);
+  const token = window.location.hash.match(/token=([A-Za-z0-9_-]+)/)?.[1];
+  if (token) {
+    sessionStorage.setItem(KEY, token);
     history.replaceState(null, "", window.location.pathname + window.location.search);
   }
 }
