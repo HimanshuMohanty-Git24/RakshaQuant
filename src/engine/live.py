@@ -35,7 +35,7 @@ from src.domain.calendar import get_calendar
 from src.domain.clock import Clock, ReplayClock, WallClock, now_ist
 from src.domain.events import Alert, AnnouncementReceived
 from src.domain.types import Instrument
-from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
+from src.engine.demo import DEMO_DAY, DEMO_TAPE, demo_instruments, pace
 from src.engine.runner import Engine, build_engine, held_instruments
 from src.engine.view_model import StatsProjector
 from src.evaluation.books import build_advisors, engine_config
@@ -61,7 +61,7 @@ from src.notifications.telegram import TelegramNotifier
 from src.reference.refresh import alert_reference, refresh_reference
 from src.store.event_store import EventStore
 from src.store.sink import StoreSink
-from src.store.tape import TapeWriter
+from src.store.tape import TapeWriter, read_bars, read_quotes
 from src.utils.market_time import IST
 
 logger = logging.getLogger(__name__)
@@ -164,20 +164,22 @@ async def run_demo(
     stop: asyncio.Event | None = None,
     step_s: float = 30.0,
     wall_s: float = 0.1,
-    today: date | None = None,
     on_engine: Callable[[Engine], None] | None = None,
+    tape_dir: Path = DEMO_TAPE,
 ) -> int:
+    """Replay the bundled fixture tape (one recorded session) through the real engine, paced:
+    ``step_s`` of session time every ``wall_s`` of real time."""
     if settings.environment != DEMO:
         raise ConfigError("the demo runs only in ENVIRONMENT=demo (its own state directory)")
     validate_roles(settings)
     calendar = get_calendar()
-    today = today or datetime.now(IST).date()
-    days = calendar.trading_days(date(today.year, 1, 1), date(today.year, 12, 31))
-    day, previous = demo_day(today, days)
-    bars, quotes = synthetic_day(day, previous)
+    day = DEMO_DAY
+    bars, quotes = read_bars(tape_dir, day), read_quotes(tape_dir, day)
+    if not bars or not quotes:
+        raise ConfigError(f"the demo tape for {day} is missing (scripts/build_demo_tape.py)")
     clock = ReplayClock(datetime.combine(day, time(9, 0), IST))
     settings.state_dir.mkdir(parents=True, exist_ok=True)
-    path = settings.db_path
+    path = demo_store_path(settings)
     for stale in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
         stale.unlink(missing_ok=True)  # every demo starts from a clean book
     limits = load_risk_limits()
@@ -208,6 +210,13 @@ async def run_demo(
         finally:
             done.set()
             await asyncio.gather(pacer, return_exceptions=True)
+
+
+def demo_store_path(settings: Settings) -> Path:
+    """The demo's own store, recreated by every demo run. Not the environment's ``db_path``:
+    the entry point keeps that open for its process events, and Windows can't delete an open
+    file."""
+    return settings.state_dir / "demo.db"
 
 
 _PENDING: set[asyncio.Task[bool]] = set()  # fire-and-forget summaries (kept from GC)

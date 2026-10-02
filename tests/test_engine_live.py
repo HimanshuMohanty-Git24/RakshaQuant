@@ -13,7 +13,7 @@ from src.config.errors import ConfigError
 from src.dashboard.cli import TradingStats
 from src.domain.clock import ReplayClock
 from src.domain.types import MarketDataSource
-from src.engine.demo import DEMO_SYMBOLS, demo_day, demo_instruments, pace, synthetic_day
+from src.engine.demo import DEMO_SYMBOLS, demo_instruments, pace, synthetic_day
 from src.live.views import SessionView
 from src.marketdata.announcements import PollStats
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
@@ -21,8 +21,6 @@ from src.reference.instruments import InstrumentSet
 from src.reference.refresh import ReferenceData
 from src.store.event_store import EventStore
 from src.utils.market_time import IST
-
-TODAY = date(2026, 10, 2)  # a holiday: the demo replays the next session, Mon 5 Oct
 
 
 class RecordingView(SessionView):
@@ -63,7 +61,7 @@ def env(settings: Any, environment: str, tmp_path: Any) -> Any:
 async def test_the_demo_trades_a_synthetic_day_and_the_view_shows_it(settings, tmp_path):
     view = RecordingView()
     demo = env(settings, "demo", tmp_path)
-    code = await live.run_demo(demo, view, step_s=60.0, wall_s=0.0, today=TODAY)
+    code = await live.run_demo(demo, view, step_s=60.0, wall_s=0.0)
     assert code == 0 and view.opened and view.closed and view.renders >= 2
     assert view.mode == "local_paper"
     stats = view.stats
@@ -71,16 +69,16 @@ async def test_the_demo_trades_a_synthetic_day_and_the_view_shows_it(settings, t
     assert stats.total_trades >= 1 or stats.open_positions  # it traded
     assert stats.data_source == MarketDataSource.SIMULATED.value
     assert any(e["message"].startswith("Session") for e in stats.activity_log)
-    assert demo.db_path.exists()
-    with EventStore(demo.db_path) as store:
+    assert live.demo_store_path(demo).exists()
+    with EventStore(live.demo_store_path(demo)) as store:
         assert store.query("SELECT COUNT(*) AS n FROM decisions")[0]["n"] >= 1
 
 
 async def test_each_demo_starts_from_a_clean_book(settings, tmp_path):
     demo = env(settings, "demo", tmp_path)
-    await live.run_demo(demo, RecordingView(), step_s=120.0, wall_s=0.0, today=TODAY)
+    await live.run_demo(demo, RecordingView(), step_s=120.0, wall_s=0.0)
     view = RecordingView()
-    await live.run_demo(demo, view, step_s=120.0, wall_s=0.0, today=TODAY)
+    await live.run_demo(demo, view, step_s=120.0, wall_s=0.0)
     assert view.stats.trades_approved >= 1  # not blocked as duplicates of the first run
 
 
@@ -95,9 +93,7 @@ async def test_a_stop_request_ends_the_run_cleanly(settings, tmp_path):
     stop = asyncio.Event()
     view = RecordingView()
     task = asyncio.create_task(
-        live.run_demo(
-            env(settings, "demo", tmp_path), view, stop=stop, step_s=30.0, wall_s=0.05, today=TODAY
-        )
+        live.run_demo(env(settings, "demo", tmp_path), view, stop=stop, step_s=30.0, wall_s=0.05)
     )
     await asyncio.sleep(0.3)
     stop.set()
@@ -156,10 +152,3 @@ async def test_the_paper_run_wires_reference_data_yfinance_and_the_tape(
     in_session = [t for t, force in polls if not force]
     assert len(in_session) >= 70  # every 5 minutes from the open to the close
     assert all(b - a >= timedelta(minutes=5) for a, b in zip(in_session, in_session[1:]))
-
-
-def test_demo_day_picks_the_next_session():
-    days = [date(2026, 10, 1), date(2026, 10, 5), date(2026, 10, 6)]
-    assert demo_day(date(2026, 10, 3), days) == (date(2026, 10, 5), date(2026, 10, 1))
-    assert demo_day(date(2026, 10, 6), days) == (date(2026, 10, 6), date(2026, 10, 5))
-    assert demo_day(date(2026, 12, 31), days) == (date(2026, 10, 6), date(2026, 10, 5))

@@ -432,5 +432,6 @@ def run_web(
                      auto_start_demo=demo if auto_start else None)  # fmt: skip
     logger.info("RakshaQuant web console on %s:%d (demo=%s)", host, port, demo)
     print(f"\n  RakshaQuant web console -> {security.url(host, port)}\n"
-          "  (the link carries this launch's access token; it changes on every start)\n")  # fmt: skip
+          "  (the link carries this launch's access token; it changes on every start)\n",
+          flush=True)  # fmt: skip
     uvicorn.run(app, host=host, port=port, log_level="warning")

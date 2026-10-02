@@ -9,13 +9,14 @@ YFinance data, the RiskEngine on every order) behind one of two front ends, sele
 * ``web``           — a FastAPI + WebSocket server driving the browser console.
 
 Both modes drive the same engine; the views are fed from the event store's projections.
-``--demo`` replays a synthetic day through the same engine in the ``demo`` environment.
+``--demo`` replays the bundled fixture tape (one synthetic session) through the same engine in
+the ``demo`` environment.
 
 Examples::
 
     uv run python scripts/run_live_trading.py                 # CLI (default)
     uv run python scripts/run_live_trading.py --mode web       # web console
-    uv run python scripts/run_live_trading.py --mode web --demo # web console, synthetic data
+    uv run python scripts/run_live_trading.py --mode web --demo # web console, the demo tape
 """
 
 import argparse
