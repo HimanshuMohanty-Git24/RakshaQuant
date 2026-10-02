@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from decimal import Decimal
 
@@ -13,7 +14,7 @@ from src.web.run_manager import RunManager
 from src.web.server import create_app
 from tests.test_books import run as run_day
 from tests.test_books import three_books
-from tests.test_engine_replay import DAY, INFY, TCS
+from tests.test_engine_replay import DAY, INFY, TCS, at
 from tests.web_helpers import SECURITY, anonymous, authed
 
 GETS = ["/api/summary", "/api/positions", "/api/orders", "/api/fills", "/api/trades",
@@ -178,3 +179,129 @@ async def test_ai_market_events_reports_system_config(session, settings):
     assert config["mode"] == "paper" and config["experiment"]["learning_injection"] is False
     assert "test-groq-key" not in response.text  # never a secret
     assert set(config["llm_roles"]) >= {"veto", "review"}
+
+
+# -- plan M10.4: what the screens need ------------------------------------------------------------
+
+
+async def test_mid_session_positions_carry_their_exits_and_risk_its_utilisation(settings, tmp_path):
+    """Stopped at 10:30 with INFY (and, in A, TCS) open: stops, targets, heat, sectors."""
+    with three_books(tmp_path) as (engine, clock):
+        run = asyncio.create_task(engine.run())
+        while clock.now() < at(10, 30):
+            await clock.advance(30)
+        manager = RunManager(settings, clock=clock)
+        manager.attach(engine)
+        try:
+            client = client_for(manager)
+            positions = client.get("/api/positions", params={"book": "A"}).json()
+            infy = next(p for p in positions if p["symbol"] == "INFY")
+            assert infy["strategy"] == "momentum" and infy["entered_on"] == DAY.isoformat()
+            assert (
+                Decimal(infy["stop_price"])
+                < Decimal(infy["avg_price"])
+                < Decimal(infy["target_price"])
+            )
+            assert infy["held_sessions"] == 0 and infy["entry_decision_id"]
+            assert (
+                Decimal(infy["unrealized_pnl"])
+                == (Decimal(infy["mark"]) - Decimal(infy["avg_price"])) * infy["quantity"]
+            )
+            risk = client.get("/api/risk", params={"book": "A"}).json()["books"][0]
+            usage = {u["key"]: u for u in risk["utilisation"]}
+            assert risk["valuation"] == "live" and Decimal(usage["PF_HEAT"]["used"]) > 0
+            assert usage["PF_MAX_POSITIONS"]["used"] == str(len(positions))
+            assert 0 < usage["PF_GROSS"]["fraction"] < 1
+            assert risk["sectors"] and all(
+                s["key"].startswith("PF_SECTOR:") for s in risk["sectors"]
+            )
+            summary = client.get("/api/summary").json()
+            assert summary["books"][0]["day_return_pct"] is not None
+            steps = [(s["state"], s["at"][11:16]) for s in summary["schedule"]]
+            assert steps[:3] == [("OPEN", "09:15"), ("ENTRY_WINDOW", "09:20"), ("MONITOR", "09:45")]
+            assert steps[-1] == ("EXIT", "15:50")  # instants are IST
+            watch = {w["symbol"]: w for w in client.get("/api/market/watchlist").json()}
+            assert (
+                watch["INFY"]["held"]
+                and watch["INFY"]["ltp"]
+                and "momentum BUY" in watch["INFY"]["signals_today"]
+            )
+        finally:
+            engine.request_stop()
+            while not run.done():
+                await clock.advance(30)
+            manager.close_reader()
+
+
+async def test_lineage_executions_markers_equity_and_symbol_filters(session):
+    engine, manager = session
+    client = client_for(manager)
+    decision = client.get("/api/decisions", params={"symbol": "INFY", "book": "A",
+                                                    "outcome": "submitted"}).json()[0]  # fmt: skip
+    lineage = client.get(f"/api/decisions/{decision['decision_id']}").json()
+    entries = [x for x in lineage["executions"] if x["kind"] == "open"]
+    assert {x["book_id"] for x in entries} == {"A", "B", "C"}
+    for x in entries:
+        assert x["status"] == "FILLED" and x["filled_qty"] == x["quantity"]
+        assert x["slippage_vs_arrival_bps"] is not None and Decimal(x["charges"]) > 0
+    assert any(x["kind"] != "open" for x in lineage["executions"])  # the exit leg
+    bars = client.get("/api/market/INFY/bars").json()
+    kinds = [m["kind"] for m in bars["markers"]]
+    assert kinds.count("entry") == 3 and kinds.count("exit") == 3
+    assert {o["symbol"] for o in client.get("/api/orders", params={"symbol": "TCS"}).json()} == {
+        "TCS"
+    }
+    assert {f["symbol"] for f in client.get("/api/fills", params={"symbol": "INFY"}).json()} == {
+        "INFY"
+    }
+    assert client.get("/api/trades", params={"symbol": "NOPE"}).json() == []
+    equity = client.get("/api/equity").json()
+    assert [b["book_id"] for b in equity["books"]] == ["A", "B", "C"]
+    a_point = equity["books"][0]["points"][-1]
+    assert a_point["date"] == DAY.isoformat() and a_point["peak"] >= a_point["equity"]
+    assert equity["benchmark"] == "^NSEI"
+    assert equity["benchmark_points"][0]["return_pct"] == 0  # its base: the session before
+
+
+async def test_alerts_logs_reports_documents_and_calibration(session, settings):
+    engine, manager = session
+    from src.domain.events import Alert
+    from src.store.sink import StoreSink
+
+    StoreSink(engine.store, engine.clock, "test").emit(
+        Alert(level="CRITICAL", key="feed_down", message="token sk-ant-abcdef1234567890 leaked")
+    )
+    client = client_for(manager)
+    critical = client.get("/api/alerts", params={"level": "CRITICAL"}).json()
+    assert critical[0]["key"] == "feed_down" and "sk-ant-" not in critical[0]["message"]
+    assert client.get("/api/alerts", params={"level": "LOUD"}).status_code == 422
+
+    logs_dir = manager.settings.logs_dir
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    lines = [{"ts": "2026-10-05T04:00:00+00:00", "level": "INFO", "logger": "src.engine", "msg": "started"},
+             {"ts": "2026-10-05T04:01:00+00:00", "level": "WARNING", "logger": "src.marketdata",
+              "msg": "auth gsk_secretvalue failed"}, "not json"]  # fmt: skip
+    (logs_dir / "rakshaquant-20261005.log").write_text(
+        "\n".join(x if isinstance(x, str) else json.dumps(x) for x in lines), encoding="utf-8"
+    )
+    logs = client.get("/api/logs").json()
+    assert [x["level"] for x in logs] == ["WARNING", "INFO"]  # newest first, junk skipped
+    assert "gsk_" not in logs[0]["message"]
+    assert len(client.get("/api/logs", params={"contains": "STARTED"}).json()) == 1
+
+    reports = manager.settings.reports_dir
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / f"{DAY}.json").write_text(json.dumps({
+        "date": DAY.isoformat(), "experiment": "month1",
+        "books": {"B": {"capital": {"end_equity": 1005030.0}, "pnl": {"day_return_pct": 0.26},
+                        "trades": {"exits": 1}}},
+        "comparison": {"B": {"net_ai_value_inr": 820.5}}}), encoding="utf-8")  # fmt: skip
+    (reports / f"{DAY}.md").write_text("# Daily report\n", encoding="utf-8")
+    listed = client.get("/api/reports").json()
+    assert listed[0]["books"]["B"]["net_ai_value_inr"] == 820.5
+    assert client.get(f"/api/reports/{DAY}/markdown").json()["markdown"] == "# Daily report\n"
+    assert client.get("/api/reports/2026-10-06/markdown").status_code == 404
+    prereg = client.get("/api/docs/preregistration").json()
+    assert prereg["title"].startswith("Pre-registration") and "H2" in prereg["markdown"]
+    assert client.get("/api/ai/calibration").json() == {"fitted": False, "temperatures": {},
+                                                        "meta": {}}  # fmt: skip

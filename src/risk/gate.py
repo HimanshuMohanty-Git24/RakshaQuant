@@ -116,19 +116,29 @@ class RiskGate:
     # -- the snapshot ------------------------------------------------------------------------------
 
     def snapshot(self, intent: OrderIntent) -> RiskSnapshot:
+        return self._snapshot(intent)
+
+    def book_snapshot(self) -> RiskSnapshot:
+        """The book as the RiskEngine sees it, without an order in hand (the web API's risk
+        view: utilisation, sector exposure, resting stops, event blocks)."""
+        return self._snapshot(None)
+
+    def _snapshot(self, intent: OrderIntent | None) -> RiskSnapshot:
         now = self._clock.now()
         book = self._oms.book
         orders = list(self._oms.orders.values())
         working = [o for o in orders if not o.status.is_terminal]
 
-        instruments = {intent.instrument.key: intent.instrument}
+        instruments = {intent.instrument.key: intent.instrument} if intent is not None else {}
         for order in orders:
             instruments.setdefault(order.intent.instrument.key, order.intent.instrument)
         for key, instrument in self._instruments.items():
             instruments.setdefault(key, instrument)
 
         positions = open_positions(book, now)
-        wanted = {intent.instrument.key, *(p.instrument_key for p in positions)}
+        wanted = {p.instrument_key for p in positions}
+        if intent is not None:
+            wanted.add(intent.instrument.key)
         wanted |= {o.intent.instrument.key for o in working}
         market = {
             key: self._market(instruments[key]) if key in instruments else MarketFacts()
@@ -214,7 +224,7 @@ class RiskGate:
         )
 
     def _event_blocks(
-        self, intent: OrderIntent, now: datetime
+        self, intent: OrderIntent | None, now: datetime
     ) -> dict[str, tuple[EventBlock, ...]]:
         if self._events is None:
             return {}
@@ -223,6 +233,8 @@ class RiskGate:
                                 rules=self._event_rules, now=now)  # fmt: skip
         except Exception as exc:  # unknown events: no new entry in this instrument (fail closed)
             logger.exception("event calendar unavailable")
+            if intent is None:  # a view, not an order: nothing to fail closed on
+                return {}
             today = now.astimezone(IST).date()
             unknown = EventBlock(ReasonCode.EVT_RESULTS_WINDOW, today, today, "unknown",
                                  f"event calendar unavailable: {type(exc).__name__}")  # fmt: skip

@@ -351,6 +351,13 @@ def _costs(fills: Sequence[_E[FillReceived]]) -> dict[str, Any]:
     }
 
 
+def slippage_bps(fill_price: Decimal, reference: Decimal, side: Side) -> float:
+    """Execution slippage against a reference price, in bps; adverse is positive (paying up on
+    a buy, selling below on a sell)."""
+    sign = 1 if side is Side.BUY else -1
+    return float((fill_price / reference - 1) * sign * 10_000)
+
+
 def _execution(ev: _Events, book: str, day: date, submitted: Sequence[Any]) -> dict[str, Any]:
     arrival = {e.payload.client_order_id: e.payload.ref_price
                for e in ev.of(RiskDecision, book=book, day=day)}  # fmt: skip
@@ -368,10 +375,10 @@ def _execution(ev: _Events, book: str, day: date, submitted: Sequence[Any]) -> d
             avg = got[-1].order_avg_price
             qty = got[-1].order_filled_qty
             decision = order.intent.decision_price
-            vs_decision.append(float((avg / decision - 1) * sign * 10_000))
+            vs_decision.append(slippage_bps(avg, decision, order.intent.side))
             ref = arrival.get(order.client_order_id)
             if ref:
-                vs_arrival.append(float((avg / ref - 1) * sign * 10_000))
+                vs_arrival.append(slippage_bps(avg, ref, order.intent.side))
             shortfall += (avg - decision) * qty * sign + sum(f.fill.charges for f in got)
             if order.submitted_at is not None:
                 to_fill.append((got[0].fill.ts - order.submitted_at).total_seconds())

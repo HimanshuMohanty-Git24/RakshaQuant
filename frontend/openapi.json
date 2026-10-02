@@ -1,6 +1,81 @@
 {
   "components": {
     "schemas": {
+      "AlertRow": {
+        "properties": {
+          "book_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Id"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "level",
+          "key",
+          "message",
+          "book_id"
+        ],
+        "title": "AlertRow",
+        "type": "object"
+      },
+      "BarMarker": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "entry",
+              "exit",
+              "event"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "kind",
+          "text"
+        ],
+        "title": "BarMarker",
+        "type": "object"
+      },
       "BarRow": {
         "properties": {
           "close": {
@@ -57,6 +132,13 @@
             "title": "Instrument Key",
             "type": "string"
           },
+          "markers": {
+            "items": {
+              "$ref": "#/components/schemas/BarMarker"
+            },
+            "title": "Markers",
+            "type": "array"
+          },
           "source": {
             "enum": [
               "engine",
@@ -76,9 +158,34 @@
           "instrument_key",
           "adjusted",
           "source",
-          "bars"
+          "bars",
+          "markers"
         ],
         "title": "Bars",
+        "type": "object"
+      },
+      "BenchmarkPoint": {
+        "properties": {
+          "close": {
+            "title": "Close",
+            "type": "number"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "return_pct": {
+            "title": "Return Pct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "close",
+          "return_pct"
+        ],
+        "title": "BenchmarkPoint",
         "type": "object"
       },
       "BookComparison": {
@@ -229,6 +336,25 @@
             ],
             "title": "Daily State"
           },
+          "equity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity"
+          },
+          "event_blocks": {
+            "items": {
+              "$ref": "#/components/schemas/EventBlockRow"
+            },
+            "title": "Event Blocks",
+            "type": "array"
+          },
           "kill_switches": {
             "items": {
               "$ref": "#/components/schemas/KillSwitchRow"
@@ -242,13 +368,41 @@
             },
             "title": "Rejections Today",
             "type": "object"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/Utilisation"
+            },
+            "title": "Sectors",
+            "type": "array"
+          },
+          "utilisation": {
+            "items": {
+              "$ref": "#/components/schemas/Utilisation"
+            },
+            "title": "Utilisation",
+            "type": "array"
+          },
+          "valuation": {
+            "enum": [
+              "live",
+              "last_mark",
+              "none"
+            ],
+            "title": "Valuation",
+            "type": "string"
           }
         },
         "required": [
           "book_id",
           "kill_switches",
           "daily_state",
-          "rejections_today"
+          "rejections_today",
+          "equity",
+          "valuation",
+          "utilisation",
+          "sectors",
+          "event_blocks"
         ],
         "title": "BookRisk",
         "type": "object"
@@ -286,6 +440,17 @@
               }
             ],
             "title": "Day Pnl"
+          },
+          "day_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Return Pct"
           },
           "equity": {
             "anyOf": [
@@ -367,7 +532,8 @@
           "open_positions",
           "open_orders",
           "trades_today",
-          "kill_switch"
+          "kill_switch",
+          "day_return_pct"
         ],
         "title": "BookSummary",
         "type": "object"
@@ -396,6 +562,33 @@
           "books"
         ],
         "title": "BooksView",
+        "type": "object"
+      },
+      "CalibrationView": {
+        "properties": {
+          "fitted": {
+            "title": "Fitted",
+            "type": "boolean"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          },
+          "temperatures": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Temperatures",
+            "type": "object"
+          }
+        },
+        "required": [
+          "fitted",
+          "temperatures",
+          "meta"
+        ],
+        "title": "CalibrationView",
         "type": "object"
       },
       "ConfigView": {
@@ -702,6 +895,116 @@
         "title": "Disposition",
         "type": "string"
       },
+      "Document": {
+        "properties": {
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "markdown"
+        ],
+        "title": "Document",
+        "type": "object"
+      },
+      "EquityPoint": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "drawdown_pct": {
+            "title": "Drawdown Pct",
+            "type": "number"
+          },
+          "equity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Equity",
+            "type": "string"
+          },
+          "peak": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Peak",
+            "type": "string"
+          },
+          "return_pct": {
+            "title": "Return Pct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "equity",
+          "peak",
+          "return_pct",
+          "drawdown_pct"
+        ],
+        "title": "EquityPoint",
+        "type": "object"
+      },
+      "EquitySeries": {
+        "properties": {
+          "book_id": {
+            "title": "Book Id",
+            "type": "string"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "book_id",
+          "points"
+        ],
+        "title": "EquitySeries",
+        "type": "object"
+      },
+      "EquityView": {
+        "properties": {
+          "benchmark": {
+            "title": "Benchmark",
+            "type": "string"
+          },
+          "benchmark_points": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkPoint"
+            },
+            "title": "Benchmark Points",
+            "type": "array"
+          },
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/EquitySeries"
+            },
+            "title": "Books",
+            "type": "array"
+          },
+          "capital": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Capital",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capital",
+          "books",
+          "benchmark",
+          "benchmark_points"
+        ],
+        "title": "EquityView",
+        "type": "object"
+      },
       "ErrorBody": {
         "description": "Every error response: generic, never echoing input or exception text.",
         "properties": {
@@ -729,6 +1032,164 @@
           "fields"
         ],
         "title": "ErrorBody",
+        "type": "object"
+      },
+      "EventBlockRow": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "instrument_key": {
+            "title": "Instrument Key",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_key",
+          "symbol",
+          "code",
+          "start",
+          "end",
+          "event_id",
+          "reason"
+        ],
+        "title": "EventBlockRow",
+        "type": "object"
+      },
+      "Execution": {
+        "description": "One order of the decision. Slippage is adverse-positive, in bps, vs the decision price\n(the signal bar's close) and vs the arrival price (the quote at submission).",
+        "properties": {
+          "arrival_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival Price"
+          },
+          "avg_fill_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Fill Price"
+          },
+          "book_id": {
+            "title": "Book Id",
+            "type": "string"
+          },
+          "charges": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Charges",
+            "type": "string"
+          },
+          "client_order_id": {
+            "title": "Client Order Id",
+            "type": "string"
+          },
+          "decision_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Price"
+          },
+          "filled_qty": {
+            "title": "Filled Qty",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "slippage_vs_arrival_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Vs Arrival Bps"
+          },
+          "slippage_vs_decision_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Vs Decision Bps"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "book_id",
+          "client_order_id",
+          "kind",
+          "side",
+          "quantity",
+          "filled_qty",
+          "status",
+          "decision_price",
+          "arrival_price",
+          "avg_fill_price",
+          "slippage_vs_decision_bps",
+          "slippage_vs_arrival_bps",
+          "charges"
+        ],
+        "title": "Execution",
         "type": "object"
       },
       "FillRow": {
@@ -1036,18 +1497,38 @@
             "title": "Events",
             "type": "array"
           },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/Execution"
+            },
+            "title": "Executions",
+            "type": "array"
+          },
           "exit_decision_ids": {
             "items": {
               "type": "string"
             },
             "title": "Exit Decision Ids",
             "type": "array"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
           }
         },
         "required": [
           "decision_id",
           "exit_decision_ids",
-          "events"
+          "events",
+          "regime",
+          "executions"
         ],
         "title": "Lineage",
         "type": "object"
@@ -1111,6 +1592,47 @@
         "title": "LineageEvent",
         "type": "object"
       },
+      "LogLine": {
+        "properties": {
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "logger": {
+            "title": "Logger",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "level",
+          "logger",
+          "message",
+          "decision_id"
+        ],
+        "title": "LogLine",
+        "type": "object"
+      },
       "ModelHealth": {
         "properties": {
           "calls_today": {
@@ -1148,6 +1670,17 @@
             "title": "Model",
             "type": "string"
           },
+          "p50_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Latency Ms"
+          },
           "p95_latency_ms": {
             "anyOf": [
               {
@@ -1164,6 +1697,7 @@
           "model",
           "calls_today",
           "errors_today",
+          "p50_latency_ms",
           "p95_latency_ms",
           "last_outcome",
           "last_call"
@@ -1321,6 +1855,40 @@
             "title": "Book Id",
             "type": "string"
           },
+          "entered_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entered On"
+          },
+          "entry_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Decision Id"
+          },
+          "held_sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held Sessions"
+          },
           "instrument_key": {
             "title": "Instrument Key",
             "type": "string"
@@ -1350,9 +1918,44 @@
             "title": "Realized Pnl",
             "type": "string"
           },
+          "stop_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Price"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
           "symbol": {
             "title": "Symbol",
             "type": "string"
+          },
+          "target_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Price"
           },
           "unrealized_pnl": {
             "anyOf": [
@@ -1382,7 +1985,13 @@
           "realized_pnl",
           "mark",
           "unrealized_pnl",
-          "updated_ts"
+          "updated_ts",
+          "strategy",
+          "entry_decision_id",
+          "stop_price",
+          "target_price",
+          "entered_on",
+          "held_sessions"
         ],
         "title": "PositionRow",
         "type": "object"
@@ -1422,6 +2031,101 @@
           "ts"
         ],
         "title": "ReconcileRow",
+        "type": "object"
+      },
+      "ReportBook": {
+        "properties": {
+          "cumulative_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Return Pct"
+          },
+          "day_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Return Pct"
+          },
+          "end_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Equity"
+          },
+          "exits": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exits"
+          },
+          "net_ai_value_inr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Ai Value Inr"
+          }
+        },
+        "required": [
+          "end_equity",
+          "day_return_pct",
+          "cumulative_return_pct",
+          "net_ai_value_inr",
+          "exits"
+        ],
+        "title": "ReportBook",
+        "type": "object"
+      },
+      "ReportSummary": {
+        "properties": {
+          "books": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReportBook"
+            },
+            "title": "Books",
+            "type": "object"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "experiment": {
+            "title": "Experiment",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "experiment",
+          "books"
+        ],
+        "title": "ReportSummary",
         "type": "object"
       },
       "ResumeBody": {
@@ -1544,6 +2248,25 @@
           "models"
         ],
         "title": "RoleModels",
+        "type": "object"
+      },
+      "ScheduleStep": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "at"
+        ],
+        "title": "ScheduleStep",
         "type": "object"
       },
       "SessionInfo": {
@@ -1809,6 +2532,13 @@
             "title": "Running",
             "type": "boolean"
           },
+          "schedule": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleStep"
+            },
+            "title": "Schedule",
+            "type": "array"
+          },
           "session": {
             "anyOf": [
               {
@@ -1830,7 +2560,8 @@
           "market_open",
           "now",
           "last_seq",
-          "books"
+          "books",
+          "schedule"
         ],
         "title": "Summary",
         "type": "object"
@@ -1890,6 +2621,13 @@
           "pid": {
             "title": "Pid",
             "type": "integer"
+          },
+          "prompts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Prompts",
+            "type": "object"
           },
           "quote_age_s": {
             "additionalProperties": {
@@ -1955,7 +2693,8 @@
           "last_seq",
           "schema_version",
           "last_reconcile",
-          "versions"
+          "versions",
+          "prompts"
         ],
         "title": "SystemView",
         "type": "object"
@@ -2143,6 +2882,58 @@
         "title": "TypedEventRow",
         "type": "object"
       },
+      "Utilisation": {
+        "properties": {
+          "fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fraction"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "limit": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Limit",
+            "type": "string"
+          },
+          "unit": {
+            "enum": [
+              "inr",
+              "ratio",
+              "count"
+            ],
+            "title": "Unit",
+            "type": "string"
+          },
+          "used": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Used",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "used",
+          "limit",
+          "unit",
+          "fraction"
+        ],
+        "title": "Utilisation",
+        "type": "object"
+      },
       "VetoPrecision": {
         "properties": {
           "ci95": {
@@ -2209,6 +3000,117 @@
         ],
         "title": "VetoPrecision",
         "type": "object"
+      },
+      "WatchRow": {
+        "properties": {
+          "change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Pct"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "held": {
+            "title": "Held",
+            "type": "boolean"
+          },
+          "instrument_key": {
+            "title": "Instrument Key",
+            "type": "string"
+          },
+          "ltp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ltp"
+          },
+          "prev_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Close"
+          },
+          "quote_age_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Age S"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "signals_today": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Signals Today",
+            "type": "array"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_key",
+          "symbol",
+          "sector",
+          "ltp",
+          "prev_close",
+          "change_pct",
+          "quote_age_s",
+          "source",
+          "signals_today",
+          "events",
+          "held"
+        ],
+        "title": "WatchRow",
+        "type": "object"
       }
     }
   },
@@ -2218,6 +3120,74 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/ai/calibration": {
+      "get": {
+        "operationId": "ai_calibration_api_ai_calibration_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalibrationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Ai Calibration"
+      }
+    },
     "/api/ai/calls": {
       "get": {
         "operationId": "ai_calls_api_ai_calls_get",
@@ -2638,6 +3608,126 @@
         "summary": "Ai Spend"
       }
     },
+    "/api/alerts": {
+      "get": {
+        "operationId": "alerts_api_alerts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(INFO|WARNING|CRITICAL)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AlertRow"
+                  },
+                  "title": "Response Alerts Api Alerts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Alerts"
+      }
+    },
     "/api/books": {
       "get": {
         "operationId": "books_api_books_get",
@@ -3024,6 +4114,142 @@
         "summary": "Decision"
       }
     },
+    "/api/docs/preregistration": {
+      "get": {
+        "operationId": "preregistration_api_docs_preregistration_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Preregistration"
+      }
+    },
+    "/api/equity": {
+      "get": {
+        "operationId": "equity_api_equity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EquityView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Equity"
+      }
+    },
     "/api/events/typed": {
       "get": {
         "operationId": "typed_events_api_events_typed_get",
@@ -3184,6 +4410,23 @@
           },
           {
             "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z0-9&_.^-]{1,32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -3284,6 +4527,198 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/api/logs": {
+      "get": {
+        "operationId": "logs_api_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "in": "query",
+            "name": "contains",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Contains"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 300,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LogLine"
+                  },
+                  "title": "Response Logs Api Logs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Logs"
+      }
+    },
+    "/api/market/watchlist": {
+      "get": {
+        "operationId": "watchlist_api_market_watchlist_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WatchRow"
+                  },
+                  "title": "Response Watchlist Api Market Watchlist Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Watchlist"
       }
     },
     "/api/market/{symbol}/bars": {
@@ -3441,6 +4876,23 @@
                 }
               ],
               "title": "Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z0-9&_.^-]{1,32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
             }
           },
           {
@@ -3616,6 +5068,92 @@
         "summary": "Positions"
       }
     },
+    "/api/reports": {
+      "get": {
+        "operationId": "reports_api_reports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 60,
+              "maximum": 366,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportSummary"
+                  },
+                  "title": "Response Reports Api Reports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Reports"
+      }
+    },
     "/api/reports/{day}": {
       "get": {
         "operationId": "report_api_reports__day__get",
@@ -3696,6 +5234,86 @@
           }
         },
         "summary": "Report"
+      }
+    },
+    "/api/reports/{day}/markdown": {
+      "get": {
+        "operationId": "report_markdown_api_reports__day__markdown_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Missing or wrong token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Report Markdown"
       }
     },
     "/api/risk": {
@@ -4450,6 +6068,23 @@
                 }
               ],
               "title": "Strategy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z0-9&_.^-]{1,32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
             }
           },
           {

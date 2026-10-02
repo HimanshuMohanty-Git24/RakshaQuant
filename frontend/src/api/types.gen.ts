@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/ai/calibration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ai Calibration */
+        get: operations["ai_calibration_api_ai_calibration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ai/calls": {
         parameters: {
             query?: never;
@@ -64,6 +81,23 @@ export interface paths {
         };
         /** Ai Spend */
         get: operations["ai_spend_api_ai_spend_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Alerts */
+        get: operations["alerts_api_alerts_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -140,6 +174,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/docs/preregistration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preregistration */
+        get: operations["preregistration_api_docs_preregistration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Equity */
+        get: operations["equity_api_equity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events/typed": {
         parameters: {
             query?: never;
@@ -183,6 +251,40 @@ export interface paths {
         };
         /** Health */
         get: operations["health_api_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Logs */
+        get: operations["logs_api_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/market/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Watchlist */
+        get: operations["watchlist_api_market_watchlist_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -242,6 +344,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reports */
+        get: operations["reports_api_reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reports/{day}": {
         parameters: {
             query?: never;
@@ -251,6 +370,23 @@ export interface paths {
         };
         /** Report */
         get: operations["report_api_reports__day__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/{day}/markdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report Markdown */
+        get: operations["report_markdown_api_reports__day__markdown_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -439,6 +575,39 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AlertRow */
+        AlertRow: {
+            /** Book Id */
+            book_id: string | null;
+            /** Key */
+            key: string;
+            /** Level */
+            level: string;
+            /** Message */
+            message: string;
+            /** Seq */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /** BarMarker */
+        BarMarker: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "entry" | "exit" | "event";
+            /** Text */
+            text: string;
+        };
         /** BarRow */
         BarRow: {
             /** Close */
@@ -465,6 +634,8 @@ export interface components {
             bars: components["schemas"]["BarRow"][];
             /** Instrument Key */
             instrument_key: string;
+            /** Markers */
+            markers: components["schemas"]["BarMarker"][];
             /**
              * Source
              * @enum {string}
@@ -472,6 +643,18 @@ export interface components {
             source: "engine" | "tape" | "none";
             /** Symbol */
             symbol: string;
+        };
+        /** BenchmarkPoint */
+        BenchmarkPoint: {
+            /** Close */
+            close: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Return Pct */
+            return_pct: number;
         };
         /** BookComparison */
         BookComparison: {
@@ -514,12 +697,25 @@ export interface components {
             daily_state: {
                 [key: string]: unknown;
             } | null;
+            /** Equity */
+            equity: string | null;
+            /** Event Blocks */
+            event_blocks: components["schemas"]["EventBlockRow"][];
             /** Kill Switches */
             kill_switches: components["schemas"]["KillSwitchRow"][];
             /** Rejections Today */
             rejections_today: {
                 [key: string]: number;
             };
+            /** Sectors */
+            sectors: components["schemas"]["Utilisation"][];
+            /** Utilisation */
+            utilisation: components["schemas"]["Utilisation"][];
+            /**
+             * Valuation
+             * @enum {string}
+             */
+            valuation: "live" | "last_mark" | "none";
         };
         /** BookSummary */
         BookSummary: {
@@ -531,6 +727,8 @@ export interface components {
             cash: string | null;
             /** Day Pnl */
             day_pnl: string | null;
+            /** Day Return Pct */
+            day_return_pct: number | null;
             /** Equity */
             equity: string | null;
             /** Kill Switch */
@@ -561,6 +759,19 @@ export interface components {
             books: components["schemas"]["BookComparison"][];
             /** Experiment */
             experiment: string;
+        };
+        /** CalibrationView */
+        CalibrationView: {
+            /** Fitted */
+            fitted: boolean;
+            /** Meta */
+            meta: {
+                [key: string]: unknown;
+            };
+            /** Temperatures */
+            temperatures: {
+                [key: string]: number;
+            };
         };
         /**
          * ConfigView
@@ -680,6 +891,47 @@ export interface components {
          * @enum {string}
          */
         Disposition: "shadow_strategy" | "regime_gated" | "policy_skipped" | "vetoed" | "risk_rejected" | "submitted" | "broker_rejected" | "unknown";
+        /** Document */
+        Document: {
+            /** Markdown */
+            markdown: string;
+            /** Title */
+            title: string;
+        };
+        /** EquityPoint */
+        EquityPoint: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Drawdown Pct */
+            drawdown_pct: number;
+            /** Equity */
+            equity: string;
+            /** Peak */
+            peak: string;
+            /** Return Pct */
+            return_pct: number;
+        };
+        /** EquitySeries */
+        EquitySeries: {
+            /** Book Id */
+            book_id: string;
+            /** Points */
+            points: components["schemas"]["EquityPoint"][];
+        };
+        /** EquityView */
+        EquityView: {
+            /** Benchmark */
+            benchmark: string;
+            /** Benchmark Points */
+            benchmark_points: components["schemas"]["BenchmarkPoint"][];
+            /** Books */
+            books: components["schemas"]["EquitySeries"][];
+            /** Capital */
+            capital: string;
+        };
         /**
          * ErrorBody
          * @description Every error response: generic, never echoing input or exception text.
@@ -689,6 +941,62 @@ export interface components {
             error: string;
             /** Fields */
             fields: string[] | null;
+        };
+        /** EventBlockRow */
+        EventBlockRow: {
+            /** Code */
+            code: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Event Id */
+            event_id: string;
+            /** Instrument Key */
+            instrument_key: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Symbol */
+            symbol: string;
+        };
+        /**
+         * Execution
+         * @description One order of the decision. Slippage is adverse-positive, in bps, vs the decision price
+         *     (the signal bar's close) and vs the arrival price (the quote at submission).
+         */
+        Execution: {
+            /** Arrival Price */
+            arrival_price: string | null;
+            /** Avg Fill Price */
+            avg_fill_price: string | null;
+            /** Book Id */
+            book_id: string;
+            /** Charges */
+            charges: string;
+            /** Client Order Id */
+            client_order_id: string;
+            /** Decision Price */
+            decision_price: string | null;
+            /** Filled Qty */
+            filled_qty: number;
+            /** Kind */
+            kind: string;
+            /** Quantity */
+            quantity: number;
+            /** Side */
+            side: string;
+            /** Slippage Vs Arrival Bps */
+            slippage_vs_arrival_bps: number | null;
+            /** Slippage Vs Decision Bps */
+            slippage_vs_decision_bps: number | null;
+            /** Status */
+            status: string;
         };
         /** FillRow */
         FillRow: {
@@ -804,8 +1112,12 @@ export interface components {
             decision_id: string;
             /** Events */
             events: components["schemas"]["LineageEvent"][];
+            /** Executions */
+            executions: components["schemas"]["Execution"][];
             /** Exit Decision Ids */
             exit_decision_ids: string[];
+            /** Regime */
+            regime: string | null;
         };
         /** LineageEvent */
         LineageEvent: {
@@ -829,6 +1141,22 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** LogLine */
+        LogLine: {
+            /** Decision Id */
+            decision_id: string | null;
+            /** Level */
+            level: string;
+            /** Logger */
+            logger: string;
+            /** Message */
+            message: string;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
         /** ModelHealth */
         ModelHealth: {
             /** Calls Today */
@@ -841,6 +1169,8 @@ export interface components {
             last_outcome: string | null;
             /** Model */
             model: string;
+            /** P50 Latency Ms */
+            p50_latency_ms: number | null;
             /** P95 Latency Ms */
             p95_latency_ms: number | null;
         };
@@ -899,6 +1229,12 @@ export interface components {
             avg_price: string | null;
             /** Book Id */
             book_id: string;
+            /** Entered On */
+            entered_on: string | null;
+            /** Entry Decision Id */
+            entry_decision_id: string | null;
+            /** Held Sessions */
+            held_sessions: number | null;
             /** Instrument Key */
             instrument_key: string;
             /** Mark */
@@ -909,8 +1245,14 @@ export interface components {
             quantity: number;
             /** Realized Pnl */
             realized_pnl: string;
+            /** Stop Price */
+            stop_price: string | null;
+            /** Strategy */
+            strategy: string | null;
             /** Symbol */
             symbol: string;
+            /** Target Price */
+            target_price: string | null;
             /** Unrealized Pnl */
             unrealized_pnl: string | null;
             /**
@@ -934,6 +1276,33 @@ export interface components {
              * Format: date-time
              */
             ts: string;
+        };
+        /** ReportBook */
+        ReportBook: {
+            /** Cumulative Return Pct */
+            cumulative_return_pct: number | null;
+            /** Day Return Pct */
+            day_return_pct: number | null;
+            /** End Equity */
+            end_equity: number | null;
+            /** Exits */
+            exits: number | null;
+            /** Net Ai Value Inr */
+            net_ai_value_inr: number | null;
+        };
+        /** ReportSummary */
+        ReportSummary: {
+            /** Books */
+            books: {
+                [key: string]: components["schemas"]["ReportBook"];
+            };
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Experiment */
+            experiment: string;
         };
         /** ResumeBody */
         ResumeBody: {
@@ -978,6 +1347,16 @@ export interface components {
             models: components["schemas"]["ModelHealth"][];
             /** Role */
             role: string;
+        };
+        /** ScheduleStep */
+        ScheduleStep: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** State */
+            state: string;
         };
         /** SessionInfo */
         SessionInfo: {
@@ -1098,6 +1477,8 @@ export interface components {
             now: string;
             /** Running */
             running: boolean;
+            /** Schedule */
+            schedule: components["schemas"]["ScheduleStep"][];
             session: components["schemas"]["SessionInfo"] | null;
         };
         /** SystemView */
@@ -1116,6 +1497,10 @@ export interface components {
             loop_lag_ms: number | null;
             /** Pid */
             pid: number;
+            /** Prompts */
+            prompts: {
+                [key: string]: string;
+            };
             /** Quote Age S */
             quote_age_s: {
                 [key: string]: number;
@@ -1206,6 +1591,24 @@ export interface components {
             /** Symbol */
             symbol: string;
         };
+        /** Utilisation */
+        Utilisation: {
+            /** Fraction */
+            fraction: number | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Limit */
+            limit: string;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "inr" | "ratio" | "count";
+            /** Used */
+            used: string;
+        };
         /** VetoPrecision */
         VetoPrecision: {
             /** Ci95 */
@@ -1226,6 +1629,31 @@ export interface components {
             /** Vetoes */
             vetoes: number;
         };
+        /** WatchRow */
+        WatchRow: {
+            /** Change Pct */
+            change_pct: number | null;
+            /** Events */
+            events: string[];
+            /** Held */
+            held: boolean;
+            /** Instrument Key */
+            instrument_key: string;
+            /** Ltp */
+            ltp: number | null;
+            /** Prev Close */
+            prev_close: number | null;
+            /** Quote Age S */
+            quote_age_s: number | null;
+            /** Sector */
+            sector: string | null;
+            /** Signals Today */
+            signals_today: string[];
+            /** Source */
+            source: string | null;
+            /** Symbol */
+            symbol: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1235,6 +1663,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    ai_calibration_api_ai_calibration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalibrationView"];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     ai_calls_api_ai_calls_get: {
         parameters: {
             query?: {
@@ -1457,6 +1950,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpendView"];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    alerts_api_alerts_get: {
+        parameters: {
+            query?: {
+                level?: string | null;
+                date?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRow"][];
                 };
             };
             /** @description Missing or wrong token */
@@ -1775,6 +2337,136 @@ export interface operations {
             };
         };
     };
+    preregistration_api_docs_preregistration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    equity_api_equity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquityView"];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     typed_events_api_events_typed_get: {
         parameters: {
             query?: {
@@ -1849,6 +2541,7 @@ export interface operations {
             query?: {
                 book?: string | null;
                 date?: string | null;
+                symbol?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -1935,6 +2628,140 @@ export interface operations {
             };
         };
     };
+    logs_api_logs_get: {
+        parameters: {
+            query?: {
+                level?: string | null;
+                contains?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogLine"][];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    watchlist_api_market_watchlist_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchRow"][];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     bars_api_market__symbol__bars_get: {
         parameters: {
             query?: {
@@ -2011,6 +2838,7 @@ export interface operations {
                 book?: string | null;
                 status?: string | null;
                 date?: string | null;
+                symbol?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -2142,6 +2970,73 @@ export interface operations {
             };
         };
     };
+    reports_api_reports_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSummary"][];
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     report_api_reports__day__get: {
         parameters: {
             query?: never;
@@ -2162,6 +3057,73 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Missing or wrong token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    report_markdown_api_reports__day__markdown_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                day: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"];
                 };
             };
             /** @description Missing or wrong token */
@@ -2826,6 +3788,7 @@ export interface operations {
                 book?: string | null;
                 date?: string | null;
                 strategy?: string | null;
+                symbol?: string | null;
                 limit?: number;
             };
             header?: never;

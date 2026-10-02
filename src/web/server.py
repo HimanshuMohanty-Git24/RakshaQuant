@@ -46,22 +46,27 @@ from src.domain.events import Disposition
 from src.domain.types import KillScope
 from src.engine.market import INDEX_KEY
 from src.web.control import ControlRefusedError, Controls
-from src.web.models import BarRow as BarRowModel
 from src.web.models import (
+    AlertRow,
     Bars,
     BooksView,
+    CalibrationView,
     ConfigView,
     ControlResult,
     DecisionModelStats,
     DecisionRow,
+    Document,
+    EquityView,
     ErrorBody,
     FillRow,
     FlattenBody,
     HaltBody,
     Lineage,
     LLMCallRow,
+    LogLine,
     OrderRow,
     PositionRow,
+    ReportSummary,
     ResumeBody,
     RiskView,
     RoleModels,
@@ -74,7 +79,9 @@ from src.web.models import (
     SystemView,
     TradeRow,
     TypedEventRow,
+    WatchRow,
 )
+from src.web.models import BarRow as BarRowModel
 from src.web.queries import MAX_ROWS, GroupBy, Queries
 from src.web.run_manager import RunControlError, RunManager
 from src.web.security import (
@@ -214,19 +221,28 @@ def create_app(
         book: Book = None,
         status: Annotated[str | None, Query(pattern=r"^[A-Z_]{1,24}$")] = None,
         day: Day = None,
+        symbol: Symbol = None,
         limit: Limit = 200,
     ) -> list[OrderRow]:
-        return await read(lambda q: q.orders(book=book, status=status, day=day, limit=limit))
+        return await read(lambda q: q.orders(book=book, status=status, day=day, limit=limit,
+                                             symbol=symbol))  # fmt: skip
 
     @api.get("/fills")
-    async def fills(book: Book = None, day: Day = None, limit: Limit = 200) -> list[FillRow]:
-        return await read(lambda q: q.fills(book=book, day=day, limit=limit))
+    async def fills(
+        book: Book = None, day: Day = None, symbol: Symbol = None, limit: Limit = 200
+    ) -> list[FillRow]:
+        return await read(lambda q: q.fills(book=book, day=day, limit=limit, symbol=symbol))
 
     @api.get("/trades")
     async def trades(
-        book: Book = None, day: Day = None, strategy: Strategy = None, limit: Limit = 200
+        book: Book = None,
+        day: Day = None,
+        strategy: Strategy = None,
+        symbol: Symbol = None,
+        limit: Limit = 200,
     ) -> list[TradeRow]:
-        return await read(lambda q: q.trades(book=book, day=day, strategy=strategy, limit=limit))
+        return await read(lambda q: q.trades(book=book, day=day, strategy=strategy, limit=limit,
+                                             symbol=symbol))  # fmt: skip
 
     @api.get("/decisions")
     async def decisions(
@@ -250,7 +266,8 @@ def create_app(
 
     @api.get("/risk")
     async def risk(book: Book = None) -> RiskView:
-        return await read(lambda q: q.risk(book=book))
+        live = mgr().live_view()
+        return await read(lambda q: q.risk(book=book, live=live))
 
     @api.get("/books")
     async def books() -> BooksView:
@@ -298,7 +315,59 @@ def create_app(
             source = "tape" if found else "none"
         rows = [BarRowModel(date=b.session_date, open=b.open, high=b.high, low=b.low,
                             close=b.close, volume=b.volume) for b in found[-days:]]  # fmt: skip
-        return Bars(symbol=symbol, instrument_key=key, adjusted=adjusted, source=source, bars=rows)
+        markers = await read(lambda q: q.markers(key))
+        return Bars(symbol=symbol, instrument_key=key, adjusted=adjusted, source=source, bars=rows,
+                    markers=markers)  # fmt: skip
+
+    @api.get("/market/watchlist")
+    async def watchlist() -> list[WatchRow]:
+        live = mgr().live_view()
+        return await read(lambda q: q.watchlist(live))
+
+    @api.get("/alerts")
+    async def alerts(
+        level: Annotated[str | None, Query(pattern=r"^(INFO|WARNING|CRITICAL)$")] = None,
+        day: Day = None,
+        limit: Limit = 200,
+    ) -> list[AlertRow]:
+        return await read(lambda q: q.alerts(level=level, day=day, limit=limit))
+
+    @api.get("/equity")
+    async def equity() -> EquityView:
+        live = mgr().live_view()
+        return await read(lambda q: q.equity(live))
+
+    @api.get("/reports")
+    async def reports(limit: Annotated[int, Query(ge=1, le=366)] = 60) -> list[ReportSummary]:
+        return await read(lambda q: q.reports_list(limit=limit))
+
+    @api.get("/reports/{day}/markdown")
+    async def report_markdown(day: date) -> Document:
+        found = await read(lambda q: q.report_markdown(day))
+        if found is None:
+            raise HTTPException(status_code=404, detail="not found")
+        return found
+
+    @api.get("/docs/preregistration")
+    async def preregistration() -> Document:
+        found = await read(lambda q: q.preregistration())
+        if found is None:
+            raise HTTPException(status_code=404, detail="not found")
+        return found
+
+    @api.get("/logs")
+    async def logs(
+        level: Annotated[
+            str | None, Query(pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+        ] = None,
+        contains: Annotated[str | None, Query(max_length=80)] = None,
+        limit: Limit = 300,
+    ) -> list[LogLine]:
+        return await read(lambda q: q.logs(level=level, contains=contains, limit=limit))
+
+    @api.get("/ai/calibration")
+    async def ai_calibration() -> CalibrationView:
+        return await read(lambda q: q.calibration())
 
     @api.get("/events/typed")
     async def typed_events(

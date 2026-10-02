@@ -152,14 +152,21 @@ class RunManager:
         for quote in engine.market.quotes().values():
             source = quote.source.value
             ages[source] = round(min(ages.get(source, math.inf), quote.age_seconds(now)), 1)
-        valuations = {}
-        for book_id in engine.books:
+        valuations, risk = {}, {}
+        for book_id, book in engine.books.items():
             try:
                 valuations[book_id] = engine.valuation(book_id)
             except KeyError:  # a position without a mark yet (before the first poll)
-                continue
+                pass
+            try:
+                risk[book_id] = book.gate.book_snapshot()
+            except Exception:  # a view must never fail on the engine's account
+                logger.exception("risk snapshot for book %s failed", book_id)
         return LiveView(valuations=valuations, marks=engine.market.marks(),
-                        tasks=tuple(engine.tasks.running), quote_age_s=ages)  # fmt: skip
+                        tasks=tuple(engine.tasks.running), quote_age_s=ages, risk=risk,
+                        managed={b: book.exits.positions for b, book in engine.books.items()},
+                        instruments=dict(engine.market.instruments),
+                        quotes=engine.market.quotes(), index_closes=engine.index_closes())  # fmt: skip
 
     # ── SnapshotSink interface (called from StreamSessionView) ──────────────────────
 
