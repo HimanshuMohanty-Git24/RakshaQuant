@@ -8,9 +8,11 @@ CI of the mean net return per trade above zero.
     uv run python scripts/validate_strategy.py --start 2024-01-01 --end 2025-12-31 \\
         --strategies momentum,breakout --universe INFY,TCS,HDFCBANK --json var/backtests/v.json
 
-History comes from YFinance (``--period`` of it, ending at ``--end``). SURVIVORSHIP: the
-universe is today's listed names unless it comes from a point-in-time source (M11.3), so a
-VALIDATED here is necessary, not sufficient - and the fills are modelled.
+History comes from YFinance (``--period`` of it, ending at ``--end``) or, with ``--dataset
+bhavcopy``, from the point-in-time NSE dataset (``scripts/fetch_bhavcopy.py``; ``--universe all``
+= every EQ name that traded in the period, delisted ones included). SURVIVORSHIP: the YFinance
+universe is today's listed names; historical NIFTY constituency is in neither source. A VALIDATED
+here is necessary, not sufficient - and the fills are modelled.
 """
 
 import argparse
@@ -32,9 +34,14 @@ from src.config.limits import load_risk_limits  # noqa: E402
 from src.config.settings import get_settings  # noqa: E402
 from src.decision.engine import DecisionConfig  # noqa: E402
 from src.domain.events import RegimeComputed  # noqa: E402
-from src.domain.types import Instrument  # noqa: E402
+from src.domain.types import Bar, Instrument  # noqa: E402
 from src.engine.market import INDEX_KEY, INDEX_TICKER  # noqa: E402
 from src.engine.runner import EngineConfig  # noqa: E402
+from src.marketdata.bhavcopy import (  # noqa: E402
+    BhavcopyStore,
+    dataset_bars,
+    load_corporate_actions,
+)
 from src.marketdata.history import YFinanceHistorySource  # noqa: E402
 from src.ops.exit_codes import ExitCode  # noqa: E402
 from src.ops.process import run_entry_point  # noqa: E402
@@ -56,6 +63,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--strategies", default="momentum,mean_reversion",
                         help="comma-separated strategies to trade (the rest are not run)")  # fmt: skip
     parser.add_argument("--period", default="5y", help="YFinance history to fetch (warm-up too)")
+    parser.add_argument("--dataset", choices=("yfinance", "bhavcopy"), default="yfinance",
+                        help="bhavcopy: the point-in-time NSE dataset (scripts/fetch_bhavcopy.py);"
+                             " with --universe all, every EQ name that traded, delisted included")  # fmt: skip
     parser.add_argument("--json", type=Path, help="also write the report as JSON")
     parser.add_argument("--strict-halts", action="store_true",
                         help="keep strategy kill switches latched (default: re-arm them each "
@@ -93,17 +103,38 @@ def print_report(report: EdgeReport, strategies: Sequence[str], universe: Sequen
     print(LINE)
 
 
-async def run(args: argparse.Namespace) -> int:
-    symbols = [s.strip().upper() for s in args.universe.split(",") if s.strip()]
-    strategies = tuple(s.strip() for s in args.strategies.split(",") if s.strip())
-    universe = [Instrument.nse_equity(s) for s in symbols]
+async def load(args: argparse.Namespace) -> tuple[list[str], list[Bar]]:
+    """The universe and its daily bars (plus NIFTY's, always from YFinance: the regime's input
+    and the benchmark; the bhavcopy has no indices)."""
+    datasets = get_settings().var_dir / "datasets"
+    point_in_time = args.universe.strip().lower() == "all"
+    symbols = None if point_in_time else [s.strip().upper() for s in args.universe.split(",")
+                                          if s.strip()]  # fmt: skip
+    after = args.end + timedelta(days=1)
+    if args.dataset == "bhavcopy":
+        store = BhavcopyStore(datasets / "bhavcopy")
+        actions = load_corporate_actions(datasets / "corporate_actions.parquet")
+        if not actions:
+            print("  no corporate actions loaded: adjusted prices equal raw ones")
+        chosen, bars = dataset_bars(store, args.start, args.end, symbols=symbols, actions=actions)
+        index = await YFinanceHistorySource(period=args.period).fetch(
+            [], settled_before=after, expected_last=None, extra={INDEX_KEY: INDEX_TICKER})  # fmt: skip
+        return chosen, bars + bars_from_history(index)
+    if symbols is None:
+        raise SystemExit("--universe all needs --dataset bhavcopy (a point-in-time source)")
     history = await YFinanceHistorySource(period=args.period).fetch(
-        universe, settled_before=args.end + timedelta(days=1), expected_last=None,
+        [Instrument.nse_equity(s) for s in symbols], settled_before=after, expected_last=None,
         extra={INDEX_KEY: INDEX_TICKER},
     )  # fmt: skip
     for key, why in sorted(history.failed.items()):
         print(f"  no history for {key}: {why}")
-    bars = bars_from_history(history)
+    return symbols, bars_from_history(history)
+
+
+async def run(args: argparse.Namespace) -> int:
+    strategies = tuple(s.strip() for s in args.strategies.split(",") if s.strip())
+    symbols, bars = await load(args)
+    universe = [Instrument.nse_equity(s) for s in symbols]
     limits = load_risk_limits().model_copy(update={"enabled_strategies": strategies})
     config = EngineConfig(environment=ENVIRONMENT, heartbeat=False,
                           decision=DecisionConfig(enabled=strategies, shadow=()))  # fmt: skip
