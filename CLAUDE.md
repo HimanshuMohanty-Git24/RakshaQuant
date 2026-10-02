@@ -4,289 +4,208 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-RakshaQuant is an agentic paper-trading system for the Indian NSE market. A LangGraph
-pipeline of LLM-backed agents (via Groq) classifies the market regime, picks strategies,
-validates signals, and applies deterministic risk rules. The default mode is 100% free:
-YFinance market data + a local virtual wallet + the Groq free tier. DhanHQ (broker) and
-PostgreSQL (memory) are optional. It is educational/paper-trading only.
+RakshaQuant (Platform v2) is a **paper-trading** platform for NSE cash equities, built for a
+controlled experiment. A deterministic engine trades three paired books on the same signals:
+A has no advisor, B has a local typed decision model (Laya, escalating to Jev) as a veto, and C
+has an LLM as a veto. The question is whether AI adds value net of its cost.
+
+- Everything is recorded in an SQLite event store.
+- There is **no broker order path**: every order fills on a simulated broker.
+- Read [docs/architecture.md](docs/architecture.md) first.
+- The build plan is [docs/plan/2026-10-01-platform-v2-plan.md](docs/plan/2026-10-01-platform-v2-plan.md),
+  the source of truth. Its status, decisions log (OD-n) and open owner questions (OQ-n) are in
+  [docs/plan/PROGRESS.md](docs/plan/PROGRESS.md).
+
+Hard rules:
+
+- **Never add a live-broker path or enable real orders.** Paper only, unless the owner
+  explicitly asks.
+- **Never print, log or echo values from `.env`**: it holds real credentials. Read settings in
+  code via `get_settings()`; secrets are `SecretStr`. Run tools with
+  `RAKSHAQUANT_ENV_FILE=none` when they don't need the real configuration.
+- No pushing, PRs or paid API calls in loops without the owner's go-ahead.
+- **During the month run**, the trading path is frozen except for P0 fixes:
+  - `src/strategies`, `src/risk`, `src/oms`, `src/brokers/simulated` and `src/decision`;
+  - `src/config/experiment.yaml` and the `RISK_*` limits.
+
+  See [docs/runbooks/incident.md](docs/runbooks/incident.md).
 
 ## Commands
 
-Dependency management is via [`uv`](https://github.com/astral-sh/uv). The distribution name is `trading-agent`; the import
-package is `src` (all internal imports are `from src.<module> import ...`).
+Dependencies are managed with [uv](https://github.com/astral-sh/uv). The import package is
+`src` (`from src.<module> import ...`). Extras:
+
+- `dev`: pytest, ruff, mypy, hypothesis, pytest-benchmark;
+- `web`: FastAPI, uvicorn;
+- `decision-local`: Laya, which pulls torch;
+- `broker-dhan`: the DhanHQ SDK, unused by the engine.
 
 ```bash
-uv sync                         # install runtime deps
-uv sync --extra dev             # install dev deps (pytest, ruff, mypy)
-
-uv run python scripts/check_config.py       # validate .env / settings (run this first)
-uv run python scripts/run_live_trading.py            # MAIN entry point: CLI dashboard (default)
-uv run python scripts/run_live_trading.py --mode web # same loop, browser console (needs `web` extra)
-uv run python scripts/run_live_trading.py --mode web --demo  # web console, demo tape (no keys)
-uv run python scripts/run_live_trading.py --demo     # bundled demo tape, separate var/demo/ state
-# Outside --demo the loop refuses to trade on simulated prices (e.g. off-hours): plan M2.6.
-uv run python src/backtesting/engine.py     # run a backtest
-
-# Web mode uses the optional `web` extra (FastAPI + uvicorn) and a built frontend:
-uv sync --extra web                            # install web deps
-(cd frontend && npm install && npm run build)  # build the SPA into frontend/dist (Node ^20.19 or >=22.12; frontend/.npmrc pins the https registry)
-
-# pytest/ruff/mypy live in the `dev` optional group — pass --extra dev (or `uv sync --extra dev` once).
-uv run --extra dev pytest                     # full test suite (210 tests)
-uv run --extra dev pytest tests/test_agents.py   # one file
-uv run --extra dev pytest tests/test_agents.py::TestRiskCompliance::test_risk_compliance_no_signals   # one test
-uv run --extra dev pytest --cov=src           # with coverage
-
-uv run --extra dev ruff check .   # lint (line-length 100, rules E,F,I,N,W,UP)
-uv run --extra dev ruff format .  # format
-uv run --extra dev mypy src       # type-check (strict mode is enabled)
+uv sync --extra dev --extra web                     # add --extra decision-local for Laya
+uv run python scripts/check_config.py               # readiness check (exit 2 on a bad config)
+uv run python scripts/run_live_trading.py           # today's paper session, Rich terminal dashboard
+uv run python scripts/run_live_trading.py --mode web            # same session, browser console
+uv run python scripts/run_live_trading.py --demo [--mode web]   # bundled synthetic day, var/demo/
+uv run python scripts/replay_day.py --date YYYY-MM-DD           # re-run a recorded day
+uv run python scripts/daily_report.py --date YYYY-MM-DD         # regenerate a day's report
+uv run python scripts/validate_strategy.py --start ... --end ...  # backtest + edge gate
 ```
 
-`pytest` is configured with `asyncio_mode = "auto"`, so `async def test_*` functions run
-without an explicit `@pytest.mark.asyncio` decorator.
+Quality gates (plan §8), run before every commit:
 
-## Architecture
+```bash
+uv run --extra dev ruff check . && uv run --extra dev ruff format --check .
+# strict mypy on the v2 packages (the list in .github/workflows/ci.yml); must be clean:
+uv run --extra dev --extra web mypy --follow-imports=silent src/domain src/store src/ops \
+  src/marketdata src/reference src/brokers src/oms src/risk src/strategies src/features \
+  src/decision src/decision_models src/llm src/evaluation src/engine src/web src/dashboard \
+  src/backtesting src/config src/utils
+uv run --extra dev --extra web python scripts/ci/mypy_ratchet.py <MYPY_MAX_ERRORS from ci.yml>
+uv run --extra dev --extra web pytest -q           # hermetic; must leave the repo untouched
+uv run --extra dev --extra web pytest tests/test_risk_engine.py::test_name   # one test
+cd frontend && npm run gen:api && npm run typecheck && npm run lint && npm test \
+  && npm run build && npm run check:bundle
+cd frontend && PW_CHANNEL=msedge npm run e2e       # Playwright against the real demo server
+```
 
-> **Platform v2 (in progress, see [docs/plan/PROGRESS.md](docs/plan/PROGRESS.md)).** Since plan M5 the
-> live path is the deterministic v2 engine: [src/engine/](src/engine/) (runner, tasks, market service) →
-> [src/decision/](src/decision/) + [src/strategies/](src/strategies/) → `OMS.submit`
-> ([src/oms/](src/oms/)) behind the [src/risk/](src/risk/) RiskEngine gate → simulated broker
-> ([src/brokers/](src/brokers/)), recorded in the [src/store/](src/store/) event store. The LangGraph
-> pipeline described next was **retired to [src/legacy/](src/legacy/)** (deleted in M12) and runs on no
-> live path; this section documents it until then.
+`pytest` uses `asyncio_mode = "auto"`, and benchmarks are opt-in (`-m bench`). The mypy
+ratchet is a ceiling on the global error count: lower `MYPY_MAX_ERRORS` in `ci.yml` when the
+count drops, never raise it.
 
-### Agent pipeline (legacy)
+**Generated files**, which must be regenerated and committed (tests fail when stale):
 
-The system is a [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` built in [src/legacy/agents/graph.py](src/legacy/agents/graph.py).
-A single `TradingState` (a `TypedDict` defined in [src/legacy/agents/state.py](src/legacy/agents/state.py))
-flows through every node; each node returns a **partial dict** that LangGraph merges into state.
-The pipeline:
+- `frontend/openapi.json` and `frontend/src/api/types.gen.ts`: run
+  `scripts/export_openapi.py`, then `npm run gen:api`, after any web model or route change.
+- `docs/reference/*.md`: `scripts/gen_docs.py`, after changing events, settings, limits,
+  reason codes, routes, packages or script docstrings.
+- `src/engine/demo_tape/`: `scripts/build_demo_tape.py`.
+- `tests/golden/*.jsonl`: `UPDATE_GOLDEN=1`, only when a change *should* alter recorded events.
 
-1. **support_agents** — runs news, sentiment, and prediction agents to enrich state. All
-   failures here are non-fatal (caught and logged); they only add context.
-2. **market_regime** — LLM classifies regime (`trending_up/down`, `ranging`, `volatile`).
-   Conditional edge: if `regime_confidence < 0.3` **or** the kill switch fires, the graph ends.
-3. **strategy_selection** — picks active strategies for the regime.
-4. **signal_validation** — filters raw signals. Conditional edge: if no signals survive, the graph ends.
-5. **risk_compliance** — a **deterministic rules engine** (not an LLM) that does final approval,
-   position sizing, and enforces limits. Populates `approved_trades` / `risk_rejected`.
+## Architecture map
 
-To add an agent: write a `*_node(state) -> dict` function, register it with
-`workflow.add_node(...)`, and wire edges in `create_trading_graph()`. Conditional routing
-lives in `should_continue_after_*` predicate functions.
+The live path is `src/engine/live.py` (`run_paper`, `run_demo`) → `src/engine/runner.py`
+(`build_engine`; one `Book` per experiment book) → `src/engine/lifecycle.py` (PRE_OPEN → OPEN →
+ENTRY_WINDOW 09:20-09:45 → MONITOR → CLOSE → REPORT → EXIT, from the NSE calendar).
 
-### LLM agent conventions
+| Package | Role |
+| --- | --- |
+| `domain` | frozen types, the event catalogue (`events.py`), ids, clocks, the NSE calendar |
+| `store` | the event store (append + projections in one transaction), migrations, `kv_state`, the Parquet tape |
+| `marketdata`, `reference` | YFinance quotes/history with validation; NSE reference data; announcements RSS; bhavcopy |
+| `features`, `strategies` | features on settled bars; one module per strategy; `TradePolicy` |
+| `decision` | `DecisionEngine` (signals → per-book proposals → advisors → `OMS.submit`); advisors |
+| `risk` | `RiskEngine` + checks, `RiskGate`, daily risk state, kill switches, monitor, flattener |
+| `oms`, `brokers` | OMS, position book, exit manager; `BrokerAdapter` protocol; the simulated broker and NSE costs |
+| `llm`, `decision_models` | provider-agnostic LLM router; Laya/Jev cascade, calibration, announcement typing |
+| `evaluation` | experiment config, books, shadow ledger, daily report, nightly review |
+| `engine` | runner, lifecycle, tasks, market service, live/demo/replay drivers |
+| `web`, `dashboard` | the FastAPI console (security, read model `queries.py`, controls, stream); the Rich CLI |
+| `backtesting` | the paper engine over daily bars; edge statistics and the gate |
+| `ops`, `config`, `notifications`, `utils` | logging/redaction/process contract; settings, limits, YAML configs; Telegram; IST helpers |
 
-Every LLM node (see [src/legacy/agents/market_regime.py](src/legacy/agents/market_regime.py) as the
-reference implementation) follows the same resilience pattern — **preserve it when editing or adding agents**:
+The full list is in [docs/reference/packages.md](docs/reference/packages.md).
 
-- Acquire the shared rate limiter (`get_groq_limiter`) and circuit breaker
-  (`get_groq_circuit_breaker`) before calling the LLM.
-- Try `settings.groq_model_primary`, then fall back to `groq_model_fallback` on rate-limit (429) errors.
-- On **any** failure (circuit open, rate limit, parse error), return a deterministic
-  `_fallback_*` result instead of raising. The graph must never crash on a bad LLM call.
-- LLM output is JSON; parsing strips ```` ```json ```` / ```` ``` ```` fences and clamps/validates fields.
+## Invariants (do not regress)
 
-**Support-agent state contracts.** The support agents enrich `TradingState` with keys the
-regime/validation agents read; the *types must match* or the enrichment is silently dropped
-(the consumer raises `TypeError`, which the agent's broad `except` swallows → it falls back
-without the context). The canonical contracts (declared in [state.py](src/legacy/agents/state.py)):
-`news_sentiment` is a **dict** `{"avg_sentiment": float}` (not a bare float), `market_mood` is
-the full `SentimentSignal.to_dict()` dict (read `market_mood["mood_index"]`, not `market_mood`
-itself), `news_headlines` is a list of `{"title","sentiment"}`, and `prediction_signals` is a
-list of `PredictionSignal.to_dict()`. The prediction node sources from raw `signals` (populated
-when support agents run), **not** `validated_signals` (still empty at that stage). When adding a
-consumer, read with `isinstance`/`.get(...)` guards so a stray type never crashes the node.
+### Orders and positions
 
-### Configuration
+- **Every order goes through `OMS.submit` → `RiskGate`.** That includes entries, exits,
+  protective stops and kill-switch flattens. An OMS without a gate routes nothing.
+  Exits are reduce-only intents and can never oversell or flip a position.
+- `OrderSubmitted` is recorded **before** the broker call, and submission is shielded. A
+  cancelled process never leaves an order the OMS doesn't know.
+- Positions change **only** through fills (`PositionBook.apply`). P&L is net of both legs'
+  charges, with one source.
 
-All config is centralized in [src/config/settings.py](src/config/settings.py): a
-pydantic-settings `Settings` model loaded from `.env`. Access it **only** through the cached
-`get_settings()`; use `reload_settings()` to clear the cache. Secrets are `SecretStr` —
-read them with `.get_secret_value()`. The `@model_validator` performs cross-field checks
-(e.g. live mode requires Dhan creds, risk-param sanity) but **logs warnings rather than
-raising**, so invalid config degrades instead of failing startup.
+### Risk
 
-Key switches: `market_data_source` (`yfinance`|`dhan`), `execution_mode`
-(`local_paper`|`dhan_paper`|`live`), `trading_mode` (`paper`|`live`), `enable_news_analysis`.
+- Entries **fail closed**: a throwing check is `SYS_CHECK_ERROR`. Exits fail open, and only
+  session, data and quantity rules can stop one.
+- The gate builds a fresh snapshot per order and reserves working entries' capacity.
+- Kill switches are persisted and **latching**: only an operator resume re-arms them. The
+  HALT file is re-checked on every submit.
+- Restarts never reset start-of-day equity, breaches or streaks.
 
-### Pluggable data & execution layers
+### Data
 
-- **Market data** — [src/market/manager.py](src/market/manager.py) `MarketDataManager`
-  auto-selects WebSocket (live Dhan), YFinance (free), or simulated data based on
-  `is_market_open()` and connection availability. Indicators (`ta` library) are computed in
-  `indicators.py`; `signals.py` `SignalEngine` turns them into signals; `stock_discovery.py`
-  dynamically finds symbols to trade (no hardcoded watchlist).
-  - **Data-ingestion gotchas (do not regress):** `HistoryManager.append_quote` treats a
-    quote's `volume` as the **cumulative daily total** (keeps the max, never sums — summing
-    inflated volume every cycle). `get_history(..., include_forming=False)` drops the
-    still-forming current-day bar; the live loop computes indicators on settled bars by
-    default (`signals_exclude_forming_bar`) to avoid intra-bar repainting/look-ahead.
-    Indicator floats are NaN/inf-sanitized to `None` (`_safe_float`) so warm-up values never
-    reach signals or the agent JSON as `NaN`. Indicator results are memoized via
-    `get_indicator_cache()` (keyed by symbol/last-bar/close). The loop skips **new entries**
-    when the freshest quote is older than `max_quote_staleness_seconds` (exits still run).
-  - **Decision quality (do not regress):** signal **confidence is evidence-based** —
-    `SignalEngine._directional_confidence` blends the strategy's base with how many independent
-    indicators (RSI/MACD/DI/price-vs-MA) agree with the direction, not a hardcoded constant.
-    The live loop sizes entries with the real `PositionSizer`
-    ([sizing.py](src/market/sizing.py)) off `risk_per_trade` + the stop distance (Kelly when a
-    strategy win-rate exists), **not** a flat % of cash. Agent prompts ask for *calibrated*
-    confidence and to weigh the news/mood/ML enrichment.
-- **Execution** — [src/execution/service.py](src/execution/service.py) `ExecutionService` is
-  the single mode-switched entry point the live loop uses to place orders. It wraps
-  `paper_engine.py` (and, later, the broker in [adapter.py](src/execution/adapter.py):
-  `ExecutionAdapter` for DhanHQ, imported lazily). `exit_manager.py` handles trailing stops /
-  time exits / partial profits; `journal.py` logs trade history.
-  - **Execution safety (do not regress):** every `submit(...)` carries an `idempotency_key`;
-    a repeat returns a `DUPLICATE` instead of placing again (an `IdempotencyStore` persists
-    keys so a restart can't replay orders). `execution_mode` adds **`shadow`** (mirror the
-    live decision/sizing, simulate the fill, send nothing). A `live`/`dhan_paper` request
-    **never silently downgrades**: without `allow_live_orders=True` (default-off master gate)
-    or without Dhan creds it resolves to SHADOW with a loud warning. Live submission goes
-    through `submit_async` → `LiveBrokerExecutor` ([live_executor.py](src/execution/live_executor.py)),
-    which submits then **polls `get_order_status` to a terminal fill** (never assumes PLACED ==
-    filled); `reconcile_positions` checks local vs broker positions at startup (broker = source
-    of truth). All live paths stay gated behind `allow_live_orders` (default off → shadow).
-  - **Paper engine realism (do not regress):** `LocalPaperEngine` fills through a
-    [`CostModel`](src/execution/costs.py) (slippage + NSE-style brokerage/STT/GST, all
-    configurable via `paper_*` settings; pass `CostModel.zero()` for ideal fills in unit
-    tests). `place_order` does proper **long/short/partial** accounting: an opposite-side
-    order closes/covers (FIFO) and only the remainder opens a new position; realized P&L is
-    **net of both legs' charges**, and opening commits capital (no cash leak on shorts).
-    State is persisted **atomically** (temp file + `os.replace`); a corrupt state file is
-    **quarantined** (renamed `.corrupt-*`) and logged loudly, never silently discarded.
+- Simulated or synthetic prices can **never** create orders outside `ENVIRONMENT=demo`
+  (`SYS_DATA_SIMULATED`).
+- Features use **settled** daily bars only: dividend-adjusted for indicators, raw for
+  prices and stops. A lagging series (Yahoo's NaN close) is skipped, never traded.
+- **Time**: engine code uses the injected `Clock` and the calendar, never `datetime.now()`;
+  IST via `src/utils/market_time.py`. The calendar fails closed outside its covered years
+  (2026 only for now).
 
-### Memory & learning loop
+### Events
 
-[src/memory/](src/memory/) implements a learn-from-losses loop backed by PostgreSQL via
-SQLAlchemy (`AgentMemoryDB`, `agent_memory` table). `analyzer.py` + `classifier.py` turn
-losing trades into lessons with time-decay relevance scoring; `injection.py` feeds the
-top-N lessons back into `TradingState.memory_lessons` for the next cycle. It targets the
-PostgreSQL `DATABASE_URL` from settings, but `AgentMemoryDB._initialize_db()` silently
-falls back to an in-memory SQLite database if that connection fails — so memory works
-(non-persistently, lost on restart) even without Postgres.
+- Projections are pure functions of events: a rebuild must equal the incremental result
+  (property-tested).
+- Never mutate stored events. Payload changes need `schema_version` handling.
+- Store schema changes need a numbered migration.
+- Determinism is pinned by golden tests: serialise sets sorted, and keep ids deterministic.
+  `intent_id` includes the book; `client_order_id` is a hash of it.
 
-The loop is **closed at runtime** (gated by `enable_learning`): on each full close,
-`run_live_trading.py` builds a `TradeOutcome` (`analyzer.compute_outcome`), classifies it into
-a lesson (`MistakeClassifier`) and stores it, and marks the lessons that were *active when the
-position was opened* as successful/unsuccessful (`memory.feedback` helpers — all
-failure-isolated; learning must never disrupt trading). `PerformanceTracker` persists its
-trade history to `performance_history.json`, so real win-rates survive restarts instead of
-resetting to the hardcoded priors. (Still open: the two divergent decay formulas in
-`database.py` vs `scheduler.py` — pick one when next touching memory.)
+### AI
 
-### FinOps (cost tracking & alerts)
+- Advisors **veto only**, and any failure is ABSTAIN, so the decision stands.
+- `LLMRouter.complete` never raises.
+- No positions or P&L ever go into a model's input. Prompts put data in JSON `<data>` blocks.
+- An `evidence_ref` that names nothing in the input is a hallucination and is dropped.
+- `TradeReview` lessons are never read by the trading path (a test enforces it).
+- Paid LLM calls respect the INR budgets. Labelling is a dry run unless `--confirm-spend`.
 
-[src/finops/](src/finops/) accounts for LLM spend and raises operational alerts.
-`cost_tracker.py` is **pure accounting** (no I/O, thread-safe), so it is safe to call from
-sync agent nodes: each LLM agent calls `record_llm_response(agent, response, model=...)`
-immediately after its `circuit_breaker.call(...)` (the helper never raises). It tracks
-tokens + paid-tier-equivalent cost per agent and per **IST day** (rolls over via
-`utils/market_time`), keyed off a Groq pricing table (free tier = $0; configurable). Budgets
-come from settings (`daily_token_budget`, `daily_cost_budget_usd`, `finops_budget_soft_pct`;
-`0` = unlimited). `alerts.py` (`AlertManager`, async) logs + best-effort Telegram, de-duped
-per key per IST day — reuse it for drawdown/staleness/anomaly alerts too. `run_live_trading.py`
-gates the agent pipeline on `is_over_hard_budget()` (a spend kill-switch: skips new LLM cycles
-and entries while still running exits), surfaces today's spend on the dashboard, and fires
-soft-budget + startup/shutdown Telegram messages.
+### Web
 
-### Profit-target goal engine
+- Every `/api/*` route needs the per-launch token, except `/api/health`.
+- State-changing requests must pass the origin check; resume and flatten need the typed
+  phrases.
+- `src/web/queries.py` and `models.py` must stay FastAPI-free, because the CLI imports them
+  (tested).
 
-[src/profit/goal_engine.py](src/profit/goal_engine.py) turns a configured monthly return
-target (`monthly_profit_target_pct` / `_amount`) into a **risk-bounded plan**: the daily
-pace it implies, the win-rate it needs at the expected trade frequency, and the trade
-frequency it needs at an assumed win-rate (using `risk_per_trade`, `goal_reward_risk_ratio`,
-`daily_loss_limit`, `max_daily_trades`). `ProfitGoalEngine.build_plan(capital)` returns a
-`GoalPlan`; `.evaluate(capital, realized_pnl)` reports on/off-pace vs straight-line pace.
-**Guardrail (do not break this):** the engine is *advisory only* — it never feeds position
-sizing and never relaxes risk. If a target is only reachable by exceeding per-trade risk,
-the daily-loss limit, or the trade cap, the plan is `feasible=False` and the recommended
-action is to *lower the target*, never to take more risk. `run_live_trading.py` logs the
-plan at startup, shows pace on the dashboard, and alerts (via the FinOps `AlertManager`)
-when off-pace or infeasible — always with the "do not increase risk" message.
+## Conventions and gotchas
 
-### Backtesting & evaluation
+### Code
 
-[src/backtesting/](src/backtesting/) runs strategies on historical OHLCV. Prefer
-`RealSignalStrategy` ([strategies.py](src/backtesting/strategies.py)) — it feeds the **real**
-`calculate_indicators` + `SignalEngine` into the backtest, so results reflect live behaviour
-(the other strategies are standalone re-implementations and will diverge). `BacktestResult`
-includes an `expectancy` (per-trade edge); `compare_results(baseline, candidate)` produces a
-before/after scorecard (return/win-rate/profit-factor/expectancy/Sharpe/drawdown deltas +
-an `improved` flag) so a change can be *proven* to help before trusting it. The engine uses
-strictly-prior bars (`history = data.iloc[:i]`), so no look-ahead. Pass `BacktestEngine(cost_model=...)`
-to apply the audited `CostModel` (realistic slippage + NSE fees) instead of the flat
-commission/slippage; `CostModel.zero()` for ideal fills.
+- Python **3.11** syntax. New code must be ruff-clean and mypy-strict-clean (fully annotated).
+- `# fmt: skip` keeps compact multi-line calls as written.
+- Scripts insert the repo root into `sys.path`, use `run_entry_point(...)` for the exit codes
+  (0/1/2/3), and get `--help` via argparse.
+- Each script's docstring feeds `docs/reference/scripts.md`.
+- Our HTTP code uses **`httpx2`**, not `httpx` (OD-1); tests mock with
+  `httpx2.MockTransport`. Keep `numpy<2.5` (OD-2).
+- Edit `pyproject.toml` by hand, then `uv lock`: `uv add` rewrites the whole file.
 
-**Edge validation (the go/no-go gate).** [walk_forward.py](src/backtesting/walk_forward.py)
-(`run_walk_forward`, `aggregate_reports`, `edge_verdict`) evaluates a strategy on rolling
-**out-of-sample** folds, **net of `CostModel` costs**, and returns a `VALIDATED`/`NOT VALIDATED`
-verdict (needs ≥30 OOS trades, positive net expectancy *and* return, and >50% fold consistency).
-`scripts/validate_strategy.py` runs it over a **fixed** universe (never the look-ahead
-`StockDiscovery` output). Survivorship caveat: the universe is current-listed only — a true
-production go/no-go needs a point-in-time, survivorship-free dataset (Bhavcopy/vendor) that
-YFinance can't supply. A green verdict is *necessary, not sufficient* (no circuit/gap/liquidity
-modelling).
+### Tests
 
-### Front ends: one loop, two renderers (CLI & web)
+- Tests are **hermetic**:
+  - `tests/conftest.py` scrubs the environment and sets `RAKSHAQUANT_ENV_FILE=none`;
+  - `var_dir` points under `tmp_path`;
+  - NSE polling and Laya are off (`ANNOUNCEMENTS_ENABLED`, `DECISION_LAYA_ENABLED`).
+- Use the `settings` fixture and `ReplayClock`.
+- OMS mechanics tests use `tests/oms_harness.py` `unchecked` as the gate.
 
-The live trading loop lives **once** in [src/live/session.py](src/live/session.py)
-(`run_trading_session`) — it was extracted verbatim from the old monolithic
-`scripts/run_live_trading.py` and parameterised by a **`SessionView`**
-([src/live/views.py](src/live/views.py)). There is deliberately **no second trading loop** for
-the browser; both front ends drive this one, so they can never diverge (a duplicated web loop
-would drift, exactly the footgun CLAUDE warns about elsewhere).
+### Windows
 
-- **CLI** — `RichSessionView` wraps the `rich` `Live` dashboard ([dashboard/cli.py](src/dashboard/cli.py)),
-  reproducing the legacy behaviour (alternate-screen render, per-second redraws during waits).
-  `scripts/run_live_trading.py` is now a thin `--mode {cli,web}` dispatcher; `cli` is the default
-  and unchanged.
-- **Web** — `StreamSessionView` serialises the shared `TradingStats` into JSON snapshots
-  ([src/live/recorder.py](src/live/recorder.py) `snapshot_from_stats`) and streams them, plus
-  per-cycle **traces**, to the browser. Its waits are non-blocking (`await asyncio.sleep`) so the
-  server keeps serving sockets. **Keep the transform mechanical when editing the loop** — the
-  same call order is the invariant that keeps trading behaviour identical across modes.
+- The host is Windows: use `pathlib`; open files can't be deleted.
+- The repo mixes LF and CRLF: preserve each file's line endings when editing.
+- The Playwright browser download times out on this machine, so run the E2E suite with
+  `PW_CHANNEL=msedge`.
 
-**Web layer** ([src/web/](src/web/), optional `web` extra). `server.py` is a FastAPI app: REST
-(`/api/state|cycles|config`), a WebSocket (`/ws`), guarded run-control (`/api/run/start|stop`),
-and it serves the built SPA from `frontend/dist`. `run_manager.py` owns the session as a
-background task, fans snapshots/cycles out to WS subscribers (the `SnapshotSink`), and enforces
-run-control safety: **LIVE runs need explicit confirmation**, and `RAKSHAQUANT_WEB_READONLY=1`
-disables run-control entirely. `CycleRecorder` reconstructs each cycle as an observability
-**trace** whose spans are the 5 pipeline nodes; per-span tokens/cost come from the FinOps
-`by_agent` delta, so the deterministic `risk_compliance` span honestly shows zero tokens. The
-**frontend** ([frontend/](frontend/)) is a React + Vite + TS + Tailwind "Neo-Terminal" console;
-all design tokens are centralised (CSS vars in `src/index.css` → Tailwind names). `src/web` is
-only imported in `--mode web`, so the CLI-only install never needs FastAPI. `src.live.session`
-carries a documented mypy override (it's moved script code full of pre-existing engine-interaction
-debt); the *new* `src/live` + `src/web` abstractions are strict-clean.
+### Runtime
 
-### Cross-cutting
+- Runtime state lives under `var/` (gitignored); never write elsewhere.
+- One process per environment holds `var/<env>/` (exit 3 otherwise).
+- The demo uses its own `var/demo/demo.db`, because the entry point keeps `db_path` open.
 
-`utils/` holds the shared `rate_limiter`, `circuit_breaker`, `cache` (TTL), `errors`
-(custom exceptions like `RateLimitError`, `LLMResponseError`), `events`, and `market_time`
-(IST helpers — see below). `observability/tracing.py` wires LangSmith. `dashboard/cli.py` is
-the `rich` terminal UI, rendered by `RichSessionView`. `notifications/telegram.py` sends trade
-alerts.
+### Data sources
 
-## Conventions & gotchas
+- Yahoo's daily `Close` is already split-adjusted (adjust dividends only).
+- YFinance quotes are delayed.
+- NSE's website terms restrict automated collection. The announcements RSS and bulk
+  bhavcopy downloads are open question OQ-2: don't add new NSE scraping.
 
-- **Imports are `from src...`** everywhere. Most scripts in `scripts/` prepend the repo root
-  to `sys.path` before importing (e.g. `run_live_trading.py`, `validate_strategy.py`); a few such as
-  `check_config.py` omit it and rely on being run from the repo root. When adding a script,
-  include the `sys.path` line so it works regardless of the working directory.
-- **Graph nodes return partial state dicts**, never the full state; let LangGraph merge.
-- **Never let an LLM/agent failure propagate** — return a fallback, matching existing agents.
-- **Market-hour decisions use IST, not host-local time.** Use `src/utils/market_time.py`
-  (`now_ist()`, `is_market_hours()`, `IST`) — never bare `datetime.now()` — for `is_market_open()`
-  and the risk engine's trading-hours check. IST is a fixed UTC+05:30 offset (NSE has no DST), so
-  this stays correct on a UTC cloud host / CI runner.
-- **The kill switch must gate execution, not just the graph.** `check_kill_switch` ends the agent
-  graph at the regime edge *and* is re-checked in `run_live_trading.py` before placing approved
-  entries (exits still run, to flatten risk). Re-check it at any new order-submission site.
-- Python target is **3.11** (`pyproject.toml`, ruff, mypy) even though the README says 3.12;
-  prefer 3.11-compatible syntax. `mypy` runs in **strict** mode, so annotate new code fully.
-  (Note: the repo currently carries pre-existing ruff/mypy debt; keep *new* code clean and avoid
-  adding violations rather than boiling the ocean.)
-- Timestamps in the DB use timezone-aware UTC (`datetime.now(UTC)`).
+### Process
+
+- One commit per plan task (conventional commits); update `docs/plan/PROGRESS.md` with the
+  commit hash.
+- Log delegated decisions as OD-n and owner questions as OQ-n.

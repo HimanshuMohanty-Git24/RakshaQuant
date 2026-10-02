@@ -93,7 +93,7 @@ jobs:
           for d in src/domain src/store src/ops src/marketdata src/reference src/brokers \
                    src/oms src/risk src/strategies src/features src/decision \
                    src/decision_models src/llm src/evaluation src/engine src/web \
-                   src/dashboard; do
+                   src/dashboard src/backtesting src/config src/utils; do
             if [ -d "$d" ]; then pkgs+=("$d"); fi
           done
           echo "strict packages: ${pkgs[*]}"

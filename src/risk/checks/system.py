@@ -45,15 +45,6 @@ def check_data_source(source: MarketDataSource | None, environment: str) -> Risk
     )
 
 
-def legacy_source(name: str) -> MarketDataSource | None:
-    """The legacy MarketDataManager's ``data_source`` ("dhan"/"yfinance"/"simulated") as the
-    canonical enum; anything else is unknown (and therefore blocks)."""
-    try:
-        return MarketDataSource(name)
-    except ValueError:
-        return None
-
-
 # ---------------------------------------------------------------------------
 # RiskEngine checks (plan M4.1)
 # ---------------------------------------------------------------------------

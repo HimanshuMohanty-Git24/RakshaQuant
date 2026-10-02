@@ -1,4 +1,5 @@
-"""Quick config validation script."""
+"""Readiness check: environment and state directory, enabled LLM roles (exit 2 if one is
+misconfigured), Dhan and Telegram status, and configuration warnings. Never prints a secret."""
 
 import sys
 from pathlib import Path
