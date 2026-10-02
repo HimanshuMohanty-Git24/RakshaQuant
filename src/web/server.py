@@ -25,7 +25,6 @@ the app runs in web mode.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -200,7 +199,7 @@ def create_app(
 
     async def read(fn: Callable[[Queries], T]) -> T:
         """Run a store query in a worker thread on the web's own read connection."""
-        return await asyncio.to_thread(fn, mgr().queries())
+        return await mgr().read(fn)
 
     @api.get("/state")
     async def state() -> dict[str, Any]:

@@ -137,6 +137,23 @@ def test_slots_are_latest_wins():
     assert sub.slots == {"summary": {"n": 2}}
 
 
+async def test_a_replay_carries_on_when_a_session_swaps_the_connection(manager, tmp_path):
+    emit_alerts(tmp_path / "rq.db", 6)
+    hub = manager.hub
+    hub.batch = 2
+    sub = Subscriber(queue_max=100, topics=frozenset({"system"}), paused=False)
+    sub.replay = (0, 6)
+    sent: list[int] = []
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message["seq"])
+        if len(sent) == 2:
+            manager.close_reader()  # a session starts mid-replay: the old connection is closed
+
+    await hub._send_replay(sub, send)
+    assert sent == [1, 2, 3, 4, 5, 6] and sub.replay is None
+
+
 async def test_an_idle_connection_gets_heartbeats(manager):
     hub = Hub(manager, heartbeat_s=0.05)
     sub = Subscriber(queue_max=10)

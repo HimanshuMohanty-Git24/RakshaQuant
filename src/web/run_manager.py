@@ -19,8 +19,10 @@ import asyncio
 import logging
 import math
 import os
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from src.config import get_settings
 from src.config.limits import load_risk_limits
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
     from src.engine.runner import Engine
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class RunControlError(RuntimeError):
@@ -143,6 +146,21 @@ class RunManager:
         if self._reader is not None:
             self._reader.close()
         self._reader, self._queries = None, None
+
+    async def read(self, fn: Callable[[Queries], T]) -> T:
+        """Run a store query in a worker thread, on the web's own read connection.
+
+        A session starting or ending swaps that connection on the event loop (``attach`` /
+        ``detach``) and closes the old one, possibly under a query still running in its thread.
+        Such a read is retried once on the new connection instead of failing the request."""
+        queries = self.queries()
+        try:
+            return await asyncio.to_thread(fn, queries)
+        except sqlite3.Error:
+            if queries is self._queries:
+                raise  # the same connection: a real error
+            logger.debug("a read was retried: a session swapped the connection under it")
+            return await asyncio.to_thread(fn, self.queries())
 
     def live_view(self) -> LiveView | None:
         """The engine's in-memory state; call on the event loop (the engine's thread)."""

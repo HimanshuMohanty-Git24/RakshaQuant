@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from decimal import Decimal
 
 import pytest
@@ -70,6 +71,28 @@ async def test_summary_from_the_last_marks_and_live_from_the_engine(session):
     live = {b["book_id"]: b for b in client_for(manager).get("/api/summary").json()["books"]}
     assert live["A"]["valuation"] == "live"
     assert Decimal(live["A"]["equity"]) == engine.valuation("A").equity
+
+
+async def test_a_read_survives_a_session_swapping_its_connection(session):
+    """A session starting or ending closes the web's read connection, possibly under a query
+    still running in a worker thread: that read is retried on the new connection, not a 500."""
+    engine, manager = session
+    seen = []
+
+    def query(q):
+        seen.append(q)
+        if len(seen) == 1:
+            manager.close_reader()  # attach/detach, mid-query
+        return q.store.last_seq()
+
+    assert await manager.read(query) == engine.store.last_seq()
+    assert len(seen) == 2 and seen[0] is not seen[1]
+
+    def failing(q):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(sqlite3.OperationalError):  # no swap: a real error still surfaces
+        await manager.read(failing)
 
 
 async def test_the_blotter_filters(session):

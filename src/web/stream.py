@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import sqlite3
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -226,8 +227,15 @@ class Hub:
         store = self.manager.queries().store
         topics = sub.topics
         while cursor < until and sub.replay is not None:
-            events = await asyncio.to_thread(store.read, since_seq=cursor,
-                                             limit=min(self.batch, until - cursor))  # fmt: skip
+            try:
+                events = await asyncio.to_thread(store.read, since_seq=cursor,
+                                                 limit=min(self.batch, until - cursor))  # fmt: skip
+            except sqlite3.Error:
+                current = self.manager.queries().store
+                if current is store:
+                    raise
+                store = current  # a session swapped the connection under the read: go on, on it
+                continue
             if not events:
                 break
             for event in events:
@@ -270,7 +278,12 @@ class Hub:
                     sub.wake.set()
                 return
         head = self._head()
-        events = await asyncio.to_thread(store.read, since_seq=head, limit=self.batch)
+        try:
+            events = await asyncio.to_thread(store.read, since_seq=head, limit=self.batch)
+        except sqlite3.Error:
+            if self.manager.queries().store is store:
+                raise
+            return  # a session swapped the connection under the read: the next poll uses it
         if not events or store is not self._store:
             return
         self.tail_seq = events[-1].seq or head  # synchronous from here: fan out
@@ -297,8 +310,7 @@ class Hub:
         manager = self.manager
         if "summary" in wanted:
             live, running = manager.live_view(), manager.is_running
-            queries = manager.queries()
-            summary = await asyncio.to_thread(queries.summary, live, running=running)
+            summary = await manager.read(lambda q: q.summary(live, running=running))
             self.publish("summary", summary.model_dump(mode="json"))
         engine = manager.engine
         if "quotes" in wanted and engine is not None:
