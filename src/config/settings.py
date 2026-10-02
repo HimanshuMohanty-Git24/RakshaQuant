@@ -250,6 +250,9 @@ class Settings(BaseSettings):
     typesafe_model: str = Field(default="jev-1.13.0", description="Pinned Jev model")
     decision_escalate_low: float = Field(default=0.35, ge=0, le=1)
     decision_escalate_high: float = Field(default=0.65, ge=0, le=1)
+    typed_veto_threshold: float = Field(
+        default=0.6, gt=0, le=1, description="Book B vetoes when calibrated P(veto) >= this"
+    )
     decision_shadow_pct: float = Field(
         default=0.20,
         ge=0,

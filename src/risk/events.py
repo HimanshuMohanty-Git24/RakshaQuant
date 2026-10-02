@@ -116,8 +116,8 @@ def event_blocks(
             day = _event_date(event) or published
             block = EventBlock(
                 ReasonCode.EVT_RESULTS_WINDOW,
-                _shift(calendar, day, -rules.results_before),
-                _shift(calendar, day, rules.results_after),
+                shift_sessions(calendar, day, -rules.results_before),
+                shift_sessions(calendar, day, rules.results_after),
                 event.event_id,
                 f"results {'meeting' if event.announcement_type is AnnouncementType.RESULTS_DATE else 'out'} "
                 f"on {day.isoformat()}",
@@ -126,7 +126,7 @@ def event_blocks(
             block = EventBlock(
                 ReasonCode.EVT_ADVERSE_MAJOR,
                 published,
-                _shift(calendar, published, rules.adverse_after),
+                shift_sessions(calendar, published, rules.adverse_after),
                 event.event_id,
                 f"negative major event on {published.isoformat()}: {event.title[:80]}",
             )
@@ -145,7 +145,7 @@ def _event_date(event: TypedEvent) -> date | None:
     return None
 
 
-def _shift(calendar: NSECalendar, day: date, sessions: int) -> date:
+def shift_sessions(calendar: NSECalendar, day: date, sessions: int) -> date:
     """The ``sessions``-th trading session before (negative) or after (positive) ``day``;
     0 = ``day`` itself. Outside the calendar's coverage, weekdays stand in for sessions."""
     current = day
