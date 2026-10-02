@@ -25,6 +25,7 @@
   --warn: #e2a336;
   --crit-bg: #5a1a1f;
   --crit-fg: #ffd7da;
+  --overlay: rgba(11, 13, 16, 0.72);
   --font-ui: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --radius-sm: 2px;

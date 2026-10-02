@@ -17,6 +17,7 @@ export default {
       down: "var(--down)",
       warn: "var(--warn)",
       crit: { bg: "var(--crit-bg)", fg: "var(--crit-fg)" },
+      overlay: "var(--overlay)", // behind dialogs only
     },
     borderRadius: { none: "0", sm: "var(--radius-sm)", DEFAULT: "var(--radius)" },
     boxShadow: { none: "none", popover: "0 4px 16px rgba(0, 0, 0, 0.45)" },
