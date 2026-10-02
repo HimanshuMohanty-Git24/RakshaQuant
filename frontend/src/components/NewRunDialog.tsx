@@ -15,7 +15,7 @@ export function NewRunDialog({
   onStart: (opts: { demo: boolean; confirmLive: boolean }) => void;
   onClose: () => void;
 }) {
-  const env = config?.env ?? "PAPER";
+  const env: string = "PAPER";
   const isLive = env === "LIVE";
   const [confirmLive, setConfirmLive] = useState(false);
 
@@ -40,7 +40,7 @@ export function NewRunDialog({
           >
             {env}
           </span>
-          {config && ` · execution=${config.executionMode} · data=${config.marketDataSource}`}
+          {config && ` · paper · data=${config.market_data_source}`}
         </p>
 
         {error && (

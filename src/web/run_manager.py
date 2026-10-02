@@ -5,25 +5,38 @@ connected WebSocket clients.
 Responsibilities:
 * Start/stop a single trading run (the v2 engine, :mod:`src.engine.live`; in the ``demo``
   environment the engine on a synthetic day, elsewhere an order-free UI demo generator).
+* Hold the web's **own read connection** to the environment's event store (WAL readers never
+  block the engine) and the running engine, once a run has built it, for the API's live views.
 * Act as the :class:`~src.live.views.SnapshotSink`: cache the latest snapshot + recent cycle
   traces and broadcast every update to subscribers.
-* Enforce run-control safety: a run resolving to the **LIVE** environment is refused unless
-  the caller explicitly confirms, and a read-only deployment can disable run-control entirely.
+* A read-only deployment (``RAKSHAQUANT_WEB_READONLY``) disables run-control entirely.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import random
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from src.config import get_settings
+from src.config.limits import load_risk_limits
+from src.domain.calendar import get_calendar
+from src.domain.clock import Clock, WallClock
+from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
 from src.live.recorder import env_badge, snapshot_from_stats
 from src.live.views import StreamSessionView
+from src.store.event_store import EventStore
+from src.web.queries import LiveView, Queries
+
+if TYPE_CHECKING:
+    from src.config.settings import Settings
+    from src.engine.runner import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +65,19 @@ class RunManager:
     MAX_CYCLES_KEPT = 200
     QUEUE_MAXSIZE = 2000
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        store_path: Path | None = None,
+        clock: Clock | None = None,
+    ) -> None:
+        self._settings = settings
+        self._store_path = store_path
+        self._clock: Clock = clock or WallClock()
+        self._reader: EventStore | None = None
+        self._queries: Queries | None = None
+        self.engine: Engine | None = None
         self._snapshot: dict[str, Any] | None = None
         self._cycles: list[dict[str, Any]] = []
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
@@ -60,6 +85,63 @@ class RunManager:
         self._stop_event: asyncio.Event | None = None
         self._stats: Any = None
         self._demo = False
+
+    # ── The store and the engine ──────────────────────────────────────────────────────
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings or get_settings()
+
+    def queries(self) -> Queries:
+        """The read side, on the web's own connection to the active store."""
+        if self._queries is None:
+            settings = self.settings
+            engine = self.engine
+            path = engine.store.path if engine else self._store_path or settings.db_path
+            self._reader = EventStore(path)
+            demo = settings.environment == "demo"
+            self._queries = Queries(
+                self._reader, settings=settings,
+                experiment=load_experiment(settings.experiment_file or DEFAULT_EXPERIMENT_PATH),
+                limits=load_risk_limits(), calendar=get_calendar(),
+                clock=engine.clock if engine else self._clock,
+                reports_dir=settings.state_dir / "reports" if demo else settings.reports_dir,
+                demo=demo, read_only=self._read_only(),
+            )  # fmt: skip
+        return self._queries
+
+    def attach(self, engine: Engine) -> None:
+        """A run built its engine: read its store, on its clock."""
+        self.engine = engine
+        self.close_reader()
+
+    def detach(self) -> None:
+        self.engine = None
+        self.close_reader()
+
+    def close_reader(self) -> None:
+        if self._reader is not None:
+            self._reader.close()
+        self._reader, self._queries = None, None
+
+    def live_view(self) -> LiveView | None:
+        """The engine's in-memory state; call on the event loop (the engine's thread)."""
+        engine = self.engine
+        if engine is None:
+            return None
+        now = engine.clock.now()
+        ages: dict[str, float] = {}
+        for quote in engine.market.quotes().values():
+            source = quote.source.value
+            ages[source] = round(min(ages.get(source, math.inf), quote.age_seconds(now)), 1)
+        valuations = {}
+        for book_id in engine.books:
+            try:
+                valuations[book_id] = engine.valuation(book_id)
+            except KeyError:  # a position without a mark yet (before the first poll)
+                continue
+        return LiveView(valuations=valuations, marks=engine.market.marks(),
+                        tasks=tuple(engine.tasks.running), quote_age_s=ages)  # fmt: skip
 
     # ── SnapshotSink interface (called from StreamSessionView) ──────────────────────
 
@@ -132,8 +214,7 @@ class RunManager:
         if self._read_only():
             raise RunControlError("Run-control is disabled (RAKSHAQUANT_WEB_READONLY set).")
 
-        settings = get_settings()
-        effective = resolve_effective_mode(settings)
+        effective = resolve_effective_mode(self.settings)
 
         from src.dashboard.cli import TradingStats
 
@@ -174,26 +255,29 @@ class RunManager:
         from src.engine.live import run_paper
 
         try:
-            await run_paper(get_settings(), view, stop=self._stop_event)
+            await run_paper(self.settings, view, stop=self._stop_event, on_engine=self.attach)
         except asyncio.CancelledError:
             raise
         except Exception:  # pragma: no cover - surfaced to the UI, never crashes server
             logger.exception("Trading session crashed")
             self._broadcast({"type": "error", "data": {"message": "the run stopped on an error "
                                                                   "(see the logs)"}})  # fmt: skip
+        finally:
+            self.detach()
 
     # ── Demo generator (no market data / API keys required) ─────────────────────────
 
     async def _run_demo(self, view: StreamSessionView) -> None:
         """In the demo environment: the real engine on a synthetic, paced day. Elsewhere: a
         fabricated, order-free session so the console is demoable off-market."""
-        settings = get_settings()
+        settings = self.settings
         try:
             if settings.environment == "demo":
                 from src.engine.live import run_demo
 
                 assert self._stop_event is not None
-                await run_demo(settings, view, stop=self._stop_event)
+                self.close_reader()  # the demo starts from a fresh store file
+                await run_demo(settings, view, stop=self._stop_event, on_engine=self.attach)
             else:
                 await self._demo_loop(view)
         except asyncio.CancelledError:
@@ -202,6 +286,8 @@ class RunManager:
             logger.exception("Demo session crashed")
             self._broadcast({"type": "error", "data": {"message": "the demo stopped on an error "
                                                                   "(see the logs)"}})  # fmt: skip
+        finally:
+            self.detach()
 
     async def _demo_loop(self, view: StreamSessionView) -> None:
         assert self._stop_event is not None

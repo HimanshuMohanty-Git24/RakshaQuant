@@ -474,6 +474,12 @@ def veto_precision(ev: _Events, book: str, start: date, day: date) -> dict[str, 
             "gain_forgone_inr": round(sum(p for p in settled if p > 0), 2)}  # fmt: skip
 
 
+def veto_precision_of(store: EventStore, book: str, *, start: date, day: date) -> dict[str, Any]:
+    """:func:`veto_precision` straight from a store (the web API's paired-book view)."""
+    ev = _Events(store.read(types=[SignalDisposition.event_type, ShadowTradeClosed.event_type]))
+    return veto_precision(ev, book, start, day)
+
+
 def _comparison(ev: _Events, book: str, primary: str, books: Mapping[str, dict[str, Any]],
                 inputs: ReportInputs, start: date) -> dict[str, Any]:  # fmt: skip
     mine, base = books[book]["capital"]["end_equity"], books[primary]["capital"]["end_equity"]

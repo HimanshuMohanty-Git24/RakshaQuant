@@ -5,8 +5,13 @@ Every ``/api/*`` route except ``/api/health`` needs the per-launch bearer token,
 state-changing request must come from the console's own origin (:mod:`src.web.security`).
 
 * ``GET  /api/health``          - liveness only (public, no state).
-* ``GET  /api/state``           - latest snapshot (for a cold load).
-* ``GET  /api/config``          - a secret-free view of the configuration.
+* ``GET  /api/state``           - the legacy console snapshot (until M10).
+* ``GET  /api/summary|positions|orders|fills|trades`` - the books and the blotter.
+* ``GET  /api/decisions`` (filters) and ``/api/decisions/{id}`` - a decision's full lineage.
+* ``GET  /api/risk|books`` - limits, kill switches, rejections; the paired-book comparison.
+* ``GET  /api/ai/calls|spend|models|decision-models`` - AI calls, spend, model health.
+* ``GET  /api/market/{symbol}/bars``, ``/api/events/typed``, ``/api/reports/{date}``.
+* ``GET  /api/system``, ``/api/config`` - process health; read-only redacted configuration.
 * ``POST /api/run/start``       - start a run ``{demo}``.
 * ``POST /api/run/stop``        - stop the active run.
 * ``WS   /ws``                  - live stream (token as the ``rq.token.<token>`` subprotocol).
@@ -18,13 +23,15 @@ the app runs in web mode.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, cast
+from datetime import date
+from pathlib import Path as FilePath
+from typing import Annotated, Any, Literal, TypeVar, cast
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -33,8 +40,30 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.websockets import WebSocketDisconnect
 
-from src.config import get_settings
-from src.web.run_manager import RunControlError, RunManager, resolve_effective_mode
+from src.domain.events import Disposition
+from src.engine.market import INDEX_KEY
+from src.web.models import BarRow as BarRowModel
+from src.web.models import (
+    Bars,
+    BooksView,
+    ConfigView,
+    DecisionModelStats,
+    DecisionRow,
+    FillRow,
+    Lineage,
+    LLMCallRow,
+    OrderRow,
+    PositionRow,
+    RiskView,
+    RoleModels,
+    SpendView,
+    Summary,
+    SystemView,
+    TradeRow,
+    TypedEventRow,
+)
+from src.web.queries import MAX_ROWS, GroupBy, Queries
+from src.web.run_manager import RunControlError, RunManager
 from src.web.security import (
     DEV_ORIGINS,
     WebSecurity,
@@ -47,7 +76,7 @@ from src.web.security import (
 
 logger = logging.getLogger(__name__)
 
-_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+_FRONTEND_DIST = FilePath(__file__).resolve().parents[2] / "frontend" / "dist"
 
 _PLACEHOLDER_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <title>RakshaQuant Web Console</title>
@@ -73,26 +102,16 @@ class StartRunBody(StrictBody):
     demo: StrictBool = False
 
 
-def _safe_config() -> dict[str, Any]:
-    """A secret-free projection of settings for the UI (never expose SecretStr values)."""
-    s = get_settings()
-    effective = resolve_effective_mode(s)
-    return {
-        "tradingMode": getattr(s, "trading_mode", "paper"),
-        "executionMode": getattr(s, "execution_mode", "local_paper"),
-        "effectiveMode": effective,
-        "env": {"live": "LIVE", "shadow": "SHADOW", "dhan_paper": "SHADOW"}.get(effective, "PAPER"),
-        "marketDataSource": getattr(s, "market_data_source", "yfinance"),
-        "allowLiveOrders": bool(getattr(s, "allow_live_orders", False)),
-        "enableNewsAnalysis": bool(getattr(s, "enable_news_analysis", False)),
-        "enableLearning": bool(getattr(s, "enable_learning", False)),
-        "riskPerTrade": float(getattr(s, "risk_per_trade", 0.0) or 0.0),
-        "maxDailyTrades": int(getattr(s, "max_daily_trades", 0) or 0),
-        "dailyLossLimit": float(getattr(s, "daily_loss_limit", 0.0) or 0.0),
-        "paperWalletBalance": float(getattr(s, "paper_wallet_balance", 0.0) or 0.0),
-        "dailyTokenBudget": int(getattr(s, "daily_token_budget", 0) or 0),
-        "dailyCostBudgetUsd": float(getattr(s, "daily_cost_budget_usd", 0.0) or 0.0),
-    }
+T = TypeVar("T")
+
+# Query-parameter shapes (anything else is a 422 before it reaches a query).
+Book = Annotated[str | None, Query(pattern=r"^[A-Za-z0-9]{1,16}$")]
+Symbol = Annotated[str | None, Query(pattern=r"^[A-Z0-9&_.^-]{1,32}$")]
+Strategy = Annotated[str | None, Query(pattern=r"^[a-z_]{1,32}$")]
+Day = Annotated[date | None, Query(alias="date")]
+Limit = Annotated[int, Query(ge=1, le=MAX_ROWS)]
+SYMBOL_PATH = r"^[A-Z0-9&_.^-]{1,32}$"
+DECISION_ID = r"^[A-Za-z0-9_-]{1,64}$"
 
 
 def _install_error_handlers(app: FastAPI) -> None:
@@ -160,13 +179,136 @@ def create_app(
     api = APIRouter(prefix="/api", dependencies=[Depends(require_same_origin),
                                                  Depends(require_token)])  # fmt: skip
 
+    async def read(fn: Callable[[Queries], T]) -> T:
+        """Run a store query in a worker thread on the web's own read connection."""
+        return await asyncio.to_thread(fn, mgr().queries())
+
     @api.get("/state")
     async def state() -> dict[str, Any]:
         return mgr().state()
 
+    @api.get("/summary")
+    async def summary() -> Summary:
+        live, running = mgr().live_view(), mgr().is_running
+        return await read(lambda q: q.summary(live, running=running))
+
+    @api.get("/positions")
+    async def positions(book: Book = None) -> list[PositionRow]:
+        live = mgr().live_view()
+        return await read(lambda q: q.positions(live, book=book))
+
+    @api.get("/orders")
+    async def orders(
+        book: Book = None,
+        status: Annotated[str | None, Query(pattern=r"^[A-Z_]{1,24}$")] = None,
+        day: Day = None,
+        limit: Limit = 200,
+    ) -> list[OrderRow]:
+        return await read(lambda q: q.orders(book=book, status=status, day=day, limit=limit))
+
+    @api.get("/fills")
+    async def fills(book: Book = None, day: Day = None, limit: Limit = 200) -> list[FillRow]:
+        return await read(lambda q: q.fills(book=book, day=day, limit=limit))
+
+    @api.get("/trades")
+    async def trades(
+        book: Book = None, day: Day = None, strategy: Strategy = None, limit: Limit = 200
+    ) -> list[TradeRow]:
+        return await read(lambda q: q.trades(book=book, day=day, strategy=strategy, limit=limit))
+
+    @api.get("/decisions")
+    async def decisions(
+        book: Book = None,
+        symbol: Symbol = None,
+        strategy: Strategy = None,
+        outcome: Disposition | None = None,
+        day: Day = None,
+        limit: Limit = 200,
+    ) -> list[DecisionRow]:
+        wanted = outcome.value if outcome is not None else None
+        return await read(lambda q: q.decisions(book=book, symbol=symbol, strategy=strategy,
+                                                outcome=wanted, day=day, limit=limit))  # fmt: skip
+
+    @api.get("/decisions/{decision_id}")
+    async def decision(decision_id: Annotated[str, Path(pattern=DECISION_ID)]) -> Lineage:
+        found = await read(lambda q: q.lineage(decision_id))
+        if found is None:
+            raise HTTPException(status_code=404, detail="not found")
+        return found
+
+    @api.get("/risk")
+    async def risk(book: Book = None) -> RiskView:
+        return await read(lambda q: q.risk(book=book))
+
+    @api.get("/books")
+    async def books() -> BooksView:
+        live = mgr().live_view()
+        return await read(lambda q: q.books_view(live))
+
+    @api.get("/ai/calls")
+    async def ai_calls(
+        role: Strategy = None, book: Book = None, day: Day = None, limit: Limit = 200
+    ) -> list[LLMCallRow]:
+        return await read(lambda q: q.llm_calls(role=role, book=book, day=day, limit=limit))
+
+    @api.get("/ai/spend")
+    async def ai_spend(
+        group_by: GroupBy = "role", since: date | None = None, until: date | None = None
+    ) -> SpendView:
+        return await read(lambda q: q.spend(group_by=group_by, since=since, until=until))
+
+    @api.get("/ai/models")
+    async def ai_models() -> list[RoleModels]:
+        return await read(lambda q: q.models())
+
+    @api.get("/ai/decision-models")
+    async def ai_decision_models(day: Day = None) -> list[DecisionModelStats]:
+        return await read(lambda q: q.decision_models(day=day))
+
+    @api.get("/market/{symbol}/bars")
+    async def bars(
+        symbol: Annotated[str, Path(pattern=SYMBOL_PATH)],
+        days: Annotated[int, Query(ge=1, le=2000)] = 250,
+        adjusted: bool = True,
+    ) -> Bars:
+        engine = mgr().engine
+        key = INDEX_KEY if symbol in ("NIFTY", "NIFTY50", "^NSEI") else None
+        if engine is not None and key is None:
+            key = next((k for k, i in engine.market.instruments.items() if i.symbol == symbol),
+                       None)  # fmt: skip
+        key = key or f"NSE:EQ:{symbol}"
+        series = engine.market.daily(key) if engine is not None else None
+        source: Literal["engine", "tape", "none"]
+        if series is not None:
+            found, source = series.bars(adjusted=adjusted), "engine"
+        else:
+            found = await read(lambda q: q.tape_bars(key, adjusted=adjusted))
+            source = "tape" if found else "none"
+        rows = [BarRowModel(date=b.session_date, open=b.open, high=b.high, low=b.low,
+                            close=b.close, volume=b.volume) for b in found[-days:]]  # fmt: skip
+        return Bars(symbol=symbol, instrument_key=key, adjusted=adjusted, source=source, bars=rows)
+
+    @api.get("/events/typed")
+    async def typed_events(
+        symbol: Symbol = None, day: Day = None, limit: Limit = 200
+    ) -> list[TypedEventRow]:
+        return await read(lambda q: q.typed_events(symbol=symbol, day=day, limit=limit))
+
+    @api.get("/reports/{day}")
+    async def report(day: date) -> dict[str, Any]:
+        found = await read(lambda q: q.report(day))
+        if found is None:
+            raise HTTPException(status_code=404, detail="not found")
+        return found
+
+    @api.get("/system")
+    async def system() -> SystemView:
+        live, running = mgr().live_view(), mgr().is_running
+        return await read(lambda q: q.system(live, running=running))
+
     @api.get("/config")
-    async def config() -> dict[str, Any]:
-        return _safe_config()
+    async def config() -> ConfigView:
+        return await read(lambda q: q.config())
 
     @api.post("/run/start")
     async def run_start(body: StartRunBody | None = None) -> JSONResponse:

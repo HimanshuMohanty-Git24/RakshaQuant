@@ -71,8 +71,8 @@ async def test_the_demo_trades_a_synthetic_day_and_the_view_shows_it(settings, t
     assert stats.total_trades >= 1 or stats.open_positions  # it traded
     assert stats.data_source == MarketDataSource.SIMULATED.value
     assert any(e["message"].startswith("Session") for e in stats.activity_log)
-    assert (demo.state_dir / "demo.db").exists()
-    with EventStore(demo.state_dir / "demo.db") as store:
+    assert demo.db_path.exists()
+    with EventStore(demo.db_path) as store:
         assert store.query("SELECT COUNT(*) AS n FROM decisions")[0]["n"] >= 1
 
 

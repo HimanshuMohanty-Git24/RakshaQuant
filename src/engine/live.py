@@ -77,6 +77,7 @@ async def run_paper(
     *,
     stop: asyncio.Event | None = None,
     clock: Clock | None = None,
+    on_engine: Callable[[Engine], None] | None = None,
 ) -> int:
     if settings.environment == DEMO:
         raise ConfigError("the demo environment runs synthetic data: use --demo")
@@ -121,6 +122,8 @@ async def run_paper(
             engine.set_advisor(book_id, advisor)
         engine.reporter = make_reporter(engine, experiment, settings, settings.reports_dir,
                                     notify=True, router=router)  # fmt: skip
+        if on_engine is not None:
+            on_engine(engine)
         return await _drive(engine, view, stop)
 
 
@@ -161,6 +164,7 @@ async def run_demo(
     step_s: float = 30.0,
     wall_s: float = 0.1,
     today: date | None = None,
+    on_engine: Callable[[Engine], None] | None = None,
 ) -> int:
     if settings.environment != DEMO:
         raise ConfigError("the demo runs only in ENVIRONMENT=demo (its own state directory)")
@@ -172,7 +176,7 @@ async def run_demo(
     bars, quotes = synthetic_day(day, previous)
     clock = ReplayClock(datetime.combine(day, time(9, 0), IST))
     settings.state_dir.mkdir(parents=True, exist_ok=True)
-    path = settings.state_dir / "demo.db"
+    path = settings.db_path
     for stale in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
         stale.unlink(missing_ok=True)  # every demo starts from a clean book
     limits = load_risk_limits()
@@ -193,6 +197,8 @@ async def run_demo(
             engine.set_advisor(book_id, advisor)
         engine.reporter = make_reporter(engine, experiment, settings,
                                     settings.state_dir / "reports", notify=False)  # fmt: skip
+        if on_engine is not None:
+            on_engine(engine)
         done = asyncio.Event()
         exit_at = datetime.combine(day, time(16, 0), IST)
         pacer = asyncio.create_task(pace(clock, exit_at, step_s=step_s, wall_s=wall_s, done=done))

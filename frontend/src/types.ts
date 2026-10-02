@@ -143,21 +143,14 @@ export interface CycleTrace {
   spans: Span[];
 }
 
+// GET /api/config (subset). The v2 engine is paper only.
 export interface AppConfig {
-  tradingMode: string;
-  executionMode: string;
-  effectiveMode: string;
-  env: EnvBadge;
-  marketDataSource: string;
-  allowLiveOrders: boolean;
-  enableNewsAnalysis: boolean;
-  enableLearning: boolean;
-  riskPerTrade: number;
-  maxDailyTrades: number;
-  dailyLossLimit: number;
-  paperWalletBalance: number;
-  dailyTokenBudget: number;
-  dailyCostBudgetUsd: number;
+  environment: string;
+  mode: "paper";
+  execution_mode_requested: string;
+  execution_mode_note: string | null;
+  market_data_source: string;
+  read_only: boolean;
 }
 
 export type WsMessage =

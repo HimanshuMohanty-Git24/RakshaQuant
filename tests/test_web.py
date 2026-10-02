@@ -176,7 +176,7 @@ def test_rest_endpoints():
     assert state["running"] is False and state["cycles"] == []
 
     cfg = client.get("/api/config").json()
-    assert "env" in cfg and "allowLiveOrders" in cfg and "effectiveMode" in cfg
+    assert cfg["mode"] == "paper" and "allowLiveOrders" not in cfg  # v2: no broker path
 
 
 def test_websocket_init_contract():

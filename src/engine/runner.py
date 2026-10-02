@@ -350,7 +350,10 @@ class Engine:
         self.sink.emit(reading.event(self.lifecycle.schedule.day), source="engine")
         return reading.label
 
-    def _report(self, book: Book) -> None:
+    def valuation(self, book_id: str) -> MarkToMarket:
+        """A book's mark-to-market on the latest marks (not recorded; :meth:`_report` records
+        it at REPORT)."""
+        book = self.books[book_id]
         marks = book.monitor.marks()
         position_book = book.oms.book
         now = self.clock.now()
@@ -362,12 +365,12 @@ class Engine:
         )  # fmt: skip
         state = book.tracker.state
         equity = position_book.cash + value
-        self.sink.emit(
-            MarkToMarket(book_id=book.book_id, equity=equity, cash=position_book.cash,
-                         positions_value=value, unrealized_pnl=unrealized,
-                         day_pnl=equity - state.sod_equity if state else Decimal(0)),
-            source="engine",
-        )  # fmt: skip
+        return MarkToMarket(book_id=book_id, equity=equity, cash=position_book.cash,
+                            positions_value=value, unrealized_pnl=unrealized,
+                            day_pnl=equity - state.sod_equity if state else Decimal(0))  # fmt: skip
+
+    def _report(self, book: Book) -> None:
+        self.sink.emit(self.valuation(book.book_id), source="engine")
 
 
 def _monitor_step(book: Book) -> Callable[[], Awaitable[None]]:

@@ -156,7 +156,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [moveCursor, selectedCycle, openSpan, helpOpen, dialogOpen]);
 
-  const env = snapshot?.run.env ?? config?.env ?? "PAPER";
+  const env = snapshot?.run.env ?? "PAPER";
   const status: RunStatus = error ? "ERROR" : running ? "RUNNING" : snapshot ? "IDLE" : "IDLE";
 
   const loading = !snapshot && conn === "connecting";
