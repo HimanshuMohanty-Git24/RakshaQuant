@@ -128,12 +128,15 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # The API contract (plan M9.5): regenerate the types from the committed OpenAPI document
+      # (itself checked against the code by tests/test_api_contract.py); a diff fails below.
+      - run: npm run gen:api
       - run: npm run build
       - run: npm audit --omit=dev
-      - name: The build must not modify the repo
+      - name: The build must not modify the repo (incl. stale generated API types)
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git status --porcelain
-            echo "::error::the build changed the working tree"
+            echo "::error::the build changed the working tree (stale src/api/types.gen.ts?)"
             exit 1
           fi

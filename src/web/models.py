@@ -422,3 +422,38 @@ class ResumeBody(_Confirmed):
 
 class FlattenBody(_Confirmed):
     phrase: Literal["FLATTEN"]
+
+
+# -- the WebSocket stream (plan M9.4; in the OpenAPI components for the generated types) --------
+
+StreamTopic = Literal["orders", "positions", "decisions", "risk", "ai", "market", "system",
+                      "summary", "quotes", "console", "events"]  # fmt: skip
+
+
+class StreamSubscribe(StrictBody):
+    """Client → server: (re)subscribe; stored events after ``since_seq`` are replayed first."""
+
+    subscribe: list[StreamTopic]
+    since_seq: int = 0
+
+
+class StreamEnvelope(ApiModel):
+    """Server → client. ``seq`` is set for stored events; ``type`` is the event type, or one of
+    ``subscribed``, ``heartbeat``, ``resync``, ``summary``, ``quotes``, ``console``, ``stopped``,
+    ``error``."""
+
+    v: Literal[1]
+    seq: int | None
+    type: str
+    topic: str
+    ts: datetime
+    decision_id: str | None
+    book_id: str | None
+    data: dict[str, Any]
+
+
+class ErrorBody(ApiModel):
+    """Every error response: generic, never echoing input or exception text."""
+
+    error: str
+    fields: list[str] | None = None  # 422 only: the invalid fields' paths

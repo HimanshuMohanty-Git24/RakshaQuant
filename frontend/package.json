@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:api": "openapi-typescript openapi.json -o src/api/types.gen.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.0.13",
@@ -21,6 +22,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.19",
+    "openapi-typescript": "7.13.0",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.5.3",

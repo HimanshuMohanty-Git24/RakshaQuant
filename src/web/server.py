@@ -36,6 +36,7 @@ from typing import Annotated, Any, Literal, TypeVar, cast
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -53,6 +54,7 @@ from src.web.models import (
     ControlResult,
     DecisionModelStats,
     DecisionRow,
+    ErrorBody,
     FillRow,
     FlattenBody,
     HaltBody,
@@ -66,6 +68,8 @@ from src.web.models import (
     SessionStartBody,
     SessionStopBody,
     SpendView,
+    StreamEnvelope,
+    StreamSubscribe,
     Summary,
     SystemView,
     TradeRow,
@@ -177,8 +181,13 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    api = APIRouter(prefix="/api", dependencies=[Depends(require_same_origin),
-                                                 Depends(require_token)])  # fmt: skip
+    errors: dict[int | str, dict[str, Any]] = {
+        code: {"model": ErrorBody, "description": text}
+        for code, text in ((401, "Missing or wrong token"), (403, "Forbidden"),
+                           (404, "Not found"), (409, "Conflict"), (422, "Invalid request"))
+    }  # fmt: skip
+    api = APIRouter(prefix="/api", responses=errors,
+                    dependencies=[Depends(require_same_origin), Depends(require_token)])  # fmt: skip
 
     async def read(fn: Callable[[Queries], T]) -> T:
         """Run a store query in a worker thread on the web's own read connection."""
@@ -356,6 +365,20 @@ def create_app(
 
     app.include_router(api)
 
+    def openapi() -> dict[str, Any]:
+        """The contract (plan M9.5), plus the stream's message shapes as components."""
+        if app.openapi_schema is None:
+            schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+            components = schema.setdefault("components", {}).setdefault("schemas", {})
+            for model in (StreamSubscribe, StreamEnvelope):
+                components[model.__name__] = model.model_json_schema(
+                    ref_template="#/components/schemas/{model}"
+                )
+            app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = openapi  # type: ignore[method-assign]
+
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
         """The event stream (see :mod:`src.web.stream`): send ``{"subscribe": [topics],
@@ -384,7 +407,7 @@ def create_app(
         app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="spa")
     else:
 
-        @app.get("/", response_class=HTMLResponse)
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
         async def placeholder() -> str:
             return _PLACEHOLDER_HTML
 
