@@ -105,6 +105,7 @@ export function DataTable<T>({
       ref={scroller}
       role="table"
       aria-label={label}
+      tabIndex={onRowClick ? undefined : 0} // rows that open nothing: the table itself scrolls by keyboard
       aria-rowcount={rows.length + 1}
       className={cx("relative h-full min-h-0 overflow-auto text-xs", className)}
     >

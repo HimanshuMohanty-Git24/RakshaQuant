@@ -1,56 +1,55 @@
-# RakshaQuant Web Console — frontend
+# RakshaQuant console (frontend v2)
 
-A **Neo-Terminal Trading Console**: a Bloomberg-dense, LLM-observability-style monitoring +
-control UI for RakshaQuant. Built with **React + Vite + TypeScript + Tailwind**, monospace-first,
-dark-only, WCAG 2.2 AA, keyboard-first.
+The browser terminal for the v2 engine: eight screens over the web API (`src/web`), built to the
+design spec in `docs/plan/2026-10-01-platform-v2-plan.md` §6. It only *formats* server
+projections: it never computes money, and nothing is fabricated outside the demo.
 
-It is a thin presentation layer — it renders the live `TradingStats` snapshot and per-cycle
-observability traces streamed by the FastAPI backend (`src/web`) over a WebSocket. All trading
-logic lives in the shared Python engine.
+React 18 + Vite + strict TypeScript, TanStack Query (REST projections) and a zustand store fed by
+the WebSocket event stream, TanStack Table + Virtual, Radix primitives, cmdk, lightweight-charts
+(lazy-loaded), IBM Plex. Screenshots of every screen: `docs/ui/screens/`.
 
 ## Requirements
 
-- **Node `^20.19` or `>=22.12`** (Vite 8).
-- npm installs from **`https://registry.npmjs.org/`**: `frontend/.npmrc` pins it for this
-  project, so a machine-wide plain-`http://` registry setting is not used here. Leave your
-  global npm config alone; `npm config get registry` inside `frontend/` should print the https URL.
+- **Node `^20.19` or `>=22.12`** (Vite 8). `frontend/.npmrc` pins the https npm registry.
+- The backend's `web` extra: `uv sync --extra web` (from the repo root).
 
-## Develop
-
-Run the backend in dev mode (enables CORS for the Vite dev server), then Vite:
+## Run
 
 ```bash
-# terminal 1 — backend (from repo root)
-uv run python scripts/run_live_trading.py --mode web --dev --demo
-
-# terminal 2 — frontend
-cd frontend
-npm install
-npm run dev          # http://localhost:5173  (proxies /api + /ws to :8000)
+# production build, served by the backend at http://127.0.0.1:8000
+npm ci && npm run build
+cd .. && uv run python scripts/run_live_trading.py --mode web            # paper session
+cd .. && uv run python scripts/run_live_trading.py --mode web --demo     # the demo tape
 ```
 
-## Build (served by FastAPI)
+The server prints a one-time link ending in `#token=…`: open that link. The console keeps the
+token for the tab and removes it from the address bar; a restart issues a new token.
+
+For development, start the backend with `--dev` (it then accepts the Vite origin) and run
+`npm run dev` (`http://localhost:5173`, proxying `/api` and `/ws`); open it with the printed
+`#token=…` fragment appended.
+
+## Check
 
 ```bash
-cd frontend
-npm install
-npm run build        # emits frontend/dist
+npm run typecheck     # the app (browser types) and the tests/tooling (Node types)
+npm run lint          # ESLint with react-hooks
+npm test              # Vitest: formatters, components, the stream reducer, the §6.2 design rules
+npm run build && npm run check:bundle   # initial-route JS must stay under 250 KB gzipped
+npm run e2e           # Playwright against the real server replaying the demo tape
 ```
 
-Then `--mode web` serves the built SPA directly:
+`npm run e2e` starts `run_live_trading.py --mode web --demo` itself, waits for the demo session to
+finish, and runs every screen, the Decision Inspector lineage, HALT/RESUME, auth, an axe scan and
+a 5,000-row scrolling test. Without a downloaded browser, `PW_CHANNEL=msedge npm run e2e` uses
+the installed Edge. `RQ_SCREENSHOTS=1` writes the screenshots to `docs/ui/screens/`.
+
+## The API contract
+
+`src/api/types.gen.ts` is generated from the backend's OpenAPI document; never edit it:
 
 ```bash
-uv run python scripts/run_live_trading.py --mode web
-# open http://127.0.0.1:8000
+cd .. && uv run --extra web python scripts/export_openapi.py && cd frontend && npm run gen:api
 ```
 
-## Design tokens
-
-The entire look (color, type, density) is centralized: CSS variables in
-[`src/index.css`](src/index.css), surfaced to Tailwind as semantic names in
-[`tailwind.config.ts`](tailwind.config.ts). Retune the palette or density in one place.
-
-## Keyboard
-
-`j`/`k` move through cycles · `Enter` open a span · `/` filter spans · `:` command input ·
-`Esc` close · `g` then `t`/`f` jump to trace/feed · `?` cheatsheet.
+CI regenerates both and fails on any difference.

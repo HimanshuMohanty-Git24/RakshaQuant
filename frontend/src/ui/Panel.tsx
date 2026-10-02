@@ -9,12 +9,15 @@ export function Panel({
   children,
   className,
   bodyClassName,
+  scrollable = false,
 }: {
   title: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
   bodyClassName?: string;
+  /** A fixed-height panel whose body scrolls: make it reachable by keyboard. */
+  scrollable?: boolean;
 }) {
   return (
     <section className={cx("flex min-h-0 min-w-0 flex-col rounded border bg-bg-1", className)}>
@@ -22,7 +25,14 @@ export function Panel({
         <h2 className="truncate text-xs font-medium text-fg-1">{title}</h2>
         {actions && <div className="flex items-center gap-1">{actions}</div>}
       </header>
-      <div className={cx("min-h-0 flex-1 overflow-auto", bodyClassName)}>{children}</div>
+      <div
+        className={cx("min-h-0 flex-1 overflow-auto", bodyClassName)}
+        tabIndex={scrollable ? 0 : undefined}
+        role={scrollable ? "region" : undefined}
+        aria-label={scrollable && typeof title === "string" ? title : undefined}
+      >
+        {children}
+      </div>
     </section>
   );
 }

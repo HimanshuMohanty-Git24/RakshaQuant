@@ -53,7 +53,7 @@ from src.domain.events import (
     SignalGenerated,
     TradeClosed,
 )
-from src.domain.types import AdvisorVerdict, RiskDecision, RiskOutcome, Side
+from src.domain.types import AdvisorVerdict, Order, OrderType, RiskDecision, RiskOutcome, Side
 from src.store.event_store import EventStore
 from src.utils.market_time import IST
 
@@ -351,6 +351,12 @@ def _costs(fills: Sequence[_E[FillReceived]]) -> dict[str, Any]:
     }
 
 
+def resting(order: Order) -> bool:
+    """A stop that rests at the broker until triggered: its arrival quote is from when it was
+    placed (often sessions earlier), so slippage is measured against its trigger only."""
+    return order.intent.order_type in (OrderType.SL, OrderType.SL_M)
+
+
 def slippage_bps(fill_price: Decimal, reference: Decimal, side: Side) -> float:
     """Execution slippage against a reference price, in bps; adverse is positive (paying up on
     a buy, selling below on a sell)."""
@@ -377,7 +383,7 @@ def _execution(ev: _Events, book: str, day: date, submitted: Sequence[Any]) -> d
             decision = order.intent.decision_price
             vs_decision.append(slippage_bps(avg, decision, order.intent.side))
             ref = arrival.get(order.client_order_id)
-            if ref:
+            if ref and not resting(order):
                 vs_arrival.append(slippage_bps(avg, ref, order.intent.side))
             shortfall += (avg - decision) * qty * sign + sum(f.fill.charges for f in got)
             if order.submitted_at is not None:

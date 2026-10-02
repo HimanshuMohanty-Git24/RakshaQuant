@@ -968,7 +968,8 @@ export interface components {
         /**
          * Execution
          * @description One order of the decision. Slippage is adverse-positive, in bps, vs the decision price
-         *     (the signal bar's close) and vs the arrival price (the quote at submission).
+         *     (the signal bar's close; a stop's trigger) and vs the arrival price (the quote at submission
+         *     - none for a resting stop, whose submission can be sessions before it triggers).
          */
         Execution: {
             /** Arrival Price */

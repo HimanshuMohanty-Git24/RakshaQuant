@@ -1,61 +1,43 @@
-import { expect, test, type Page } from "@playwright/test";
+// Plan M10.5: every screen renders on the demo replay (screenshots: RQ_SCREENSHOTS=1 writes
+// them to docs/ui/screens for review).
 
-const shots = "test-results/screens";
+import { expect, test } from "@playwright/test";
 
-async function open(page: Page, path = "/") {
-  await page.goto(process.env.RQ_URL!); // carries the token once; the app stores it
-  await expect(page.getByText("RakshaQuant", { exact: true })).toBeVisible();
-  if (path !== "/") await page.goto(path);
-}
+import { decisionId, open, shot } from "./helpers";
 
-async function decision(page: Page, symbol: string, book: string, outcome: string): Promise<string> {
-  const res = await page.request.get(`/api/decisions?symbol=${symbol}&book=${book}&outcome=${outcome}`, {
-    headers: { Authorization: `Bearer ${process.env.RQ_TOKEN}` },
-  });
-  const rows = (await res.json()) as { decision_id: string }[];
-  expect(rows.length).toBeGreaterThan(0);
-  return rows[0]!.decision_id;
-}
+const SCREENS = [
+  ["/", "1-command-center", "Today's decisions"],
+  ["/decisions", "2-decisions", "Decisions ·"],
+  ["/blotter", "4-blotter", "Blotter"],
+  ["/risk", "5-risk-center", "Limits in use"],
+  ["/ai", "6-ai-desk", "Roles and models"],
+  ["/experiment", "7-experiment", "Daily reports"],
+  ["/market?symbol=TCS", "8-market", "Announcements"],
+  ["/system", "9-system", "Reconciliation (OMS vs broker)"],
+] as const;
 
-test("command center", async ({ page }) => {
-  await open(page);
-  await expect(page.getByRole("table", { name: "Books" })).toBeVisible();
-  await expect(page.getByText("Today's decisions")).toBeVisible();
-  await page.screenshot({ path: `${shots}/command.png` });
-});
-
-test("decisions and the inspector", async ({ page }) => {
-  await open(page, "/decisions");
-  await expect(page.getByRole("table", { name: "Decisions" })).toBeVisible();
-  await page.screenshot({ path: `${shots}/decisions.png` });
-  const executed = await decision(page, "INFY", "A", "submitted");
-  await page.goto(`/decisions/${executed}`);
-  await expect(page.getByText("Orders and fills")).toBeVisible();
-  await page.screenshot({ path: `${shots}/inspector-executed.png`, fullPage: true });
-  const vetoed = await decision(page, "TCS", "B", "vetoed");
-  await page.goto(`/decisions/${vetoed}`);
-  await expect(page.getByText("VETO").first()).toBeVisible();
-  await page.screenshot({ path: `${shots}/inspector-vetoed.png`, fullPage: true });
-});
-
-test("blotter", async ({ page }) => {
-  await open(page, "/blotter");
-  await page.getByRole("tab", { name: "Trades" }).click();
-  await expect(page.getByRole("table", { name: "Trades" })).toBeVisible();
-  await page.screenshot({ path: `${shots}/blotter.png` });
-});
-
-for (const [path, name, ready] of [
-  ["/risk", "risk", "Limits in use"],
-  ["/ai", "ai", "Roles and models"],
-  ["/experiment", "experiment", "Daily reports"],
-  ["/market?symbol=TCS", "market", "Announcements"],
-  ["/system", "system", "Reconciliation (OMS vs broker)"],
-] as const) {
-  test(`${name} screen`, async ({ page }) => {
+for (const [path, name, ready] of SCREENS) {
+  test(`${name} renders`, async ({ page }) => {
     await open(page, path);
-    await expect(page.getByText(ready, { exact: false }).first()).toBeVisible();
-    await page.waitForTimeout(500); // lazy charts
-    await page.screenshot({ path: `${shots}/${name}.png` });
+    await expect(page.getByText(ready).first()).toBeVisible();
+    await expect(page.getByRole("note")).toContainText("DEMO"); // the persistent banner
+    await page.waitForTimeout(600); // lazy charts settle
+    await page.screenshot({ path: shot(name) });
   });
 }
+
+test.describe("the decision inspector, full height", () => {
+  test.use({ viewport: { width: 1600, height: 2400 } });
+
+  test("an executed and a vetoed decision", async ({ page }) => {
+    await open(page);
+    for (const [symbol, book, outcome, name] of [
+      ["INFY", "A", "submitted", "3-inspector-executed"],
+      ["TCS", "B", "vetoed", "3-inspector-vetoed"],
+    ] as const) {
+      await page.goto(`/decisions/${await decisionId(page, symbol, book, outcome)}`);
+      await expect(page.getByText("Counterfactual (shadow ledger)")).toBeVisible();
+      await page.screenshot({ path: shot(name) });
+    }
+  });
+});

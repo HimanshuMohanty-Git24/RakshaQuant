@@ -145,3 +145,27 @@ jobs:
             echo "::error::the build changed the working tree (stale src/api/types.gen.ts?)"
             exit 1
           fi
+
+  e2e:
+    # Plan M10.5: Playwright against the real server replaying the demo tape (global setup
+    # starts `run_live_trading.py --mode web --demo`): every screen, the inspector lineage,
+    # HALT/RESUME, auth, axe (no serious/critical violations) and 5,000-row scrolling.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --locked --extra web
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e

@@ -55,7 +55,7 @@ from src.domain.types import (
 )
 from src.engine.lifecycle import LifecycleConfig, build_schedule
 from src.engine.market import INDEX_KEY
-from src.evaluation.daily_report import slippage_bps, veto_precision_of
+from src.evaluation.daily_report import resting, slippage_bps, veto_precision_of
 from src.evaluation.experiment import ExperimentConfig
 from src.llm.prompts import templates
 from src.llm.registry import role_configs
@@ -476,7 +476,11 @@ class Queries:
             avg = got[-1].order_avg_price if got else None
             side = order.intent.side
             decision = order.intent.decision_price
-            ref = arrival.get(order.client_order_id) or order.arrival_price
+            ref = (
+                None
+                if resting(order)
+                else arrival.get(order.client_order_id) or order.arrival_price
+            )
             out.append(Execution(
                 book_id=order.intent.book_id, client_order_id=order.client_order_id,
                 kind=order.intent.kind.value, side=side.value, quantity=order.quantity,

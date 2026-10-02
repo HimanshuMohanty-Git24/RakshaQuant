@@ -305,3 +305,17 @@ async def test_alerts_logs_reports_documents_and_calibration(session, settings):
     assert prereg["title"].startswith("Pre-registration") and "H2" in prereg["markdown"]
     assert client.get("/api/ai/calibration").json() == {"fitted": False, "temperatures": {},
                                                         "meta": {}}  # fmt: skip
+
+
+async def test_a_resting_stop_has_no_arrival_slippage(session):
+    """Its arrival quote is from when it was placed, long before it triggered."""
+    engine, manager = session
+    client = client_for(manager)
+    decision = client.get("/api/decisions", params={"symbol": "TCS", "book": "A",
+                                                    "outcome": "submitted"}).json()[0]  # fmt: skip
+    executions = client.get(f"/api/decisions/{decision['decision_id']}").json()["executions"]
+    stop = next(x for x in executions if x["kind"] != "open")
+    assert stop["arrival_price"] is None and stop["slippage_vs_arrival_bps"] is None
+    assert stop["slippage_vs_decision_bps"] is not None  # vs its trigger
+    entry = next(x for x in executions if x["kind"] == "open")
+    assert entry["slippage_vs_arrival_bps"] is not None

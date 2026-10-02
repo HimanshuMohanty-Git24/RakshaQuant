@@ -106,6 +106,7 @@ export default function System() {
       <Panel
         title="Logs (newest first)"
         className="h-[420px] xl:col-span-2"
+        scrollable
         actions={
           <div className="flex items-center gap-2">
             <Select label="Level" value={level} onChange={setLevel} options={["", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"].map((l) => ({ value: l, label: l || "All" }))} />

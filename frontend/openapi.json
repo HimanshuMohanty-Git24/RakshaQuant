@@ -1080,7 +1080,7 @@
         "type": "object"
       },
       "Execution": {
-        "description": "One order of the decision. Slippage is adverse-positive, in bps, vs the decision price\n(the signal bar's close) and vs the arrival price (the quote at submission).",
+        "description": "One order of the decision. Slippage is adverse-positive, in bps, vs the decision price\n(the signal bar's close; a stop's trigger) and vs the arrival price (the quote at submission\n- none for a resting stop, whose submission can be sessions before it triggers).",
         "properties": {
           "arrival_price": {
             "anyOf": [

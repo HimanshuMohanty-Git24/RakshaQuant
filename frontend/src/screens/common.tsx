@@ -44,7 +44,7 @@ export function BookPicker({
           aria-checked={value === o.id}
           onClick={() => onChange(o.id)}
           className={cx(
-            "h-5 border border-line-strong px-1.5 text-2xs first:rounded-l-sm last:rounded-r-sm -ml-px first:ml-0",
+            "h-6 min-w-6 border-y border-l border-line-strong px-1.5 text-2xs first:rounded-l-sm last:rounded-r-sm last:border-r",
             value === o.id ? "bg-bg-2 text-fg-0" : "text-fg-2 hover:text-fg-0",
           )}
         >
@@ -58,7 +58,7 @@ export function BookPicker({
 export function DecisionLink({ id, children }: { id: string | null | undefined; children?: ReactNode }) {
   if (!id) return <span className="text-fg-2">—</span>;
   return (
-    <Link to={`/decisions/${id}`} className="font-mono text-accent hover:underline" title={`Decision ${id}`}>
+    <Link to={`/decisions/${id}`} className="inline-flex min-h-6 min-w-6 items-center font-mono text-accent hover:underline" title={`Decision ${id}`}>
       {children ?? shortId(id)}
     </Link>
   );
@@ -66,7 +66,7 @@ export function DecisionLink({ id, children }: { id: string | null | undefined; 
 
 export function SymbolLink({ symbol }: { symbol: string }) {
   return (
-    <Link to={`/market?symbol=${encodeURIComponent(symbol)}`} className="text-fg-0 hover:text-accent hover:underline">
+    <Link to={`/market?symbol=${encodeURIComponent(symbol)}`} className="inline-flex min-h-6 min-w-6 items-center text-fg-0 hover:text-accent hover:underline">
       {symbol}
     </Link>
   );
