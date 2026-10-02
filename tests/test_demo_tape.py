@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
+from pydantic import BaseModel
+
 from src.engine import live
 from src.engine.demo import DEMO_DAY, DEMO_PREVIOUS, DEMO_TAPE, synthetic_day, write_demo_tape
 from src.engine.replay import canonical_events, replay_day
@@ -14,10 +19,26 @@ from tests.test_engine_live import RecordingView, env
 SRC = DEMO_TAPE.parents[1]
 
 
+def close(a: Any, b: Any) -> bool:
+    """Equal, floats to 1e-12 relative. numpy's math can differ in the last bit between
+    platforms (the committed tape was written on Windows; CI also runs Linux). The guard is
+    there to catch a real change to the generator, which this still does."""
+    if isinstance(a, float) and isinstance(b, float):
+        return math.isclose(a, b, rel_tol=1e-12, abs_tol=0.0)
+    if isinstance(a, BaseModel) and isinstance(b, BaseModel):
+        return type(a) is type(b) and close(a.model_dump(), b.model_dump())
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(close(a[k], b[k]) for k in a)
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        return len(a) == len(b) and all(close(x, y) for x, y in zip(a, b, strict=True))
+    return bool(a == b)
+
+
 def test_the_bundled_tape_is_what_the_generator_makes(tmp_path):
     bars, quotes = synthetic_day(DEMO_DAY, DEMO_PREVIOUS)
-    assert read_quotes(DEMO_TAPE, DEMO_DAY) == quotes  # else: scripts/build_demo_tape.py
-    assert read_bars(DEMO_TAPE, DEMO_DAY) == bars
+    assert close(read_quotes(DEMO_TAPE, DEMO_DAY), quotes)  # else: scripts/build_demo_tape.py
+    assert close(read_bars(DEMO_TAPE, DEMO_DAY), bars)
+    assert not close(bars[0].model_copy(update={"close": bars[0].close * (1 + 1e-9)}), bars[0])
     written = write_demo_tape(tmp_path)
     assert sorted(p.name for p in written) == ["bars.parquet", "quotes.parquet"]
     assert read_quotes(tmp_path, DEMO_DAY) == quotes
