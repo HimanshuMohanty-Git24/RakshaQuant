@@ -28,6 +28,7 @@ The shadow ledger (:mod:`src.evaluation.shadow_ledger`) follows every signal on 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -48,12 +49,15 @@ from src.engine.lifecycle import LifecycleConfig, LifecycleHooks, Schedule, Sess
 from src.engine.market import HistorySource, MarketService, QuoteSource
 from src.engine.tasks import (
     ANNOUNCEMENTS,
+    HEARTBEAT,
+    HEARTBEAT_INTERVAL_S,
     MARKET_DATA,
     MONITOR,
     MONITOR_INTERVAL_S,
     RECONCILE_INTERVAL_S,
     RECONCILER,
     TaskGroup,
+    heartbeat,
 )
 from src.evaluation.shadow_ledger import ShadowLedger
 from src.features.regime import RegimeConfig, compute_regime
@@ -142,9 +146,11 @@ class Engine:
     tasks: TaskGroup
     announcements: AnnouncementSource | None = None
     ledger: ShadowLedger | None = None
+    reporter: Callable[[date], Awaitable[None]] | None = None  # the daily report (M8.4)
     regime: Regime | None = None
     cycles: list[CycleResult] = field(default_factory=list)
     _session_started: bool = False
+    _started: float = 0.0
 
     # -- the primary book (single-book callers: the CLI/web view model, tests) -------------------
 
@@ -193,6 +199,7 @@ class Engine:
     # -- the day -------------------------------------------------------------------------------
 
     async def run(self) -> int:
+        self._started = time.monotonic()
         for book in self.books.values():
             await book.oms.start()
         try:
@@ -245,6 +252,14 @@ class Engine:
         elif state is SessionState.REPORT:
             for book in self.books.values():
                 self._report(book)
+            if self.reporter is not None:
+                try:
+                    await self.reporter(schedule.day)
+                except Exception as exc:  # the report never takes the session down
+                    logger.exception("daily report failed")
+                    self.sink.emit(Alert(level="WARNING", key="daily_report_failed",
+                                         message=f"{type(exc).__name__}: {exc}"),
+                                   source="engine")  # fmt: skip
 
     async def _open_session(self, schedule: Schedule) -> None:
         market = self.market
@@ -269,6 +284,8 @@ class Engine:
             await book.exits.on_session_start(schedule.day, atr=atr, closes=closes)
 
         self.tasks.start(MARKET_DATA, market.poll, lambda: market.next_delay_s)
+        self.tasks.start(HEARTBEAT, heartbeat(self.sink, self._started),
+                         lambda: HEARTBEAT_INTERVAL_S)  # fmt: skip
         for book in self.books.values():
             self.tasks.start(f"{MONITOR}:{book.book_id}", _monitor_step(book),
                              lambda: MONITOR_INTERVAL_S)  # fmt: skip
@@ -299,6 +316,15 @@ class Engine:
                                   f"{event.title[:160]}"),
                     source="engine",
                 )  # fmt: skip
+
+    def equal_weight_day_pct(self) -> float | None:
+        """The universe's equal-weight return today, from the latest quotes."""
+        moves = [(q.ltp / q.prev_close - 1) * 100 for q in self.market.quotes().values()
+                 if q.prev_close]  # fmt: skip
+        return round(sum(moves) / len(moves), 4) if moves else None
+
+    def index_closes(self) -> dict[date, float]:
+        return self._index_closes()
 
     def _index_closes(self) -> dict[date, float]:
         series = self.market.index_series()

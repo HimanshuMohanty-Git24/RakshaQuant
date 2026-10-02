@@ -17,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, time
+from pathlib import Path
 
 from src.config.errors import ConfigError
 from src.config.limits import load_risk_limits
@@ -37,7 +39,14 @@ from src.engine.demo import demo_day, demo_instruments, pace, synthetic_day
 from src.engine.runner import Engine, build_engine, held_instruments
 from src.engine.view_model import StatsProjector
 from src.evaluation.books import build_advisors, engine_config
-from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, load_experiment
+from src.evaluation.daily_report import (
+    ReportInputs,
+    build_report,
+    send_summary,
+    telegram_summary,
+    write_report,
+)
+from src.evaluation.experiment import DEFAULT_EXPERIMENT_PATH, ExperimentConfig, load_experiment
 from src.live.views import SessionView
 from src.llm.registry import validate_roles
 from src.llm.setup import build_router
@@ -46,6 +55,7 @@ from src.marketdata.history import YFinanceHistorySource
 from src.marketdata.replay import TapeHistorySource, TapeQuoteSource
 from src.marketdata.validation import QuoteValidator, band_lookup
 from src.marketdata.yfinance_source import YFinanceQuoteSource
+from src.notifications.telegram import TelegramNotifier
 from src.reference.refresh import alert_reference, refresh_reference
 from src.store.event_store import EventStore
 from src.store.sink import StoreSink
@@ -105,6 +115,8 @@ async def run_paper(
                                   regime=lambda: engine.regime)  # fmt: skip
         for book_id, advisor in advisors.items():
             engine.set_advisor(book_id, advisor)
+        engine.reporter = _reporter(engine, experiment, settings, settings.reports_dir,
+                                    notify=True)  # fmt: skip
         return await _drive(engine, view, stop)
 
 
@@ -175,6 +187,8 @@ async def run_demo(
                                   regime=lambda: engine.regime)  # fmt: skip
         for book_id, advisor in advisors.items():
             engine.set_advisor(book_id, advisor)
+        engine.reporter = _reporter(engine, experiment, settings,
+                                    settings.state_dir / "reports", notify=False)  # fmt: skip
         done = asyncio.Event()
         exit_at = datetime.combine(day, time(16, 0), IST)
         pacer = asyncio.create_task(pace(clock, exit_at, step_s=step_s, wall_s=wall_s, done=done))
@@ -183,6 +197,45 @@ async def run_demo(
         finally:
             done.set()
             await asyncio.gather(pacer, return_exceptions=True)
+
+
+_PENDING: set[asyncio.Task[bool]] = set()  # fire-and-forget summaries (kept from GC)
+
+
+def _reporter(
+    engine: Engine,
+    experiment: ExperimentConfig,
+    settings: Settings,
+    reports_dir: Path,
+    *,
+    notify: bool,
+) -> Callable[[date], Awaitable[None]]:
+    """The REPORT step: the daily report to ``reports_dir`` and a Telegram summary (5 s timeout,
+    fire-and-forget: the report is on disk whether or not the message goes out)."""
+
+    async def report(day: date) -> None:
+        lows = {b: float(book.tracker.state.low_equity) for b, book in engine.books.items()
+                if book.tracker.state is not None}  # fmt: skip
+        inputs = ReportInputs(
+            day=day, capital=experiment.capital_inr, books=engine.config.books,
+            advisors={b: spec.advisor for b, spec in experiment.books.items()},
+            experiment=experiment.experiment, nifty_closes=engine.index_closes(),
+            equal_weight_day_pct=engine.equal_weight_day_pct(),
+            infra_cost_inr_per_day=settings.infra_cost_inr_per_day, intraday_low_equity=lows,
+        )  # fmt: skip
+        result = build_report(engine.store, inputs, engine.calendar)
+        _, md_path = write_report(result, reports_dir)
+        engine.sink.emit(Alert(level="INFO", key="daily_report", message=f"written {md_path}"),
+                         source="engine")  # fmt: skip
+        if notify:
+            notifier = TelegramNotifier()
+            if notifier.enabled:
+                task = asyncio.create_task(send_summary(telegram_summary(result),
+                                                        notifier.send_message))  # fmt: skip
+                _PENDING.add(task)
+                task.add_done_callback(_PENDING.discard)
+
+    return report
 
 
 async def _drive(engine: Engine, view: SessionView, stop: asyncio.Event | None) -> int:

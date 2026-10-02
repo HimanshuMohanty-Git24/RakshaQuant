@@ -250,6 +250,9 @@ class Settings(BaseSettings):
     typesafe_model: str = Field(default="jev-1.13.0", description="Pinned Jev model")
     decision_escalate_low: float = Field(default=0.35, ge=0, le=1)
     decision_escalate_high: float = Field(default=0.65, ge=0, le=1)
+    infra_cost_inr_per_day: float | None = Field(
+        default=None, ge=0, description="Power, data and API plans per day, for the daily report"
+    )
     experiment_file: Path | None = Field(
         default=None, description="The experiment definition (default src/config/experiment.yaml)"
     )

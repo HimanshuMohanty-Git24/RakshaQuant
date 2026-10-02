@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
 from collections.abc import Awaitable, Callable
 
 from src.domain.clock import Clock
-from src.domain.events import Alert
+from src.domain.events import Alert, Heartbeat, LoopLag
 from src.domain.sink import EventSink
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,27 @@ async def _sleep_unless_stopped(clock: Clock, seconds: float, stop: asyncio.Even
     for task in pending:
         task.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+
+
+HEARTBEAT = "heartbeat"
+HEARTBEAT_INTERVAL_S = 60.0
+LOOP_LAG_THRESHOLD_MS = 500.0
+
+
+def heartbeat(sink: EventSink, started: float) -> Callable[[], Awaitable[None]]:
+    """A ``Heartbeat`` (pid, uptime, event-loop lag) per run; ``LoopLag`` over 500 ms. The lag is
+    the wall time the loop takes to come back to a task that yields - what every task waits."""
+
+    async def step() -> None:
+        before = time.perf_counter()
+        await asyncio.sleep(0)
+        lag_ms = round((time.perf_counter() - before) * 1000, 2)
+        uptime = round(time.monotonic() - started, 1)
+        sink.emit(Heartbeat(pid=os.getpid(), uptime_s=uptime, loop_lag_ms=lag_ms), source="engine")
+        if lag_ms > LOOP_LAG_THRESHOLD_MS:
+            sink.emit(LoopLag(lag_ms=lag_ms, threshold_ms=LOOP_LAG_THRESHOLD_MS), source="engine")
+
+    return step
 
 
 class TaskGroup:
