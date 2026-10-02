@@ -24,6 +24,7 @@ from src.domain.types import (
     Quote,
     RiskSnapshotSummary,
 )
+from src.risk.events import EventBlock
 
 UNKNOWN_SECTOR = "Unknown"  # one bucket for unmapped symbols (audit §L.2)
 
@@ -94,6 +95,7 @@ class RiskSnapshot:
     llm_degraded: bool = False
     journal_durable: bool = True
     recon_drift: bool = False
+    event_blocks: Mapping[str, tuple[EventBlock, ...]] = field(default_factory=dict)
 
     @property
     def day_pnl_mtm(self) -> Decimal:

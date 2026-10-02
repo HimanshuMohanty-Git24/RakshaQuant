@@ -13,8 +13,9 @@ without recording it; only the OMS's decision is binding.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from src.domain.calendar import CalendarCoverageError, NSECalendar
@@ -25,12 +26,15 @@ from src.domain.types import (
     OrderIntent,
     OrderStatus,
     OrderType,
+    ReasonCode,
     RiskDecision,
     SessionState,
+    TypedEvent,
 )
 from src.engine.lifecycle import LifecycleConfig, build_schedule
 from src.oms.oms import OMS, GateResult
 from src.risk.engine import RiskEngine
+from src.risk.events import EventBlock, EventRules, event_blocks
 from src.risk.kill_switch import KillSwitchRegistry
 from src.risk.marks import open_positions, owner, unrealized_by_strategy
 from src.risk.snapshot import (
@@ -41,6 +45,7 @@ from src.risk.snapshot import (
     RiskSnapshot,
 )
 from src.risk.state import DailyRiskTracker
+from src.utils.market_time import IST
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,8 @@ class RiskGate:
         lifecycle: LifecycleConfig | None = None,
         instruments: Mapping[str, Instrument] | None = None,
         flags: SystemFlags | None = None,
+        events: Callable[[], Iterable[TypedEvent]] | None = None,
+        event_rules: EventRules | None = None,
     ) -> None:
         self.engine = engine
         self.flags = flags or SystemFlags()
@@ -85,6 +92,8 @@ class RiskGate:
         self._environment = environment
         self._lifecycle = lifecycle or LifecycleConfig()
         self._instruments = dict(instruments or {})
+        self._events = events
+        self._event_rules = event_rules or EventRules()
 
     async def __call__(self, intent: OrderIntent, quantity: int | None) -> GateResult:
         self._switches.check_halt_file()  # takes effect on this very order
@@ -201,7 +210,23 @@ class RiskGate:
             llm_degraded=self.flags.llm_degraded,
             journal_durable=self.flags.journal_durable,
             recon_drift=self.flags.recon_drift,
+            event_blocks=self._event_blocks(intent, now),
         )
+
+    def _event_blocks(
+        self, intent: OrderIntent, now: datetime
+    ) -> dict[str, tuple[EventBlock, ...]]:
+        if self._events is None:
+            return {}
+        try:
+            return event_blocks(self._events(), calendar=self._calendar,
+                                rules=self._event_rules, now=now)  # fmt: skip
+        except Exception as exc:  # unknown events: no new entry in this instrument (fail closed)
+            logger.exception("event calendar unavailable")
+            today = now.astimezone(IST).date()
+            unknown = EventBlock(ReasonCode.EVT_RESULTS_WINDOW, today, today, "unknown",
+                                 f"event calendar unavailable: {type(exc).__name__}")  # fmt: skip
+            return {intent.instrument.key: (unknown,)}
 
     def _working(self, snapshot: RiskSnapshot) -> Reservations:
         """Capacity held by submitted entries that have not filled yet."""

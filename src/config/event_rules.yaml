@@ -1,0 +1,19 @@
+# Event-calendar gate (plan M7.8): deterministic rules over classified announcements
+# (TypedEvent). Windows are counted in NSE trading sessions. These rules only block NEW
+# entries; they never exit a position (a held position's adverse event raises an alert).
+version: 1
+results_window:
+  # No new entry from N sessions before to N sessions after a results announcement or a
+  # scheduled results board meeting (the meeting date is extracted from the text).
+  types: [results, results_date]
+  sessions_before: 1
+  sessions_after: 1
+adverse_event:
+  # No new entry within N sessions after a relevant negative + major event.
+  direction: negative
+  materiality: major
+  sessions_after: 2
+held_alert:
+  # Alert (no auto-exit) when a held position gets a relevant negative + major event.
+  direction: negative
+  materiality: major

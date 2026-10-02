@@ -38,7 +38,7 @@ from src.decision.engine import CycleResult, DecisionConfig, DecisionEngine
 from src.domain.calendar import NSECalendar
 from src.domain.clock import Clock
 from src.domain.events import Alert, MarkToMarket, OrderSubmitted
-from src.domain.types import Instrument, Quote, Regime, SessionState
+from src.domain.types import Instrument, Quote, Regime, SessionState, TypedEvent
 from src.engine.lifecycle import LifecycleConfig, LifecycleHooks, Schedule, SessionLifecycle
 from src.engine.market import HistorySource, MarketService, QuoteSource
 from src.engine.tasks import (
@@ -55,6 +55,7 @@ from src.oms.exit_manager import ExitManager
 from src.oms.oms import OMS
 from src.oms.position_book import PositionBook
 from src.risk.engine import RiskEngine
+from src.risk.events import EventRules
 from src.risk.gate import RiskGate
 from src.risk.kill_switch import Flattener, KillSwitchRegistry
 from src.risk.marks import open_positions
@@ -81,7 +82,7 @@ class AnnouncementSource(Protocol):
     @property
     def interval_s(self) -> float: ...
 
-    async def poll(self, *, force: bool = False) -> object: ...
+    async def poll(self, *, force: bool = False) -> Sequence[TypedEvent]: ...
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class EngineConfig:
     policy: TradePolicyConfig = field(default_factory=TradePolicyConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     decision: DecisionConfig | None = None  # default: the book, with enabled = the risk limits'
+    event_rules: EventRules = field(default_factory=EventRules.from_yaml)
 
 
 @dataclass
@@ -141,7 +143,7 @@ class Engine:
         self.gate.flags.recon_drift = not result.in_sync
         if self.announcements is not None:
             try:  # the overnight backfill; a feed outage never blocks the session
-                await self.announcements.poll(force=True)
+                await self.announcements_step(force=True)
             except Exception as exc:
                 logger.exception("announcement backfill failed")
                 self.sink.emit(Alert(level="WARNING", key="announcements_backfill_failed",
@@ -194,7 +196,23 @@ class Engine:
         self.tasks.start(RECONCILER, reconcile_step, lambda: RECONCILE_INTERVAL_S)
         announcements = self.announcements
         if announcements is not None:
-            self.tasks.start(ANNOUNCEMENTS, announcements.poll, lambda: announcements.interval_s)
+            self.tasks.start(ANNOUNCEMENTS, self.announcements_step,
+                             lambda: announcements.interval_s)  # fmt: skip
+
+    async def announcements_step(self, *, force: bool = False) -> None:
+        """Ingest and classify; alert (never exit) on an adverse event for a held position."""
+        if self.announcements is None:
+            return
+        events = await self.announcements.poll(force=force)
+        held = {p.instrument_key for p in open_positions(self.oms.book, self.clock.now())}
+        for event in events:
+            if event.instrument_key in held and self.config.event_rules.is_held_alert(event):
+                self.sink.emit(
+                    Alert(level="CRITICAL", key=f"held_adverse_event:{event.instrument_key}",
+                          message=f"held {event.instrument_key}: {event.direction} "
+                                  f"{event.materiality} event - {event.title[:160]}"),
+                    source="engine",
+                )  # fmt: skip
 
     def _compute_regime(self, day: object) -> Regime | None:
         series = self.market.index_series()
@@ -279,10 +297,16 @@ def build_engine(
 
     market.add_listener(to_broker)
     market.add_listener(exits.on_quote)
+
+    def stored_events() -> list[TypedEvent]:
+        rows = store.query("SELECT payload FROM typed_events")
+        return [TypedEvent.model_validate_json(r["payload"]) for r in rows]
+
     gate = RiskGate(engine=RiskEngine(limits), oms=oms, tracker=tracker, switches=switches,
                     calendar=calendar, clock=clock, sink=sink, market=market.facts,
                     environment=config.environment, lifecycle=config.lifecycle,
-                    instruments=instruments)  # fmt: skip
+                    instruments=instruments, events=stored_events,
+                    event_rules=config.event_rules)  # fmt: skip
     oms.use_gate(gate)
     monitor = RiskMonitor(book=book, tracker=tracker, switches=switches, flattener=flattener,
                           marks=market.marks, clock=clock, sink=sink)  # fmt: skip

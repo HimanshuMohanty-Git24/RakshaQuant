@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -29,6 +29,7 @@ from src.domain.types import (
 )
 from src.risk.checks.base import ALL_KINDS, Check
 from src.risk.engine import RiskEngine
+from src.risk.events import EventBlock
 from src.risk.snapshot import MarketFacts, PositionInfo, RiskSnapshot, StrategyStats
 
 R = ReasonCode
@@ -184,6 +185,10 @@ CASES: list[Case] = [
     _c(R.SYS_LLM_DEGRADED, A, s=snapshot(llm_degraded=True)),
     _c(R.SYS_JOURNAL_NOT_DURABLE, B, s=snapshot(journal_durable=False)),
     _c(R.SYS_RECON_DRIFT, B, s=snapshot(recon_drift=True)),
+    _c(R.EVT_RESULTS_WINDOW, B, s=snapshot(event_blocks={INFY.key: (
+        EventBlock(R.EVT_RESULTS_WINDOW, date(2026, 10, 1), date(2026, 10, 6), "e1", "results"),)})),
+    _c(R.EVT_ADVERSE_MAJOR, B, s=snapshot(event_blocks={INFY.key: (
+        EventBlock(R.EVT_ADVERSE_MAJOR, date(2026, 10, 5), date(2026, 10, 7), "e2", "penalty"),)})),
 ]  # fmt: skip
 
 
@@ -203,7 +208,7 @@ def test_reason_code(code, outcome, build):
 
 
 def test_every_reason_code_is_covered():
-    excluded = {R.PF_NET, R.EVT_RESULTS_WINDOW, R.EVT_ADVERSE_MAJOR, R.SYS_CHECK_ERROR}
+    excluded = {R.PF_NET, R.SYS_CHECK_ERROR}
     assert {c[0] for c in CASES} == set(ReasonCode) - excluded  # SYS_CHECK_ERROR: below
 
 

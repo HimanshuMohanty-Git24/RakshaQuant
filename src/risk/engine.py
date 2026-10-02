@@ -32,7 +32,7 @@ from src.domain.types import (
     RiskDecision,
     RiskOutcome,
 )
-from src.risk.checks import order, portfolio, strategy, system
+from src.risk.checks import events, order, portfolio, strategy, system
 from src.risk.checks.base import RiskCheck
 from src.risk.snapshot import Reservations, RiskContext, RiskSnapshot
 
@@ -43,6 +43,7 @@ DEFAULT_CHECKS: tuple[RiskCheck, ...] = (
     *system.CHECKS,
     *strategy.CHECKS,
     *portfolio.CHECKS,
+    *events.CHECKS,
     *order.CHECKS,
 )
 _HALT_CODES = frozenset(
