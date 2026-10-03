@@ -160,6 +160,8 @@ P&L against book A, minus its AI spend), and veto precision with a confidence in
 </details>
 
 ## 🧩 Architecture
+<img width="5883" height="1288" alt="NLP QUERY Runner2" src="https://github.com/user-attachments/assets/b2cdedef-cb6f-4fb4-b1a7-bc1ab37ba1db" />
+
 
 ```mermaid
 flowchart LR
